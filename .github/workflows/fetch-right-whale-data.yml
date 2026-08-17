@@ -24,22 +24,39 @@ jobs:
             'https://storage.googleapis.com/nmfs_odp_nefsc/PARR/READ/PSB/23305/23305_RWSAS.csv' \
             -o raw_rwsas.csv
           python - <<'PY'
-          import csv, re
+          import csv
+          from datetime import datetime
           src='raw_rwsas.csv'
           dst='out/right_whale_sightings_2016.csv'
           with open(src, newline='', encoding='utf-8-sig') as f:
               reader=csv.DictReader(f)
               fields=reader.fieldnames or []
-              if not fields:
-                  raise SystemExit('RWSAS CSV has no header')
-              date_fields=[k for k in fields if any(x in k.lower() for x in ('date','year','time'))]
+              if 'SIGHTINGDATE' not in fields:
+                  raise SystemExit(f'Expected SIGHTINGDATE; fields={fields}')
               rows=[]
+              samples=[]
               for row in reader:
-                  vals=[str(row.get(k,'') or '') for k in (date_fields or fields)]
-                  if any(re.search(r'(?<!\d)2016(?!\d)', v) for v in vals):
+                  s=(row.get('SIGHTINGDATE') or '').strip()
+                  if len(samples)<10 and s:
+                      samples.append(s)
+                  dt=None
+                  for fmt in ('%m/%d/%y','%m/%d/%Y','%Y-%m-%d','%Y-%m-%d %H:%M:%S','%m/%d/%Y %H:%M:%S','%m/%d/%y %H:%M:%S'):
+                      try:
+                          dt=datetime.strptime(s,fmt)
+                          break
+                      except ValueError:
+                          pass
+                  if dt is None:
+                      try:
+                          from email.utils import parsedate_to_datetime
+                          dt=parsedate_to_datetime(s)
+                      except Exception:
+                          pass
+                  if dt is not None and dt.year==2016:
                       rows.append(row)
+          print('SIGHTINGDATE samples:', samples)
           if not rows:
-              raise SystemExit(f'No 2016 rows found. fields={fields}')
+              raise SystemExit(f'No 2016 rows found. samples={samples}')
           with open(dst,'w',newline='',encoding='utf-8') as f:
               w=csv.DictWriter(f,fieldnames=fields)
               w.writeheader(); w.writerows(rows)
