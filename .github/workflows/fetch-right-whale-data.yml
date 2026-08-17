@@ -40,17 +40,11 @@ jobs:
                   if len(samples)<10 and s:
                       samples.append(s)
                   dt=None
-                  for fmt in ('%m/%d/%y','%m/%d/%Y','%Y-%m-%d','%Y-%m-%d %H:%M:%S','%m/%d/%Y %H:%M:%S','%m/%d/%y %H:%M:%S'):
+                  for fmt in ('%d-%b-%y','%d-%b-%Y','%m/%d/%y','%m/%d/%Y','%Y-%m-%d','%Y-%m-%d %H:%M:%S','%m/%d/%Y %H:%M:%S','%m/%d/%y %H:%M:%S'):
                       try:
                           dt=datetime.strptime(s,fmt)
                           break
                       except ValueError:
-                          pass
-                  if dt is None:
-                      try:
-                          from email.utils import parsedate_to_datetime
-                          dt=parsedate_to_datetime(s)
-                      except Exception:
                           pass
                   if dt is not None and dt.year==2016:
                       rows.append(row)
