@@ -1,0 +1,93 @@
+name: Fetch Right Whale Benchmark Data
+
+on:
+  push:
+    branches:
+      - chatgpt-data-fetch-20260817
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch NOAA Right Whale Sighting Advisory System data
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          curl -fL --retry 8 --retry-all-errors --connect-timeout 30 \
+            'https://storage.googleapis.com/nmfs_odp_nefsc/PARR/READ/PSB/23305/23305_RWSAS.csv' \
+            -o raw_rwsas.csv
+          python - <<'PY'
+          import csv, re
+          src='raw_rwsas.csv'
+          dst='out/right_whale_sightings_2016.csv'
+          with open(src, newline='', encoding='utf-8-sig') as f:
+              reader=csv.DictReader(f)
+              fields=reader.fieldnames or []
+              if not fields:
+                  raise SystemExit('RWSAS CSV has no header')
+              date_fields=[k for k in fields if any(x in k.lower() for x in ('date','year','time'))]
+              rows=[]
+              for row in reader:
+                  vals=[str(row.get(k,'') or '') for k in (date_fields or fields)]
+                  if any(re.search(r'(?<!\d)2016(?!\d)', v) for v in vals):
+                      rows.append(row)
+          if not rows:
+              raise SystemExit(f'No 2016 rows found. fields={fields}')
+          with open(dst,'w',newline='',encoding='utf-8') as f:
+              w=csv.DictWriter(f,fieldnames=fields)
+              w.writeheader(); w.writerows(rows)
+          print('RWSAS header:', fields)
+          print('2016 rows:', len(rows))
+          PY
+          test -s out/right_whale_sightings_2016.csv
+
+      - name: Fetch NDBC station 44018 2016 historical standard meteorological data
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 8 --retry-all-errors --connect-timeout 30 \
+            'https://www.ndbc.noaa.gov/data/historical/stdmet/44018h2016.txt.gz' \
+            -o 44018h2016.txt.gz
+          gzip -t 44018h2016.txt.gz
+          gzip -dc 44018h2016.txt.gz > out/ndbc_44018_2016.txt
+          test -s out/ndbc_44018_2016.txt
+          head -n 3 out/ndbc_44018_2016.txt
+
+      - name: Validate and create checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import csv
+          whale=Path('out/right_whale_sightings_2016.csv')
+          ndbc=Path('out/ndbc_44018_2016.txt')
+          assert whale.stat().st_size > 1000, whale.stat().st_size
+          assert ndbc.stat().st_size > 10000, ndbc.stat().st_size
+          with whale.open(newline='',encoding='utf-8-sig') as f:
+              rows=list(csv.reader(f))
+          assert len(rows)>1
+          text=ndbc.read_text(encoding='utf-8',errors='ignore')
+          assert '#YY' in text[:1000] and 'WSPD' in text[:1000]
+          print('whale bytes', whale.stat().st_size, 'rows', len(rows)-1)
+          print('ndbc bytes', ndbc.stat().st_size)
+          PY
+          (cd out && sha256sum right_whale_sightings_2016.csv ndbc_44018_2016.txt > SHA256SUMS.txt)
+
+      - name: Upload exact benchmark inputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: right-whale-benchmark-data
+          path: |
+            out/right_whale_sightings_2016.csv
+            out/ndbc_44018_2016.txt
+            out/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 7
