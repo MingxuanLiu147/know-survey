@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   fetch:
@@ -19,6 +19,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          rm -rf travel_images
           mkdir -p travel_images
 
           curl -fL --retry 8 --retry-all-errors --connect-timeout 30 \
@@ -46,21 +47,19 @@ jobs:
             'https://commons.wikimedia.org/wiki/Special:Redirect/file/National_Park_Service_%2848754406461%29.jpg' \
             -o travel_images/cape_cod_salt_marsh_sunset_nps.jpg
 
-          file travel_images/*
           python - <<'PY'
           from pathlib import Path
           from PIL import Image
-          for p in sorted(Path('travel_images').glob('*')):
-              if p.suffix.lower() in {'.jpg','.jpeg','.png'}:
-                  im=Image.open(p)
-                  im.verify()
-                  print(p.name, im.size, p.stat().st_size)
+          for p in sorted(Path('travel_images').glob('*.jpg')):
+              im=Image.open(p)
+              im.verify()
+              print(p.name, im.size, p.stat().st_size)
           PY
 
           cat > travel_images/IMAGE_CREDITS.md <<'EOF'
           # Image credits
 
-          - `right_whales_noaa.jpg` — NOAA Fisheries, North Atlantic right whales, source: https://www.fisheries.noaa.gov/news/16-million-available-support-recovery-actions-north-atlantic-right-whales
+          - `right_whales_noaa.jpg` — NOAA Fisheries, North Atlantic right whales. Source page: https://www.fisheries.noaa.gov/news/16-million-available-support-recovery-actions-north-atlantic-right-whales
           - `cape_cod_beach_nps.jpg` — National Park Service photo, Cape Cod National Seashore. Source record: https://commons.wikimedia.org/wiki/File:A_Day_at_the_Beach_(219bd288-1dd8-b71b-0b43-02dba2e152c0).JPG
           - `province_lands_dunes_nps.jpg` — National Park Service photo, Cape Cod National Seashore. Source record: https://commons.wikimedia.org/wiki/File:The_vast_sand_dunes_of_Truro_and_Provincetown_are_memorable_features_of_the_national_seashore._Strong_winds_whip_sand_around_(225ad6b5-1dd8-b71b-0b5f-20d701b873d3).jpg
           - `race_point_hatches_harbor.jpg` — Art01852, “race point & hatches harbor,” CC BY 2.0 via Wikimedia Commons: https://commons.wikimedia.org/wiki/File:Race_point_%26_hatches_harbor_(308191330).jpg
@@ -68,6 +67,20 @@ jobs:
           EOF
 
           (cd travel_images && sha256sum *.jpg > SHA256SUMS_IMAGES.txt)
+
+      - name: Commit frozen travel images to branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add travel_images
+          if git diff --cached --quiet; then
+            echo 'No image changes to commit.'
+          else
+            git commit -m 'Freeze real travel-guide images'
+            git push origin HEAD:chatgpt-data-fetch-20260817
+          fi
 
       - name: Upload travel image pack
         uses: actions/upload-artifact@v4
