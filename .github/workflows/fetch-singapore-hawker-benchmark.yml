@@ -7,25 +7,26 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   fetch:
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Fetch NEA datasets and create frozen candidate snapshots
+      - name: Fetch official NEA data and freeze candidate snapshots
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p out/raw out/media
           python - <<'PY'
-          import csv, json, time, requests
+          import csv, json, requests, time
           from pathlib import Path
 
           OUT=Path('out')
-          candidate_names=[
+          names=[
             'Amoy Street Food Centre (Telok Ayer Food Centre)',
             'Maxwell Food Centre (Kim Hua Market)',
             'Smith Street Blk 335 (Chinatown Complex Market)',
@@ -33,99 +34,124 @@ jobs:
             'Buffalo Road Blk 665 (Tekka Centre/Zhu Jiao Market)',
           ]
 
-          # 1) Official NEA 2026 closure dataset through data.gov.sg datastore API.
+          # Official NEA Dates of Hawker Centres Closure (2026), 123 rows.
           closure_id='d_bda4baa634dd1cc7a6c7cad5f19e2d68'
-          u=f'https://data.gov.sg/api/action/datastore_search?resource_id={closure_id}&limit=500'
-          r=requests.get(u,timeout=60); r.raise_for_status()
-          payload=r.json(); (OUT/'raw/nea_hawker_closures_2026.json').write_text(json.dumps(payload,ensure_ascii=False,indent=2),encoding='utf-8')
-          records=payload['result']['records']
-          by_name={x['name']:x for x in records}
-          missing=[n for n in candidate_names if n not in by_name]
-          if missing: raise SystemExit(f'missing closure candidates: {missing}')
-          fields=[f['id'] for f in payload['result']['fields'] if f['id']!='_id']
-          with (OUT/'nea_hawker_closures_2026_candidates.csv').open('w',newline='',encoding='utf-8') as f:
-              w=csv.DictWriter(f,fieldnames=fields); w.writeheader(); w.writerows([{k:by_name[n].get(k,'') for k in fields} for n in candidate_names])
+          url=f'https://data.gov.sg/api/action/datastore_search?resource_id={closure_id}&limit=500'
+          r=requests.get(url,timeout=90); r.raise_for_status()
+          payload=r.json()
+          (OUT/'raw/nea_hawker_closures_2026.json').write_text(json.dumps(payload,ensure_ascii=False,indent=2),encoding='utf-8')
+          rows=payload['result']['records']
+          by={x['name']:x for x in rows}
+          missing=[n for n in names if n not in by]
+          if missing: raise SystemExit(f'missing candidates: {missing}')
 
-          # 2) Official NEA Hawker Centres GeoJSON download.
-          geo_id='d_4a086da0a5553be1d89383cd90d07ecd'
-          s=requests.Session()
-          init=f'https://api-open.data.gov.sg/v1/public/api/datasets/{geo_id}/initiate-download'
-          poll=f'https://api-open.data.gov.sg/v1/public/api/datasets/{geo_id}/poll-download'
-          ri=s.get(init,timeout=60)
-          if ri.status_code not in (200,201):
-              raise SystemExit(f'initiate download failed {ri.status_code}: {ri.text[:500]}')
-          download_url=None
-          for _ in range(20):
-              rp=s.get(poll,timeout=60)
-              if rp.status_code in (200,201):
-                  j=rp.json()
-                  data=j.get('data') or {}
-                  download_url=data.get('url')
-                  if download_url: break
-              time.sleep(3)
-          if not download_url: raise SystemExit(f'poll download failed: {rp.status_code} {rp.text[:1000]}')
-          rg=s.get(download_url,timeout=120); rg.raise_for_status()
-          (OUT/'raw/nea_hawker_centres.geojson').write_bytes(rg.content)
-          geo=rg.json()
-          sel=[]
-          for ft in geo.get('features',[]):
-              name=(ft.get('properties') or {}).get('NAME')
-              if name in candidate_names:
-                  sel.append(ft)
-          found={(ft.get('properties') or {}).get('NAME') for ft in sel}
-          missing=[n for n in candidate_names if n not in found]
-          if missing: raise SystemExit(f'missing geo candidates: {missing}')
-          candidate_geo={'type':'FeatureCollection','name':'NEA_HAWKER_CANDIDATES_FROZEN','features':sel}
+          fields=[f['id'] for f in payload['result']['fields'] if f['id']!='_id']
+          selected=[{k:by[n].get(k,'') for k in fields} for n in names]
+          with (OUT/'nea_hawker_closures_2026_candidates.csv').open('w',newline='',encoding='utf-8') as f:
+              w=csv.DictWriter(f,fieldnames=fields); w.writeheader(); w.writerows(selected)
+
+          # Build a deterministic GeoJSON point subset directly from the official
+          # lat/lon columns in the same NEA closure dataset. No coordinates invented.
+          features=[]
+          for r0 in selected:
+              lat=float(r0['latitude_hc']); lon=float(r0['longitude_hc'])
+              props=dict(r0)
+              features.append({'type':'Feature','geometry':{'type':'Point','coordinates':[lon,lat]},'properties':props})
+          candidate_geo={'type':'FeatureCollection','name':'NEA_HAWKER_CANDIDATES_FROM_2026_CLOSURE_DATASET','features':features}
           (OUT/'nea_hawker_centres_candidates.geojson').write_text(json.dumps(candidate_geo,ensure_ascii=False,indent=2),encoding='utf-8')
-          print('closure rows',len(records),'geo features',len(geo.get('features',[])),'candidate features',len(sel))
+
+          # Best-effort raw NEA Hawker Centres GeoJSON download for provenance.
+          geo_id='d_4a086da0a5553be1d89383cd90d07ecd'
+          try:
+              s=requests.Session()
+              init=f'https://api-open.data.gov.sg/v1/public/api/datasets/{geo_id}/initiate-download'
+              poll=f'https://api-open.data.gov.sg/v1/public/api/datasets/{geo_id}/poll-download'
+              ri=s.get(init,timeout=60)
+              print('geo initiate',ri.status_code,ri.text[:200])
+              download_url=None
+              if ri.status_code in (200,201):
+                  for _ in range(12):
+                      rp=s.get(poll,timeout=60)
+                      if rp.status_code in (200,201):
+                          data=(rp.json().get('data') or {})
+                          download_url=data.get('url')
+                          if download_url: break
+                      time.sleep(2)
+              if download_url:
+                  rg=s.get(download_url,timeout=120); rg.raise_for_status()
+                  (OUT/'raw/nea_hawker_centres.geojson').write_bytes(rg.content)
+                  print('raw hawker geojson bytes',len(rg.content))
+          except Exception as e:
+              print('raw geojson optional fetch failed:',repr(e))
+
+          print('NEA closure rows',len(rows),'candidate rows',len(selected))
           PY
 
-      - name: Fetch official heritage/tourism source snapshots
+      - name: Fetch official heritage and tourism snapshots
         shell: bash
         run: |
-          set -euo pipefail
+          set -u
           UA='Mozilla/5.0 (compatible; benchmark-data-freezer/1.0)'
-          curl -fL --retry 6 --retry-all-errors -A "$UA" \
-            'https://ich.unesco.org/en/RL/hawker-culture-in-singapore-community-dining-and-culinary-practices-in-a-multicultural-urban-context-01568' \
-            -o out/raw/unesco_hawker_culture.html
-          curl -fL --retry 6 --retry-all-errors -A "$UA" \
-            'https://www.visitsingapore.com/things-to-do/dining/local-food-and-drinks/experience-local-delights/' \
-            -o out/raw/stb_hawker_local_delights.html
-          curl -fL --retry 6 --retry-all-errors -A "$UA" \
-            'https://www.visitsingapore.com/neighbourhood/featured-neighbourhood/chinatown/' \
-            -o out/raw/stb_chinatown.html
-          curl -fL --retry 6 --retry-all-errors -A "$UA" \
-            'https://www.visitsingapore.com/content/dam/desktop/global/about-singapore/traveller-information/52-weekends-eguide-2020.pdf' \
-            -o out/raw/stb_52_weekends_2020.pdf
+          fetch_optional() {
+            url="$1"; out="$2"
+            if curl -fL --retry 5 --retry-all-errors --connect-timeout 30 -A "$UA" "$url" -o "$out"; then
+              test -s "$out" || rm -f "$out"
+            else
+              rm -f "$out"
+              echo "optional fetch failed: $url"
+            fi
+          }
+          fetch_optional 'https://ich.unesco.org/en/RL/hawker-culture-in-singapore-community-dining-and-culinary-practices-in-a-multicultural-urban-context-01568' out/raw/unesco_hawker_culture.html
+          fetch_optional 'https://www.visitsingapore.com/things-to-do/dining/local-food-and-drinks/experience-local-delights/' out/raw/stb_hawker_local_delights.html
+          fetch_optional 'https://www.visitsingapore.com/neighbourhood/featured-neighbourhood/chinatown/' out/raw/stb_chinatown.html
+          fetch_optional 'https://www.visitsingapore.com/content/dam/desktop/global/about-singapore/traveller-information/52-weekends-eguide-2020.pdf' out/raw/stb_52_weekends_2020.pdf
 
       - name: Fetch official NEA centre photographs
         shell: bash
         run: |
-          set -euo pipefail
+          set -u
           UA='Mozilla/5.0'
-          curl -fL --retry 6 --retry-all-errors -A "$UA" 'https://www.nea.gov.sg/images/default-source/hawker-centres-division/amoy-street-food-centre.jpg' -o out/media/amoy_street_food_centre.jpg
-          curl -fL --retry 6 --retry-all-errors -A "$UA" 'https://www.nea.gov.sg/images/default-source/hawker-centres-division/maxwell-food-centre.jpg' -o out/media/maxwell_food_centre.jpg
-          curl -fL --retry 6 --retry-all-errors -A "$UA" 'https://www.nea.gov.sg/images/default-source/hawker-centres-division/chinatown-market.jpg' -o out/media/chinatown_complex.jpg
-          curl -fL --retry 6 --retry-all-errors -A "$UA" "https://www.nea.gov.sg/images/default-source/hawker-centres-division/people's-park-food-centre.jpg" -o out/media/peoples_park_food_centre.jpg
-          curl -fL --retry 6 --retry-all-errors -A "$UA" 'http://www.nea.gov.sg/images/default-source/Hawker-Centres-Division/resize_1262156313186.jpg' -o out/media/tekka_centre.jpg
-          file out/media/*
+          fetch_img() { if ! curl -fL --retry 5 --retry-all-errors --connect-timeout 30 -A "$UA" "$1" -o "$2"; then rm -f "$2"; fi; }
+          fetch_img 'https://www.nea.gov.sg/images/default-source/hawker-centres-division/amoy-street-food-centre.jpg' out/media/amoy_street_food_centre.jpg
+          fetch_img 'https://www.nea.gov.sg/images/default-source/hawker-centres-division/maxwell-food-centre.jpg' out/media/maxwell_food_centre.jpg
+          fetch_img 'https://www.nea.gov.sg/images/default-source/hawker-centres-division/chinatown-market.jpg' out/media/chinatown_complex.jpg
+          fetch_img "https://www.nea.gov.sg/images/default-source/hawker-centres-division/people's-park-food-centre.jpg" out/media/peoples_park_food_centre.jpg
+          fetch_img 'http://www.nea.gov.sg/images/default-source/Hawker-Centres-Division/resize_1262156313186.jpg' out/media/tekka_centre.jpg
+          find out/media -type f -maxdepth 1 -print -exec file {} \;
 
-      - name: Add source manifest and checksums
+      - name: Add manifest and checksums
         shell: bash
         run: |
           set -euo pipefail
           cat > out/RAW_SOURCE_MANIFEST.md <<'EOF'
           # Frozen public-source inputs
 
-          - NEA Hawker Centres GeoJSON: dataset `d_4a086da0a5553be1d89383cd90d07ecd`, data.gov.sg.
-          - NEA Dates of Hawker Centres Closure (2026): dataset `d_bda4baa634dd1cc7a6c7cad5f19e2d68`, data.gov.sg.
-          - UNESCO Hawker culture in Singapore Representative List page.
-          - Singapore Tourism Board / VisitSingapore: Feast On Local Delights, Chinatown guide, and 52 Weekends guide.
-          - Five centre photographs are downloaded from the official NEA PHOTOURL records corresponding to the frozen candidate centres.
+          Core required source:
+          - NEA Dates of Hawker Centres Closure (2026), data.gov.sg dataset `d_bda4baa634dd1cc7a6c7cad5f19e2d68`.
+            The dataset itself contains centre name, closure dates, latitude/longitude, official PHOTOURL, address, stall counts, description and status.
+          - `nea_hawker_centres_candidates.geojson` is a deterministic five-centre point extract using the official latitude/longitude in that NEA dataset.
 
-          Candidate subsets are deterministic extracts of the official NEA datasets; raw downloads are retained under `raw/`.
+          Additional provenance snapshots (best effort):
+          - NEA Hawker Centres GeoJSON dataset `d_4a086da0a5553be1d89383cd90d07ecd`.
+          - UNESCO Hawker culture in Singapore Representative List page.
+          - Singapore Tourism Board / VisitSingapore hawker and Chinatown pages plus 52 Weekends guide.
+          - Official NEA PHOTOURL centre photographs.
           EOF
           (cd out && find . -type f ! -name SHA256SUMS.txt -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt)
+
+      - name: Commit frozen files to temporary branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf chatgpt_frozen_data/singapore_hawker
+          mkdir -p chatgpt_frozen_data/singapore_hawker
+          cp -a out/. chatgpt_frozen_data/singapore_hawker/
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add chatgpt_frozen_data/singapore_hawker
+          git diff --cached --quiet && exit 0
+          git commit -m 'Freeze Singapore hawker benchmark public data [skip ci]'
+          git push origin HEAD:chatgpt-data-fetch-20260817
 
       - name: Upload frozen Singapore hawker data
         uses: actions/upload-artifact@v4
