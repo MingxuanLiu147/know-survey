@@ -1,0 +1,201 @@
+{
+  "type": "FeatureCollection",
+  "name": "NEA_HAWKER_CANDIDATES_FROM_2026_CLOSURE_DATASET",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          103.8469849,
+          1.279129028
+        ]
+      },
+      "properties": {
+        "serial_no": "3",
+        "name": "Amoy Street Food Centre (Telok Ayer Food Centre)",
+        "q1_cleaningstartdate": "28/2/2026",
+        "q1_cleaningenddate": "28/2/2026",
+        "remarks_q1": "nil",
+        "q2_cleaningstartdate": "30/5/2026",
+        "q2_cleaningenddate": "30/5/2026",
+        "remarks_q2": "nil",
+        "q3_cleaningstartdate": "19/9/2026",
+        "q3_cleaningenddate": "19/9/2026",
+        "remarks_q3": "nil",
+        "q4_cleaningstartdate": "5/12/2026",
+        "q4_cleaningenddate": "6/12/2026",
+        "remarks_q4": "nil",
+        "other_works_startdate": "NA",
+        "other_works_enddate": "NA",
+        "remarks_other_works": "nil",
+        "latitude_hc": "1.279129028",
+        "longitude_hc": "103.8469849",
+        "photourl": "https://www.nea.gov.sg/images/default-source/hawker-centres-division/amoy-street-food-centre.jpg",
+        "address_myenv": "National Development Building, Annex B, Telok Ayer Street, Singapore 069111",
+        "no_of_market_stalls": "1",
+        "no_of_food_stalls": "134",
+        "description_myenv": "Built in 1983, the two-storey food centre is located within the central business district.  Housing many well-known stalls, the centre has evolved into a favourite lunch venue for executives working near Shenton Way. Be spoilt by the choice of hawker fare at affordable prices!",
+        "status": "Existing",
+        "google_3d_view": "https://goo.gl/maps/RiX319zQXRFeHWPE6",
+        "google_for_stall": "nil"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          103.8444595,
+          1.280550957
+        ]
+      },
+      "properties": {
+        "serial_no": "72",
+        "name": "Maxwell Food Centre (Kim Hua Market)",
+        "q1_cleaningstartdate": "9/3/2026",
+        "q1_cleaningenddate": "9/3/2026",
+        "remarks_q1": "nil",
+        "q2_cleaningstartdate": "15/6/2026",
+        "q2_cleaningenddate": "15/6/2026",
+        "remarks_q2": "nil",
+        "q3_cleaningstartdate": "14/9/2026",
+        "q3_cleaningenddate": "16/9/2026",
+        "remarks_q3": "nil",
+        "q4_cleaningstartdate": "14/12/2026",
+        "q4_cleaningenddate": "14/12/2026",
+        "remarks_q4": "nil",
+        "other_works_startdate": "NA",
+        "other_works_enddate": "NA",
+        "remarks_other_works": "nil",
+        "latitude_hc": "1.280550957",
+        "longitude_hc": "103.8444595",
+        "photourl": "https://www.nea.gov.sg/images/default-source/hawker-centres-division/maxwell-food-centre.jpg",
+        "address_myenv": "1, Kadayanallur Street, Singapore 069184",
+        "no_of_market_stalls": "0",
+        "no_of_food_stalls": "103",
+        "description_myenv": "Maxwell Food Centre began its roots in 1935. One of the iconic hawker centres in Singapore, the food centre now consists of 103 cooked food stalls. Popular hawker fare such as Chicken Rice, Tapioca Kueh, Porridge, Desserts and more can be found here.",
+        "status": "Existing",
+        "google_3d_view": "https://goo.gl/maps/xN3zBUH1zDAKs5AH6",
+        "google_for_stall": "nil"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          103.8428802,
+          1.282299995
+        ]
+      },
+      "properties": {
+        "serial_no": "90",
+        "name": "Smith Street Blk 335 (Chinatown Complex Market)",
+        "q1_cleaningstartdate": "23/3/2026",
+        "q1_cleaningenddate": "25/3/2026",
+        "remarks_q1": "nil",
+        "q2_cleaningstartdate": "22/6/2026",
+        "q2_cleaningenddate": "23/6/2026",
+        "remarks_q2": "nil",
+        "q3_cleaningstartdate": "31/8/2026",
+        "q3_cleaningenddate": "1/9/2026",
+        "remarks_q3": "nil",
+        "q4_cleaningstartdate": "16/11/2026",
+        "q4_cleaningenddate": "17/11/2026",
+        "remarks_q4": "nil",
+        "other_works_startdate": "NA",
+        "other_works_enddate": "NA",
+        "remarks_other_works": "nil",
+        "latitude_hc": "1.282299995",
+        "longitude_hc": "103.8428802",
+        "photourl": "https://www.nea.gov.sg/images/default-source/hawker-centres-division/chinatown-market.jpg",
+        "address_myenv": "Blk 335, Smith Street, Singapore 050335",
+        "no_of_market_stalls": "477",
+        "no_of_food_stalls": "226",
+        "description_myenv": "Original built in 1983, Blk 335 Smith Street is also commonly known as Chinatown Complex. It is the largest hawker centre in Singapore comprising a total of 703 stalls! After upgrading in 2008, the building has been transformed into an architecture of strong Chinese influence with a modern twist. Situated in the Chinatown area, the centre now comes with better amenities and increased seating capacity. A favourite hang-out place for residents to reminisce good old days while enjoying the wide array of local dishes offered.",
+        "status": "Existing",
+        "google_3d_view": "https://goo.gl/maps/jbbCi7TsmYt9KB9j6",
+        "google_for_stall": "nil"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          103.8425903,
+          1.284870982
+        ]
+      },
+      "properties": {
+        "serial_no": "74",
+        "name": "New Market Road Blk 32 (People's Park Food Centre)",
+        "q1_cleaningstartdate": "16/3/2026",
+        "q1_cleaningenddate": "17/3/2026",
+        "remarks_q1": "nil",
+        "q2_cleaningstartdate": "8/6/2026",
+        "q2_cleaningenddate": "9/6/2026",
+        "remarks_q2": "nil",
+        "q3_cleaningstartdate": "7/9/2026",
+        "q3_cleaningenddate": "8/9/2026",
+        "remarks_q3": "nil",
+        "q4_cleaningstartdate": "7/12/2026",
+        "q4_cleaningenddate": "8/12/2026",
+        "remarks_q4": "nil",
+        "other_works_startdate": "NA",
+        "other_works_enddate": "NA",
+        "remarks_other_works": "nil",
+        "latitude_hc": "1.284870982",
+        "longitude_hc": "103.8425903",
+        "photourl": "https://www.nea.gov.sg/images/default-source/hawker-centres-division/people's-park-food-centre.jpg",
+        "address_myenv": "Blk 32, New Market Road, Singapore 050032",
+        "no_of_market_stalls": "0",
+        "no_of_food_stalls": "87",
+        "description_myenv": "Fondly known as People's Park Complex, it is located right in the heart of the bustling Chinatown. It is a favourite haunt for elderly folks to catch up and enjoy a delicious yet affordable meal.  Extremely accessible by bus or MRT. Upgraded in 2005, it has 87 cooked food stalls located on the ground floor. The second and third floors comprise HDB shops selling fabrics, fashion and home wares.",
+        "status": "Existing",
+        "google_3d_view": "https://goo.gl/maps/XMk5ztrP752Kajb7A",
+        "google_for_stall": "nil"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          103.8506699,
+          1.306190014
+        ]
+      },
+      "properties": {
+        "serial_no": "24",
+        "name": "Buffalo Road Blk 665 (Tekka Centre/Zhu Jiao Market)",
+        "q1_cleaningstartdate": "30/3/2026",
+        "q1_cleaningenddate": "31/3/2026",
+        "remarks_q1": "nil",
+        "q2_cleaningstartdate": "22/6/2026",
+        "q2_cleaningenddate": "24/6/2026",
+        "remarks_q2": "nil",
+        "q3_cleaningstartdate": "21/9/2026",
+        "q3_cleaningenddate": "22/9/2026",
+        "remarks_q3": "nil",
+        "q4_cleaningstartdate": "30/11/2026",
+        "q4_cleaningenddate": "1/12/2026",
+        "remarks_q4": "nil",
+        "other_works_startdate": "NA",
+        "other_works_enddate": "NA",
+        "remarks_other_works": "nil",
+        "latitude_hc": "1.306190014",
+        "longitude_hc": "103.8506699",
+        "photourl": "http://www.nea.gov.sg/images/default-source/Hawker-Centres-Division/resize_1262156313186.jpg",
+        "address_myenv": "Blk 665, Buffalo Road, Singapore 210665",
+        "no_of_market_stalls": "284",
+        "no_of_food_stalls": "119",
+        "description_myenv": "More commonly known as Tekka Centre, the hawker centre is a popular haunt for marketing and dining needs, especially with the Indian community. An amazing variety of fresh produce is sold at the market.  Built in 1980, it is the second largest hawker centre in Singapore housing more than 400 stalls. An iconic landmark in the Little India area!",
+        "status": "Existing",
+        "google_3d_view": "https://goo.gl/maps/jdkxQwk8YsCa2kST7",
+        "google_for_stall": "nil"
+      }
+    }
+  ]
+}
