@@ -1,0 +1,136 @@
+name: Fetch Singapore Hawker Benchmark Data
+
+on:
+  push:
+    branches:
+      - chatgpt-data-fetch-20260817
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch NEA datasets and create frozen candidate snapshots
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out/raw out/media
+          python - <<'PY'
+          import csv, json, time, requests
+          from pathlib import Path
+
+          OUT=Path('out')
+          candidate_names=[
+            'Amoy Street Food Centre (Telok Ayer Food Centre)',
+            'Maxwell Food Centre (Kim Hua Market)',
+            'Smith Street Blk 335 (Chinatown Complex Market)',
+            "New Market Road Blk 32 (People's Park Food Centre)",
+            'Buffalo Road Blk 665 (Tekka Centre/Zhu Jiao Market)',
+          ]
+
+          # 1) Official NEA 2026 closure dataset through data.gov.sg datastore API.
+          closure_id='d_bda4baa634dd1cc7a6c7cad5f19e2d68'
+          u=f'https://data.gov.sg/api/action/datastore_search?resource_id={closure_id}&limit=500'
+          r=requests.get(u,timeout=60); r.raise_for_status()
+          payload=r.json(); (OUT/'raw/nea_hawker_closures_2026.json').write_text(json.dumps(payload,ensure_ascii=False,indent=2),encoding='utf-8')
+          records=payload['result']['records']
+          by_name={x['name']:x for x in records}
+          missing=[n for n in candidate_names if n not in by_name]
+          if missing: raise SystemExit(f'missing closure candidates: {missing}')
+          fields=[f['id'] for f in payload['result']['fields'] if f['id']!='_id']
+          with (OUT/'nea_hawker_closures_2026_candidates.csv').open('w',newline='',encoding='utf-8') as f:
+              w=csv.DictWriter(f,fieldnames=fields); w.writeheader(); w.writerows([{k:by_name[n].get(k,'') for k in fields} for n in candidate_names])
+
+          # 2) Official NEA Hawker Centres GeoJSON download.
+          geo_id='d_4a086da0a5553be1d89383cd90d07ecd'
+          s=requests.Session()
+          init=f'https://api-open.data.gov.sg/v1/public/api/datasets/{geo_id}/initiate-download'
+          poll=f'https://api-open.data.gov.sg/v1/public/api/datasets/{geo_id}/poll-download'
+          ri=s.get(init,timeout=60)
+          if ri.status_code not in (200,201):
+              raise SystemExit(f'initiate download failed {ri.status_code}: {ri.text[:500]}')
+          download_url=None
+          for _ in range(20):
+              rp=s.get(poll,timeout=60)
+              if rp.status_code in (200,201):
+                  j=rp.json()
+                  data=j.get('data') or {}
+                  download_url=data.get('url')
+                  if download_url: break
+              time.sleep(3)
+          if not download_url: raise SystemExit(f'poll download failed: {rp.status_code} {rp.text[:1000]}')
+          rg=s.get(download_url,timeout=120); rg.raise_for_status()
+          (OUT/'raw/nea_hawker_centres.geojson').write_bytes(rg.content)
+          geo=rg.json()
+          sel=[]
+          for ft in geo.get('features',[]):
+              name=(ft.get('properties') or {}).get('NAME')
+              if name in candidate_names:
+                  sel.append(ft)
+          found={(ft.get('properties') or {}).get('NAME') for ft in sel}
+          missing=[n for n in candidate_names if n not in found]
+          if missing: raise SystemExit(f'missing geo candidates: {missing}')
+          candidate_geo={'type':'FeatureCollection','name':'NEA_HAWKER_CANDIDATES_FROZEN','features':sel}
+          (OUT/'nea_hawker_centres_candidates.geojson').write_text(json.dumps(candidate_geo,ensure_ascii=False,indent=2),encoding='utf-8')
+          print('closure rows',len(records),'geo features',len(geo.get('features',[])),'candidate features',len(sel))
+          PY
+
+      - name: Fetch official heritage/tourism source snapshots
+        shell: bash
+        run: |
+          set -euo pipefail
+          UA='Mozilla/5.0 (compatible; benchmark-data-freezer/1.0)'
+          curl -fL --retry 6 --retry-all-errors -A "$UA" \
+            'https://ich.unesco.org/en/RL/hawker-culture-in-singapore-community-dining-and-culinary-practices-in-a-multicultural-urban-context-01568' \
+            -o out/raw/unesco_hawker_culture.html
+          curl -fL --retry 6 --retry-all-errors -A "$UA" \
+            'https://www.visitsingapore.com/things-to-do/dining/local-food-and-drinks/experience-local-delights/' \
+            -o out/raw/stb_hawker_local_delights.html
+          curl -fL --retry 6 --retry-all-errors -A "$UA" \
+            'https://www.visitsingapore.com/neighbourhood/featured-neighbourhood/chinatown/' \
+            -o out/raw/stb_chinatown.html
+          curl -fL --retry 6 --retry-all-errors -A "$UA" \
+            'https://www.visitsingapore.com/content/dam/desktop/global/about-singapore/traveller-information/52-weekends-eguide-2020.pdf' \
+            -o out/raw/stb_52_weekends_2020.pdf
+
+      - name: Fetch official NEA centre photographs
+        shell: bash
+        run: |
+          set -euo pipefail
+          UA='Mozilla/5.0'
+          curl -fL --retry 6 --retry-all-errors -A "$UA" 'https://www.nea.gov.sg/images/default-source/hawker-centres-division/amoy-street-food-centre.jpg' -o out/media/amoy_street_food_centre.jpg
+          curl -fL --retry 6 --retry-all-errors -A "$UA" 'https://www.nea.gov.sg/images/default-source/hawker-centres-division/maxwell-food-centre.jpg' -o out/media/maxwell_food_centre.jpg
+          curl -fL --retry 6 --retry-all-errors -A "$UA" 'https://www.nea.gov.sg/images/default-source/hawker-centres-division/chinatown-market.jpg' -o out/media/chinatown_complex.jpg
+          curl -fL --retry 6 --retry-all-errors -A "$UA" "https://www.nea.gov.sg/images/default-source/hawker-centres-division/people's-park-food-centre.jpg" -o out/media/peoples_park_food_centre.jpg
+          curl -fL --retry 6 --retry-all-errors -A "$UA" 'http://www.nea.gov.sg/images/default-source/Hawker-Centres-Division/resize_1262156313186.jpg' -o out/media/tekka_centre.jpg
+          file out/media/*
+
+      - name: Add source manifest and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > out/RAW_SOURCE_MANIFEST.md <<'EOF'
+          # Frozen public-source inputs
+
+          - NEA Hawker Centres GeoJSON: dataset `d_4a086da0a5553be1d89383cd90d07ecd`, data.gov.sg.
+          - NEA Dates of Hawker Centres Closure (2026): dataset `d_bda4baa634dd1cc7a6c7cad5f19e2d68`, data.gov.sg.
+          - UNESCO Hawker culture in Singapore Representative List page.
+          - Singapore Tourism Board / VisitSingapore: Feast On Local Delights, Chinatown guide, and 52 Weekends guide.
+          - Five centre photographs are downloaded from the official NEA PHOTOURL records corresponding to the frozen candidate centres.
+
+          Candidate subsets are deterministic extracts of the official NEA datasets; raw downloads are retained under `raw/`.
+          EOF
+          (cd out && find . -type f ! -name SHA256SUMS.txt -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt)
+
+      - name: Upload frozen Singapore hawker data
+        uses: actions/upload-artifact@v4
+        with:
+          name: singapore-hawker-benchmark-data
+          path: out/
+          if-no-files-found: error
+          retention-days: 7
