@@ -1,0 +1,109 @@
+name: Package Singapore Hawker V3 Real Images
+
+on:
+  push:
+    branches:
+      - chatgpt-data-fetch-20260817
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build frozen real-image pack
+        shell: bash
+        run: |
+          set -euo pipefail
+          SRC='chatgpt_frozen_data/singapore_hawker'
+          OUT='v3_image_pack'
+          mkdir -p "$OUT/centres" "$OUT/reference_pages"
+
+          cp "$SRC/media/amoy_street_food_centre.jpg" "$OUT/centres/amoy_street_food_centre.jpg"
+          cp "$SRC/media/maxwell_food_centre.jpg" "$OUT/centres/maxwell_food_centre.jpg"
+          cp "$SRC/media/chinatown_complex.jpg" "$OUT/centres/chinatown_complex.jpg"
+          cp "$SRC/media/peoples_park_food_centre.jpg" "$OUT/centres/peoples_park_food_centre.jpg"
+          cp "$SRC/media/tekka_centre.jpg" "$OUT/centres/tekka_centre.jpg"
+
+          # Render an official STB editorial source page that contains A Noodle Story / Old Amoy Chendol.
+          if [ -f "$SRC/raw/stb_52_weekends_2020.pdf" ]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq poppler-utils >/dev/null
+            pdftoppm -f 21 -singlefile -jpeg -jpegopt quality=92 -r 150 \
+              "$SRC/raw/stb_52_weekends_2020.pdf" "$OUT/reference_pages/stb_52_weekends_page21"
+          fi
+
+          python - <<'PY'
+          from pathlib import Path
+          import csv, json, hashlib
+          from PIL import Image
+
+          out=Path('v3_image_pack')
+          csv_path=Path('chatgpt_frozen_data/singapore_hawker/nea_hawker_closures_2026_candidates.csv')
+          rows=list(csv.DictReader(csv_path.open(encoding='utf-8-sig')))
+          by={r['name']:r for r in rows}
+          specs=[
+            ('amoy','Amoy Street Food Centre (Telok Ayer Food Centre)','centres/amoy_street_food_centre.jpg',True),
+            ('maxwell','Maxwell Food Centre (Kim Hua Market)','centres/maxwell_food_centre.jpg',True),
+            ('chinatown','Smith Street Blk 335 (Chinatown Complex Market)','centres/chinatown_complex.jpg',True),
+            ('peoples_park',"New Market Road Blk 32 (People's Park Food Centre)",'centres/peoples_park_food_centre.jpg',False),
+            ('tekka','Buffalo Road Blk 665 (Tekka Centre/Zhu Jiao Market)','centres/tekka_centre.jpg',False),
+          ]
+          assets=[]
+          for aid,name,rel,selected in specs:
+            p=out/rel
+            assert p.exists() and p.stat().st_size>10000, p
+            with Image.open(p) as im:
+              w,h=im.size
+              fmt=im.format
+            sha=hashlib.sha256(p.read_bytes()).hexdigest()
+            r=by[name]
+            assets.append({
+              'asset_id':f'nea_{aid}_centre_photo',
+              'local_path':rel,
+              'subject':name,
+              'image_type':'centre_photo',
+              'selected_stop':selected,
+              'source_org':'Singapore National Environment Agency (NEA)',
+              'source_record_serial_no':r['serial_no'],
+              'source_url':r['photourl'],
+              'source_dataset':'NEA Dates of Hawker Centres Closure (2026), data.gov.sg dataset d_bda4baa634dd1cc7a6c7cad5f19e2d68',
+              'width_px':w,'height_px':h,'format':fmt,'bytes':p.stat().st_size,'sha256':sha,
+              'provenance_note':'Frozen copy of the official NEA PHOTOURL associated with the centre record. Use as centre photography; do not relabel it as a specific dish or stall.'
+            })
+          ref=out/'reference_pages/stb_52_weekends_page21.jpg'
+          if ref.exists():
+            with Image.open(ref) as im:w,h=im.size;fmt=im.format
+            assets.append({
+              'asset_id':'stb_52_weekends_page21',
+              'local_path':'reference_pages/stb_52_weekends_page21.jpg',
+              'subject':'STB 52 Weekends editorial page featuring hawker stories including A Noodle Story and Old Amoy Chendol',
+              'image_type':'official_guide_page_reference',
+              'selected_stop':False,
+              'source_org':'Singapore Tourism Board / VisitSingapore',
+              'source_url':'https://www.visitsingapore.com/content/dam/desktop/global/about-singapore/traveller-information/52-weekends-eguide-2020.pdf',
+              'source_dataset':'52 Weekends in Singapore (official tourism guide PDF)',
+              'width_px':w,'height_px':h,'format':fmt,'bytes':ref.stat().st_size,
+              'sha256':hashlib.sha256(ref.read_bytes()).hexdigest(),
+              'provenance_note':'Rendered page from an official human-designed tourism guide. This is a design/editorial reference, not a live operating-status source.'
+            })
+          (out/'image_manifest.json').write_text(json.dumps({'schema_version':'1.0','assets':assets},ensure_ascii=False,indent=2),encoding='utf-8')
+          lines=['# Real image provenance','']
+          for a in assets:
+            lines += [f"## {a['asset_id']}",f"- Subject: {a['subject']}",f"- Source: {a['source_org']}",f"- URL: {a['source_url']}",f"- Local: `{a['local_path']}`",f"- SHA256: `{a['sha256']}`",f"- Note: {a['provenance_note']}",'']
+          (out/'IMAGE_PROVENANCE.md').write_text('\n'.join(lines),encoding='utf-8')
+          PY
+
+          (cd "$OUT" && find . -type f ! -name SHA256SUMS.txt -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt)
+
+      - name: Upload V3 real-image pack
+        uses: actions/upload-artifact@v4
+        with:
+          name: singapore-hawker-v3-real-images
+          path: v3_image_pack/
+          if-no-files-found: error
+          retention-days: 7
