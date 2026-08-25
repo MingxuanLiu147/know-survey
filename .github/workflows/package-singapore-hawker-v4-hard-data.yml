@@ -1,0 +1,245 @@
+name: Package Singapore Hawker V4 HARD Real Data
+
+on:
+  push:
+    branches:
+      - chatgpt-data-fetch-20260817
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build frozen V4 HARD public-source pack
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install -q requests pillow
+          mkdir -p v4/raw v4/visual_assets v4/_oracle
+          python - <<'PY'
+          from pathlib import Path
+          import requests, csv, json, math, hashlib, random, re, time
+          from PIL import Image
+
+          OUT=Path('v4'); RAW=OUT/'raw'; VIS=OUT/'visual_assets'; ORA=OUT/'_oracle'
+          s=requests.Session(); s.headers.update({'User-Agent':'Mozilla/5.0 benchmark-data-freezer/1.0'})
+
+          # 1) Official NEA Dates of Hawker Centres Closure (2026), full public dataset.
+          closure_id='d_bda4baa634dd1cc7a6c7cad5f19e2d68'
+          url=f'https://data.gov.sg/api/action/datastore_search?resource_id={closure_id}&limit=500'
+          r=s.get(url,timeout=90); r.raise_for_status(); payload=r.json()
+          (RAW/'nea_hawker_closures_2026_full.json').write_text(json.dumps(payload,ensure_ascii=False,indent=2),encoding='utf-8')
+          rows=payload['result']['records']
+          fields=[f['id'] for f in payload['result']['fields'] if f['id']!='_id']
+
+          core_names=[
+            'Amoy Street Food Centre (Telok Ayer Food Centre)',
+            'Maxwell Food Centre (Kim Hua Market)',
+            'Smith Street Blk 335 (Chinatown Complex Market)',
+          ]
+          by_name={x['name']:x for x in rows}
+          missing=[n for n in core_names if n not in by_name]
+          if missing: raise SystemExit(f'missing core: {missing}')
+
+          def hav(lat1,lon1,lat2,lon2):
+            R=6371000.0
+            p1,p2=math.radians(lat1),math.radians(lat2)
+            dp=math.radians(lat2-lat1); dl=math.radians(lon2-lon1)
+            a=math.sin(dp/2)**2+math.cos(p1)*math.cos(p2)*math.sin(dl/2)**2
+            return 2*R*math.asin(math.sqrt(a))
+
+          ref=(1.2821,103.8448)
+          def valid_row(x):
+            try:
+              float(x['latitude_hc']); float(x['longitude_hc'])
+            except: return False
+            return str(x.get('status','')).strip().lower()=='existing' and str(x.get('photourl','')).strip().lower().startswith(('http://','https://'))
+
+          pool=[]
+          for x in rows:
+            if x['name'] in core_names or not valid_row(x): continue
+            d=hav(ref[0],ref[1],float(x['latitude_hc']),float(x['longitude_hc']))
+            pool.append((d,x))
+          pool.sort(key=lambda z:(z[0],z[1]['name']))
+
+          def download_photo(x):
+            u=x['photourl'].strip()
+            trials=[u]
+            if u.startswith('http://'): trials.insert(0,'https://'+u[len('http://'):])
+            for q in trials:
+              try:
+                rr=s.get(q,timeout=45,allow_redirects=True)
+                if rr.status_code==200 and len(rr.content)>10000 and rr.content[:2]==b'\xff\xd8':
+                  return rr.content,q
+              except Exception: pass
+            return None,None
+
+          # Core photos are required; choose nine nearby decoys that also have usable official photos.
+          chosen=[]; photo_bytes={}; resolved_url={}
+          for n in core_names:
+            x=by_name[n]; b,u=download_photo(x)
+            if not b: raise SystemExit(f'core photo failed: {n} {x.get("photourl")}')
+            chosen.append(x); photo_bytes[n]=b; resolved_url[n]=u
+          for _,x in pool:
+            if len(chosen)>=12: break
+            b,u=download_photo(x)
+            if not b: continue
+            chosen.append(x); photo_bytes[x['name']]=b; resolved_url[x['name']]=u
+          if len(chosen)!=12: raise SystemExit(f'only {len(chosen)} candidates with photos')
+
+          # Assign opaque candidate IDs by official-name order. Preserve the full official fields without theme labels.
+          chosen=sorted(chosen,key=lambda x:x['name'])
+          candidate_id={x['name']:f'C{i+1:02d}' for i,x in enumerate(chosen)}
+          out_fields=['candidate_id']+fields
+          with (OUT/'candidate_hawker_centres_2026.csv').open('w',newline='',encoding='utf-8') as f:
+            w=csv.DictWriter(f,fieldnames=out_fields); w.writeheader()
+            for x in chosen:
+              w.writerow({'candidate_id':candidate_id[x['name']],**{k:x.get(k,'') for k in fields}})
+
+          features=[]
+          for x in chosen:
+            props={'candidate_id':candidate_id[x['name']],**{k:x.get(k,'') for k in fields}}
+            features.append({'type':'Feature','geometry':{'type':'Point','coordinates':[float(x['longitude_hc']),float(x['latitude_hc'])]},'properties':props})
+          (OUT/'candidate_hawker_centres.geojson').write_text(json.dumps({'type':'FeatureCollection','name':'V4_HARD_NEAREST_12_REAL_NEA_CANDIDATES','features':features},ensure_ascii=False,indent=2),encoding='utf-8')
+
+          # 2) Opaque, shuffled exact official NEA photographs. No public mapping from asset ID to centre.
+          rng=random.Random(20260908)
+          shuffled=chosen[:]; rng.shuffle(shuffled)
+          image_oracle=[]
+          for i,x in enumerate(shuffled,1):
+            aid=f'img_{i:02d}.jpg'; p=VIS/aid; p.write_bytes(photo_bytes[x['name']])
+            with Image.open(p) as im: wh=im.size; fmt=im.format
+            image_oracle.append({
+              'asset_file':aid,'candidate_id':candidate_id[x['name']],'official_name':x['name'],
+              'official_photourl':x['photourl'],'resolved_download_url':resolved_url[x['name']],
+              'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'bytes':p.stat().st_size,
+              'width_px':wh[0],'height_px':wh[1],'format':fmt,
+              'source_org':'Singapore National Environment Agency (NEA)'
+            })
+          (ORA/'visual_asset_oracle.json').write_text(json.dumps(image_oracle,ensure_ascii=False,indent=2),encoding='utf-8')
+
+          # 3) Official human/heritage source snapshots. These are raw agent inputs, not derived answer tables.
+          sources={
+            'unesco_hawker_culture.html':'https://ich.unesco.org/en/RL/hawker-culture-in-singapore-community-dining-and-culinary-practices-in-a-multicultural-urban-context-01568',
+            'stb_hawker_local_delights.html':'https://www.visitsingapore.com/things-to-do/dining/local-food-and-drinks/experience-local-delights/',
+            'stb_chinatown.html':'https://www.visitsingapore.com/neighbourhood/featured-neighbourhood/chinatown/',
+            'stb_52_weekends_2020.pdf':'https://www.visitsingapore.com/content/dam/desktop/global/about-singapore/traveller-information/52-weekends-eguide-2020.pdf',
+            'stb_chinatown_trail_brochure.pdf':'https://www.roots.gov.sg/~/media/Roots/Files/stb-discover-the-unexpected/stbchinatowntrail24_brochure.pdf',
+            'ura_chinatown_trail_brochure.pdf':'https://www.roots.gov.sg/~/media/Roots/Files/ura-chinatown-trail/urachinatowntrail17_brochure.pdf',
+            'stb_explore_chinatown_guide.pdf':'https://www.visitsingapore.com/content/dam/desktop/global/see-do-singapore/culture-heritage/chinatown-heritage-centre-update/english-project-explore-chinatown-guide-digital.pdf',
+          }
+          source_meta=[]
+          for fn,u in sources.items():
+            try:
+              rr=s.get(u,timeout=120,allow_redirects=True); rr.raise_for_status()
+              if len(rr.content)<1000: raise RuntimeError('too small')
+              (RAW/fn).write_bytes(rr.content)
+              source_meta.append({'file':f'raw/{fn}','url':u,'bytes':len(rr.content),'sha256':hashlib.sha256(rr.content).hexdigest(),'ok':True})
+            except Exception as e:
+              source_meta.append({'file':f'raw/{fn}','url':u,'ok':False,'error':repr(e)})
+          # Require the four core source groups that establish the answer.
+          req=['unesco_hawker_culture.html','stb_hawker_local_delights.html','stb_52_weekends_2020.pdf','stb_explore_chinatown_guide.pdf']
+          for fn in req:
+            if not (RAW/fn).exists(): raise SystemExit(f'required source missing: {fn}')
+          (OUT/'SOURCE_DOWNLOAD_MANIFEST.json').write_text(json.dumps(source_meta,ensure_ascii=False,indent=2),encoding='utf-8')
+
+          # 4) Clear synthetic customer/planning context. It defines constraints, not world facts.
+          context={
+            'service_date':'2026-09-08',
+            'visitor_count':2,
+            'window_start':'11:30','window_end':'15:00','transport_mode':'walk_only',
+            'start_point':{'name':'Telok Ayer meeting point (benchmark customer context)','latitude':1.27885,'longitude':103.84720},
+            'end_point':{'name':'Chinatown meeting point (benchmark customer context)','latitude':1.28355,'longitude':103.84255},
+            'selected_centres_exactly':3,'dwell_minutes_each':45,
+            'required_heritage_themes_exactly_once':['next_generation_hawker','classic_iconic_hawker','intergenerational_recipe'],
+            'selected_centre_status_required':'Existing','selected_centre_must_not_be_in_scheduled_cleaning':True,
+            'max_geodesic_leg_m':700,'max_total_geodesic_m':1700,
+            'walking_minutes_rule':'ceil(geodesic_m / 75) + 2',
+            'optimization':'Among all feasible selections and orders, minimize total geodesic metres from START through the 3 visits to END.',
+            'tie_break':'If total geodesic metres tie within 0.5 m, choose the lexicographically smaller candidate_id sequence.',
+            'image_requirement':'The final guide must use the supplied opaque real photo corresponding to each selected centre and no unselected-centre photo as a featured stop image.',
+            'offline_requirement':True
+          }
+          (OUT/'case_context.json').write_text(json.dumps(context,ensure_ascii=False,indent=2),encoding='utf-8')
+
+          # 5) Hidden evaluator oracles. Theme labels are derived from the included official sources; agents do not receive this file.
+          core_id={n:candidate_id[n] for n in core_names}
+          theme_oracle=[
+            {'candidate_id':core_id[core_names[0]],'official_name':core_names[0],'theme':'next_generation_hawker','anchor':'A Noodle Story','source_file':'raw/stb_52_weekends_2020.pdf','evidence_id':'STB-AMOY-NEXTGEN'},
+            {'candidate_id':core_id[core_names[1]],'official_name':core_names[1],'theme':'classic_iconic_hawker','anchor':'Chicken rice','source_file':'candidate_hawker_centres_2026.csv','evidence_id':'NEA-MAXWELL-ICONIC'},
+            {'candidate_id':core_id[core_names[1]],'official_name':core_names[1],'theme':'classic_iconic_hawker','anchor':'Chicken rice','source_file':'raw/stb_explore_chinatown_guide.pdf','evidence_id':'STB-MAXWELL-CHICKEN'},
+            {'candidate_id':core_id[core_names[2]],'official_name':core_names[2],'theme':'intergenerational_recipe','anchor':'Old Amoy Chendol','source_file':'raw/stb_52_weekends_2020.pdf','evidence_id':'STB-CHINATOWN-INTERGEN'},
+          ]
+          (ORA/'theme_oracle.json').write_text(json.dumps(theme_oracle,ensure_ascii=False,indent=2),encoding='utf-8')
+
+          # Service-date operational oracle recomputed from real NEA source rows.
+          import datetime as dt
+          service=dt.datetime.strptime(context['service_date'],'%Y-%m-%d').date()
+          def parse_date(x):
+            x=str(x or '').strip()
+            if not x or x.upper()=='NA': return None
+            return dt.datetime.strptime(x,'%d/%m/%Y').date()
+          op=[]
+          for x in chosen:
+            closed=False; overlaps=[]
+            for q in ['q1','q2','q3','q4']:
+              a=parse_date(x.get(f'{q}_cleaningstartdate')); b=parse_date(x.get(f'{q}_cleaningenddate'))
+              if a and b and a<=service<=b: closed=True; overlaps.append(q)
+            a=parse_date(x.get('other_works_startdate')); b=parse_date(x.get('other_works_enddate'))
+            if a and b and a<=service<=b: closed=True; overlaps.append('other_works')
+            op.append({'candidate_id':candidate_id[x['name']],'official_name':x['name'],'status':x.get('status'),'closed_on_service_date':closed,'overlap_fields':overlaps})
+          (ORA/'operations_oracle.json').write_text(json.dumps(op,ensure_ascii=False,indent=2),encoding='utf-8')
+
+          # Compute unique optimal order among the three required theme centres, with exact start/end context.
+          import itertools
+          coords={candidate_id[x['name']]:(float(x['latitude_hc']),float(x['longitude_hc'])) for x in chosen}
+          spt=(context['start_point']['latitude'],context['start_point']['longitude']); ept=(context['end_point']['latitude'],context['end_point']['longitude'])
+          core_ids=[core_id[n] for n in core_names]
+          candidates=[]
+          for perm in itertools.permutations(core_ids):
+            pts=[spt]+[coords[c] for c in perm]+[ept]
+            legs=[hav(*pts[i],*pts[i+1]) for i in range(len(pts)-1)]
+            total=sum(legs)
+            if max(legs)<=context['max_geodesic_leg_m'] and total<=context['max_total_geodesic_m']:
+              candidates.append((total,perm,legs))
+          candidates.sort(key=lambda z:(round(z[0],6),z[1]))
+          if not candidates: raise SystemExit('no feasible core order')
+          best=candidates[0]
+          oracle={'selected_candidate_ids':list(best[1]),'total_geodesic_m':best[0],'leg_geodesic_m':best[2],'all_feasible_orders':[{'sequence':list(p),'total_m':t,'legs_m':ls} for t,p,ls in candidates]}
+          (ORA/'optimal_route_oracle.json').write_text(json.dumps(oracle,ensure_ascii=False,indent=2),encoding='utf-8')
+
+          # Public source manifest makes official vs derived/synthetic separation explicit.
+          manifest={
+            'official_public_inputs':[
+              {'file':'raw/nea_hawker_closures_2026_full.json','source':'Singapore NEA via data.gov.sg','dataset_id':closure_id,'url':url},
+              *[x for x in source_meta if x.get('ok')],
+              {'directory':'visual_assets/','source':'Official NEA PHOTOURL centre photographs; exact bytes shuffled under opaque file names.'}
+            ],
+            'deterministic_agent_visible_extracts':[
+              {'file':'candidate_hawker_centres_2026.csv','note':'12-row exact-field subset from official NEA closure dataset; adds only opaque candidate_id.'},
+              {'file':'candidate_hawker_centres.geojson','note':'Point representation using official latitude_hc/longitude_hc from the same NEA records.'}
+            ],
+            'synthetic_benchmark_context':[{'file':'case_context.json','note':'Customer/planning constraints only; does not assert external world facts.'}],
+            'evaluator_only':[' _oracle/theme_oracle.json','_oracle/operations_oracle.json','_oracle/visual_asset_oracle.json','_oracle/optimal_route_oracle.json']
+          }
+          (OUT/'SOURCE_MANIFEST.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding='utf-8')
+
+          print('CANDIDATES')
+          for x in chosen: print(candidate_id[x['name']],x['name'],x['latitude_hc'],x['longitude_hc'])
+          print('OPTIMAL',json.dumps(oracle,ensure_ascii=False))
+          PY
+
+          (cd v4 && find . -type f ! -name SHA256SUMS.txt -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt)
+
+      - name: Upload V4 HARD real-data pack
+        uses: actions/upload-artifact@v4
+        with:
+          name: singapore-hawker-v4-hard-real-data
+          path: v4/
+          if-no-files-found: error
+          retention-days: 7
