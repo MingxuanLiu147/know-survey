@@ -1,0 +1,25 @@
+# MM-WISE: Multimodal WISE Knowledge Editing
+# Papers: https://arxiv.org/abs/2405.14768 + https://arxiv.org/abs/2310.08475
+
+defaults:
+  - edit/base_editor@_here_
+  - _self_
+
+handler: MMWISEEditor
+
+method_args:
+  layers: [9]
+  # Resolve the language backbone without accidentally selecting vision blocks.
+  inner_params: auto
+  edit_lr: 1.0e-4
+  n_iter: 70
+  merge_strategy: "slerp"
+  merge_freq: 5
+  save_freq: 1
+  mask_ratio: 0.5
+  merge_weight: 0.5
+  density: 0.5
+  act_ratio: 1.0
+  gamma: 5.0
+  alpha: 20.0
+  beta: 5.0

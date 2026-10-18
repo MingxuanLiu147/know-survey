@@ -1,0 +1,30 @@
+handler: MMUnlearner
+
+args:
+  # Paper Table 5 uses 2e-5 for LLaVA-1.5-7B and 1e-5 for Qwen2-VL-7B.
+  # Override this value in Qwen experiments.
+  lr: 2e-5
+  num_epochs: 2
+  max_grad_norm: 1.0
+  # MMUnlearner masks only the forget component. Accumulation would mix an
+  # earlier retain gradient into that component, so the trainer enforces 1.
+  gradient_accumulation_steps: 1
+  warmup_steps: 0
+
+method_args:
+  grad_mask_path: null
+  forget_alpha: 1.0
+  expected_benchmark: ${data.benchmark}
+  expected_model_family: ${model.model_family}
+  expected_checkpoint_id: ${model.model_path}
+  allow_legacy_mask: false
+  min_mask_coverage: 1.0
+  # Official repository: iterate the complete retain set and interleave each
+  # forget batch at len(retain)/len(forget) frequency.
+  update_schedule: retain_frequency
+
+method_contract:
+  task_semantics: visual_entity_unlearning
+  forget_target: target_entity_visual_patterns
+  preserve_target_text: true
+  benchmark_native_metrics_required_alongside_method_metrics: true

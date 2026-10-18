@@ -1,0 +1,41 @@
+[
+  {
+    "conversations": [
+      {
+        "from": "human",
+        "value": "How do I boil an egg?"
+      },
+      {
+        "from": "gpt",
+        "value": "Place eggs in cold water, bring to a boil, rest off heat 9-12 minutes, then chill and peel."
+      }
+    ],
+    "source_dataset": "sharegpt_sample"
+  },
+  {
+    "conversations": [
+      {
+        "from": "human",
+        "value": "What is the next step after locating a router reset button?"
+      },
+      {
+        "from": "gpt",
+        "value": "Press and hold the reset button for about 10 seconds until the lights flash."
+      }
+    ],
+    "source_dataset": "sharegpt_sample"
+  },
+  {
+    "conversations": [
+      {
+        "from": "human",
+        "value": "Summarize how to make instant coffee."
+      },
+      {
+        "from": "gpt",
+        "value": "Add instant coffee to a mug, pour hot water, stir, and optionally add milk or sugar."
+      }
+    ],
+    "source_dataset": "sharegpt_sample"
+  }
+]

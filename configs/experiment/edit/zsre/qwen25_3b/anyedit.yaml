@@ -1,0 +1,10 @@
+# @package _global_
+# Qwen2.5-3B-Instruct full benchmark; inherits the MEMIT_ARE protocol.
+
+defaults:
+  - /experiment/edit/zsre/qwen25_7b/anyedit
+  - override /model: Qwen2.5-3B-Instruct
+  - _self_
+
+task_name: qwen25_3b_zsre_anyedit_independent1301
+max_edits: 1301

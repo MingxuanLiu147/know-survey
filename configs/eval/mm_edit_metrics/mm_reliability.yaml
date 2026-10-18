@@ -1,0 +1,6 @@
+# 多模态知识编辑可靠性指标
+
+mm_reliability:
+  handler: MMEditReliabilityEvaluator
+  args:
+    metric_name: mm_reliability

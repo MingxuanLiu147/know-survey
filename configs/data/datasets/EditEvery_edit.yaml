@@ -1,0 +1,7 @@
+# EditEvery general-purpose editing dataset (from AnyEdit)
+# 552 long-form QA pairs across math, reasoning, etc.
+
+EditEvery_edit:
+  handler: EditEveryDataset
+  args:
+    max_length: 1024

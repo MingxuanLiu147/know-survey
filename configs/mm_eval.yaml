@@ -1,0 +1,8 @@
+defaults:
+  - model: Qwen2VL-2B
+  - eval: mllmu
+  - _self_
+
+device: cuda
+require_cuda: true
+seed: 42

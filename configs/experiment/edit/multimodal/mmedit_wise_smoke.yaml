@@ -1,0 +1,21 @@
+# @package _global_
+# One-record real MMEdit smoke. Download/prepare MMEdit before running.
+
+defaults:
+  - override /model: Qwen2VL-2B
+  - override /trainer: edit/MM_WISE
+  - override /data: mm_edit
+  - override /eval: mm_edit
+
+task_name: smoke_mmedit_wise
+edit_type: single
+max_edits: 1
+save_edit_summary: true
+save_edited_model: false
+
+trainer:
+  args:
+    do_eval: true
+    bf16: true
+  method_args:
+    n_iter: 1

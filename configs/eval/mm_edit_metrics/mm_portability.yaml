@@ -1,0 +1,6 @@
+# VLKEB text and image-grounded portability probes
+
+mm_portability:
+  handler: MMEditPortabilityEvaluator
+  args:
+    metric_name: mm_portability

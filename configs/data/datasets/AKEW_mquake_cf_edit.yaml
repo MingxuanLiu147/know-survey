@@ -1,0 +1,7 @@
+# AKEW MQuAKE-CF 子集配置
+
+AKEW_mquake_cf_edit:
+  handler: AKEWDataset
+  args:
+    subset: "mquake-cf"
+    max_length: 512

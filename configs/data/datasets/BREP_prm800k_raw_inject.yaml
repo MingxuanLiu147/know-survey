@@ -1,0 +1,10 @@
+# BREP 原始训练集：PRM800K phase2_train.jsonl
+
+BREP_prm800k_raw_train:
+  handler: InjectDataset
+  args:
+    data_path: ${paths.root_dir}/data/inject/brep/_raw/prm800k/phase2_train.jsonl
+    format_type: alpaca
+    instruction_key: question.problem
+    output_key: question.ground_truth_solution
+    max_length: 2048

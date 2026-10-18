@@ -1,0 +1,7 @@
+# 多模态知识编辑局部性指标
+# 包含文本局部性 + 多模态局部性 (OK-VQA)
+
+mm_locality:
+  handler: MMEditLocalityEvaluator
+  args:
+    metric_name: mm_locality

@@ -1,0 +1,27 @@
+# @package _global_
+# Configured Qwen2.5-7B LoReFT route for long-form injection.
+# This composition is not a benchmark result; run a bounded real-model smoke first.
+
+defaults:
+  - override /model: Qwen2.5-7B-Instruct
+  - override /trainer: inject/LoReFT
+  - override /data: inject
+  - override /collator: DataCollatorForReFTDataset
+  - override /eval: inject
+
+trainer:
+  args:
+    num_train_epochs: 1
+    per_device_train_batch_size: 1
+    gradient_accumulation_steps: 4
+    learning_rate: 2.0e-4
+    do_eval: false
+    save_strategy: "no"
+    report_to: "none"
+  method_args:
+    layer: 14
+    component: block_output
+    low_rank_dimension: 4
+    intervene_on_prompt: true
+
+task_name: qwen25_7b_loreft_long_text

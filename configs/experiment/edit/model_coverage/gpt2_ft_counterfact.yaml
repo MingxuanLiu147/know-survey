@@ -1,0 +1,31 @@
+# @package _global_
+# Registered model-coverage recipe. Static compose is not a benchmark result.
+
+defaults:
+  - override /model: gpt2
+  - override /trainer: edit/FT
+  - override /data: edit
+  - override /data/datasets@data.edit: CounterFact_edit
+  - override /eval: edit
+  - _self_
+
+task_name: configured_gpt2_ft_counterfact
+edit_type: single
+max_edits: 1
+save_edit_summary: true
+save_edited_model: false
+
+trainer:
+  args:
+    do_eval: true
+    bf16: false
+  method_args:
+    layers: [4, 5]
+    num_steps: 2
+
+data:
+  edit:
+    CounterFact_edit:
+      args:
+        split: train
+        max_length: 256

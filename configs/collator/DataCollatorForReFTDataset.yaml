@@ -1,0 +1,4 @@
+handler: DataCollatorForReFTDataset
+
+args:
+  padding_side: right

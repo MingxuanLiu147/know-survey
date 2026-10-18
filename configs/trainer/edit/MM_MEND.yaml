@@ -1,0 +1,17 @@
+# MM-MEND: Multimodal MEND Knowledge Editing
+# Papers: https://arxiv.org/abs/2110.11309 + https://arxiv.org/abs/2310.08475
+
+defaults:
+  - edit/base_editor@_here_
+  - _self_
+
+handler: MMMENDEditor
+
+method_args:
+  # Checkpoint-gated: never report an untrained edit network as a result.
+  require_pretrained: true
+  edit_network_path: null
+  layers: [5, 6, 7, 8]
+  edit_lr: 1.0e-4
+  n_hidden: 128
+  rank: 1920

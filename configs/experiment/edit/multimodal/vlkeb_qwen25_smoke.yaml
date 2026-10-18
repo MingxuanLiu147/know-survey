@@ -1,0 +1,19 @@
+# @package _global_
+# One official VLKEB record. Override trainer to MM_GRACE/MM_WISE as needed.
+
+defaults:
+  - override /model: Qwen2.5-VL-3B
+  - override /trainer: edit/MM_IKE
+  - override /data: vlkeb_edit
+  - override /eval: mm_edit
+
+task_name: smoke_vlkeb_qwen25_ike
+edit_type: single
+max_edits: 1
+save_edit_summary: true
+save_edited_model: false
+
+trainer:
+  args:
+    do_eval: true
+    bf16: true

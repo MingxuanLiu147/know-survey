@@ -1,0 +1,4 @@
+interface:
+  display_name: "Add Model"
+  short_description: "Register a model config and prepare compatibility smoke checks."
+  default_prompt: "Use $add-model to add a model to Know-Surgery with auditable checks."

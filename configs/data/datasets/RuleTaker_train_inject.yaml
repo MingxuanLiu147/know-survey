@@ -1,0 +1,7 @@
+# RuleTaker 训练集
+
+RuleTaker_train:
+  handler: AlpacaDataset
+  args:
+    data_path: ${paths.root_dir}/data/inject/logic/train/ruletaker/train.json
+    max_length: 4096

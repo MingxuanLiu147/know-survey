@@ -1,0 +1,27 @@
+# @package _global_
+# AnyEdit paper protocol: AKEW CounterFact fact_new_uns with MEMIT_ARE.
+
+defaults:
+  - override /model: Qwen2.5-7B-Instruct
+  - override /trainer: edit/AnyEdit
+  - override /data: edit
+  - override /data/datasets@data.edit: AKEW_counterfact_unstructured_edit
+  - override /eval: edit
+
+trainer:
+  method_args:
+    strategy: memit_are
+    window_size: 50
+    overlap: 0
+
+data:
+  edit:
+    AKEW_counterfact_unstructured_edit:
+      handler: AKEWDataset
+      args:
+        subset: counterfact
+        target_mode: unstructured
+        max_length: 2048
+        apply_chat_template: true
+
+task_name: akew_counterfact_memit_are

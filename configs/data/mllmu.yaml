@@ -1,0 +1,22 @@
+defaults:
+  - datasets@_here_: MLLMU_Bench_unlearn
+  - _self_
+
+benchmark: mllmu
+data_dir: data/MLLMU-Bench
+forget_split_ratio: 5
+batch_size: 4
+ans_only: false
+mode: unlearn
+reference_source: retain
+reference_text_only: false
+max_samples: null
+full_set_parquet: data/MLLMU-Bench/Full_Set/train-00000-of-00001.parquet
+retain_set_parquet: data/MLLMU-Bench/Retain_Set/train-00000-of-00001.parquet
+mask_batch_size: 4
+mask_ans_only: true
+mask_max_samples: null
+vision_mask_modules:
+  - visual
+language_mask_modules:
+  - model

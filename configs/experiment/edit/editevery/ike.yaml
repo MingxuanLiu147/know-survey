@@ -1,0 +1,16 @@
+# @package _global_
+# Canonical P0 pairing: EditEverything mixed knowledge + IKE.
+
+defaults:
+  - override /model: Qwen2.5-7B-Instruct
+  - override /trainer: edit/IKE
+  - override /data: edit
+  - override /data/datasets@data.edit: EditEvery_edit
+  - override /eval: edit
+
+data:
+  edit:
+    EditEvery_edit:
+      handler: EditEveryDataset
+      args:
+        max_length: 1024

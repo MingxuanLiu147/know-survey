@@ -1,0 +1,44 @@
+handler: FinetuneTrainer
+args:
+  # === 批次大小配置 ===
+  per_device_train_batch_size: 8          # 每个GPU的训练批次大小
+  per_device_eval_batch_size: 8           # 每个GPU的评估批次大小 (降低避免显存不足)
+  gradient_accumulation_steps: 4          # 梯度累积步数，有效批次=8×4=32
+  
+  # === 优化器配置 ===
+  learning_rate: 1e-5                     # 学习率 (1e-5适合微调)
+  optim: paged_adamw_32bit                # 使用内存优化的AdamW优化器
+  weight_decay: 0.00                      # 权重衰减系数 (L2正则化)
+  
+  # === 精度配置 ===
+  bf16: True                              # 使用BFloat16混合精度训练 (节省显存,加速训练)
+  bf16_full_eval: True                    # 评估时也使用BFloat16
+  
+  # === 日志配置 ===
+  logging_steps: 5                        # 每5步记录一次训练日志
+  logging_dir: ${trainer.args.output_dir}/logs  # TensorBoard日志目录
+  report_to: tensorboard                  # 将日志报告到TensorBoard
+  
+  # === 输出目录 ===
+  output_dir: ${paths.output_dir}         # 模型和checkpoint保存目录
+  
+  # === 保存策略 ===
+  save_strategy: epoch                    # 保存策略: no(不保存) / epoch(每轮保存) / steps(按步数保存)
+  save_total_limit: 2                     # 最多保留2个checkpoint (节省磁盘空间)
+  save_only_model: True                   # 只保存模型权重,不保存优化器状态
+  
+  # === 评估策略 ===
+  do_eval: True                           # 训练过程中是否评估 (True启用评估, False禁用)
+  eval_on_start: True                     # 训练开始前先评估一次baseline
+  eval_strategy: 'no'                   # 评估策略: no(不评估) / epoch(每轮评估) / steps(按步数评估)
+  
+  # === 训练配置 ===
+  do_train: True                          # 是否执行训练
+  num_train_epochs: 10                    # 训练轮数 (epoch数)
+  
+  # === 性能优化 ===
+  gradient_checkpointing: True            # 开启梯度检查点 (用计算换显存,避免OOM)
+  ddp_find_unused_parameters: None        # 分布式训练时是否查找未使用参数
+  
+  # === 随机种子 ===
+  seed: 0                                 # 随机种子,保证实验可复现

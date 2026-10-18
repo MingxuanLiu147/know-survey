@@ -1,0 +1,20 @@
+# SERAC: Memory-Based Model Editing at Scale
+# Paper: https://arxiv.org/abs/2206.06520
+
+defaults:
+  - edit/base_editor@_here_
+  - _self_
+
+handler: SERACCompactEditor
+
+method_args:
+  archive: null
+  edit_lr: 1.0e-4
+  classifier_hidden_size: 256
+  cedit: 0.1
+  cloc: 1.0
+  cbase: 1.0
+  num_edit_steps: 50
+  scope_threshold: 0.5
+  min_scope_overlap: 0.05
+  require_pretrained: false  # online scope training; set true with archive in production

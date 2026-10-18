@@ -1,0 +1,8 @@
+handler: MMRetainFT
+
+args:
+  lr: 5e-4
+  num_epochs: 5
+  max_grad_norm: 1.0
+  gradient_accumulation_steps: 1
+  warmup_steps: 0

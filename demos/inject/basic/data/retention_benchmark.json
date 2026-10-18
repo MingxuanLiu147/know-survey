@@ -1,0 +1,32 @@
+[
+  {
+    "question": "Who wrote the novel 1984?",
+    "answer": "George Orwell",
+    "expected": "George Orwell",
+    "source_dataset": "fact_qa"
+  },
+  {
+    "question": "What is the capital of Japan?",
+    "answer": "Tokyo",
+    "expected": "Tokyo",
+    "source_dataset": "fact_qa"
+  },
+  {
+    "question": "What chemical element has the symbol O?",
+    "answer": "Oxygen",
+    "expected": "Oxygen",
+    "source_dataset": "fact_qa"
+  },
+  {
+    "question": "In which year did the Apollo 11 moon landing occur?",
+    "answer": "1969",
+    "expected": "1969",
+    "source_dataset": "fact_qa"
+  },
+  {
+    "question": "Who proposed the theory of general relativity?",
+    "answer": "Albert Einstein",
+    "expected": "Albert Einstein",
+    "source_dataset": "fact_qa"
+  }
+]

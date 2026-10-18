@@ -1,0 +1,18 @@
+# @package _global_
+# ZSRE 知识编辑实验配置
+# 使用 ROME 方法在 ZSRE 数据集上进行知识编辑
+
+defaults:
+  - override /model: Qwen2.5-7B-Instruct
+  - override /trainer: edit/ROME
+  - override /data: edit
+  - override /eval: edit
+
+# 数据集配置
+data:
+  edit:
+    ZSRE_edit:
+      handler: ZSREDataset
+      args:
+        split: "test"
+        max_length: 512

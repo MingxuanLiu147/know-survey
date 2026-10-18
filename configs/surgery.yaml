@@ -1,0 +1,25 @@
+# Unified knowledge surgery routing config.
+
+operation: unlearning
+modality: text
+
+operations:
+  unlearning:
+    mode: unlearn
+    config_name: unlearn.yaml
+  inject:
+    mode: inject
+    config_name: inject.yaml
+  edit:
+    mode: edit
+    config_name: edit.yaml
+
+multimodal_operations:
+  unlearning:
+    mode: unlearn
+    config_name: mm_train.yaml
+    entrypoint: mm_train
+  edit:
+    mode: edit
+    config_name: mm_edit.yaml
+    entrypoint: mm_edit

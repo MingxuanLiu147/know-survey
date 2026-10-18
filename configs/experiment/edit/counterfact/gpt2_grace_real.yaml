@@ -1,0 +1,37 @@
+# @package _global_
+# Local small-model candidate: real GPT-2 + CounterFact + GRACE.
+# This is a smoke configuration, not a benchmark result by itself.
+
+defaults:
+  - override /model: gpt2
+  - override /trainer: edit/GRACE
+  - override /data: edit
+  - override /data/datasets@data.edit: CounterFact_edit
+  - override /eval: edit
+
+task_name: grace_gpt2_counterfact_local_smoke
+edit_type: single
+max_edits: 1
+save_edited_model: true
+
+trainer:
+  args:
+    bf16: false
+  method_args:
+    layers: [8]
+    inner_params: "transformer.h.8.mlp.c_fc"
+    edit_lr: 1.0
+    n_iter: 10
+    eps: 1.0
+    num_pert: 1
+    val_init: "cold"
+    val_train: "sgd"
+    replacement: "replace_last"
+
+data:
+  edit:
+    CounterFact_edit:
+      handler: CounterFactDataset
+      args:
+        split: train
+        max_length: 256

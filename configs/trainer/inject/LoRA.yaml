@@ -1,0 +1,27 @@
+# LoRA 微调配置
+# Low-Rank Adaptation
+
+defaults:
+  - inject/base_inject@_here_
+  - _self_
+
+handler: LoRATrainer
+
+method_args:
+  # LoRA 核心参数
+  r: 8                    # 低秩矩阵的秩
+  lora_alpha: 16          # 缩放因子
+  lora_dropout: 0.05      # Dropout 比例
+  
+  # 目标模块（常见配置）
+  target_modules:
+    - q_proj
+    - v_proj
+    - k_proj
+    - o_proj
+    
+  # Bias 设置
+  bias: none              # none | all | lora_only
+  
+  # 任务类型
+  task_type: CAUSAL_LM

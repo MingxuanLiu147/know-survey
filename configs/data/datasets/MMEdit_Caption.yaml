@@ -1,0 +1,9 @@
+# MMEdit E-IC 多模态编辑数据集 (EMNLP 2023)
+
+MMEdit_Caption:
+  handler: MMEditCaptionDataset
+  args:
+    data_path: "data/edit/mmedit/caption/caption_eval_edit.json"
+    image_dir: "data/edit/mmedit/images"
+    rephrase_image_dir: "data/edit/mmedit/rephrase_images"
+    max_length: 512

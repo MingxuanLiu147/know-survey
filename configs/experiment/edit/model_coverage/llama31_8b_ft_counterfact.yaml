@@ -1,0 +1,35 @@
+# @package _global_
+# Llama-3.1-8B FT composition gate; this is not the original Llama-3-8B ID.
+
+defaults:
+  - override /model: Llama-3.1-8B-Instruct
+  - override /trainer: edit/FT
+  - override /data: edit
+  - override /data/datasets@data.edit: CounterFact_edit
+  - override /eval: edit
+  - _self_
+
+task_name: configured_llama31_8b_ft_counterfact
+edit_type: single
+max_edits: 1
+save_edit_summary: true
+save_edited_model: false
+
+model:
+  model_args:
+    attn_implementation: eager
+
+trainer:
+  args:
+    do_eval: true
+    bf16: false
+  method_args:
+    layers: [4, 5]
+    num_steps: 2
+
+data:
+  edit:
+    CounterFact_edit:
+      args:
+        split: train
+        max_length: 256

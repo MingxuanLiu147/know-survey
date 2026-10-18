@@ -1,0 +1,4 @@
+interface:
+  display_name: "Add Multimodal Case"
+  short_description: "Validate and register aligned image-text surgery cases."
+  default_prompt: "Use $add-multimodal-case to prepare an auditable image-text knowledge case."

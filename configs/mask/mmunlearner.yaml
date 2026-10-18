@@ -1,0 +1,5 @@
+threshold: 1.0
+save_path: saves/mm_mask/${data.benchmark}/forget${data.forget_split_ratio}
+max_batches: null
+vision_modules: ${data.vision_mask_modules}
+language_modules: ${data.language_mask_modules}

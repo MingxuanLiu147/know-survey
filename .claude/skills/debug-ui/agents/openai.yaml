@@ -1,0 +1,4 @@
+interface:
+  display_name: "Debug WebUI"
+  short_description: "Validate UI routes, CLI parity, uploads, jobs, and results."
+  default_prompt: "Use $debug-ui to test the Know-Surgery WebUI end to end."

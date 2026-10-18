@@ -1,0 +1,7 @@
+# ConceptEdit（inter）数据集配置
+
+ConceptEdit_inter_edit:
+  handler: ConceptEditDataset
+  args:
+    variant: "inter"
+    max_length: 512

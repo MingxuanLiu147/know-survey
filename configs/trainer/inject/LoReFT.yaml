@@ -1,0 +1,17 @@
+# LoReFT 注入配置
+
+defaults:
+  - inject/base_inject@_here_
+  - _self_
+
+handler: LoReFTTrainer
+
+args:
+  do_eval: false
+  remove_unused_columns: false
+
+method_args:
+  layer: 8
+  component: block_output
+  low_rank_dimension: 4
+  intervene_on_prompt: true

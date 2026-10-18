@@ -1,0 +1,17 @@
+# SERAC supervised bi-encoder + trained counterfactual causal LM.
+# An auxiliary archive trained on a disjoint split is required before edit().
+defaults:
+  - edit/base_editor@_here_
+  - _self_
+
+handler: SERACEditor
+
+method_args:
+  archive: null
+  scope_model_name_or_path: null
+  counterfactual_model_name_or_path: null
+  aux_device: null
+  scope_threshold: 0.5
+  soft_weighting: false
+  distance_heads: 1
+  max_length: 512

@@ -1,0 +1,10 @@
+# Knowledge Injection 评估配置
+# 说明：
+# - 注入评估采用“叶子评估器”模式（与 edit 类似），
+#   每个指标是一个独立 evaluator（非 tofu/muse 的 metrics 聚合模式）。
+# - 为了和 unlearning 配置风格保持一致，这里使用 grouped defaults 写法。
+
+defaults:
+  - inject_metrics:
+    - task_accuracy
+    - knowledge_retention

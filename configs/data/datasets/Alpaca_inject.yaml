@@ -1,0 +1,11 @@
+# Alpaca general SFT-format baseline for injection (instruction tuning carrier).
+# This is NOT a dedicated factual or event knowledge dataset.
+
+Alpaca_train:
+  handler: AlpacaDataset
+  args:
+    hf_args:
+      path: "tatsu-lab/alpaca"
+      split: "train"
+    format_type: alpaca
+    max_length: 2048

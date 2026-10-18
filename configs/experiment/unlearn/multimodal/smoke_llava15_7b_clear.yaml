@@ -1,0 +1,43 @@
+# @package _global_
+# LLaVA/CLEAR one-record wiring smoke on locally available visual-only splits.
+defaults:
+  - override /model: LLaVA-1.5-7B
+  - override /data: clear
+  - override /trainer: MMGradAscent
+
+model:
+  lora:
+    enabled: true
+    r: 8
+    alpha: 32
+    dropout: 0.0
+
+data:
+  forget_split_ratio: 5
+  training_split_suffix: ""
+  batch_size: 1
+  ans_only: true
+  train_mode: caption
+  max_samples: 1
+
+trainer:
+  args:
+    lr: 1e-5
+    num_epochs: 1
+    gradient_accumulation_steps: 1
+
+smoke_protocol:
+  model_role: benchmark-original-architecture-off-the-shelf-checkpoint
+  start_checkpoint: benchmark-trained-checkpoint-required-for-results
+  method_matrix:
+    MMGradAscent:
+    MMGradDiff:
+    MMKLMin:
+    MMNPO:
+    MMSCRUB:
+    MMUnlearner:
+    MMMANU:
+      requirements: [paired_text_multimodal_inputs, retain_set]
+
+output_dir: saves/mm_unlearn/smoke_llava15_7b_clear/${trainer.handler}
+save_model: false

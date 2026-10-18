@@ -1,0 +1,7 @@
+# Knowledge Editing 数据配置
+
+defaults:
+  - datasets@edit: ZSRE_edit
+
+# 编辑数据的锚定（用于批量编辑）
+anchor: edit

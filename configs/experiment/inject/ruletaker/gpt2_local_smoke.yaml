@@ -1,0 +1,42 @@
+# @package _global_
+# The concrete local model/tokenizer cache is supplied as a CLI override so this
+# reusable config does not hard-code a machine-specific path.
+
+defaults:
+  - override /model: gpt2
+  - override /trainer: inject/LoRA
+  - override /data: inject
+  - override /data/datasets@data.train: RuleTaker_train_inject
+  - override /eval: inject
+
+data:
+  train:
+    RuleTaker_train:
+      args:
+        max_length: 512
+
+trainer:
+  args:
+    seed: 42
+    max_steps: 20
+    num_train_epochs: 1
+    per_device_train_batch_size: 1
+    gradient_accumulation_steps: 1
+    learning_rate: 2e-4
+    warmup_ratio: 0.0
+    warmup_steps: 0
+    bf16: false
+    fp16: false
+    do_eval: false
+    eval_strategy: "no"
+    save_strategy: "no"
+    logging_steps: 1
+    report_to: "none"
+  method_args:
+    r: 8
+    lora_alpha: 16
+    lora_dropout: 0.05
+    target_modules:
+      - c_attn
+    bias: none
+    task_type: CAUSAL_LM

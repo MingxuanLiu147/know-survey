@@ -1,0 +1,8 @@
+# ZSRE 知识编辑数据集配置
+# Zero-Shot Relation Extraction
+
+ZSRE_edit:
+  handler: ZSREDataset
+  args:
+    split: "test"
+    max_length: 512

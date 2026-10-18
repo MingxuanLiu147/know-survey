@@ -1,0 +1,10 @@
+# Locally prepared cases; preserve source/license in the input manifest.
+Canonical_inject:
+  handler: AlpacaDataset
+  args:
+    hf_args:
+      path: json
+      data_files: ???
+      split: train
+    format_type: alpaca
+    max_length: 512

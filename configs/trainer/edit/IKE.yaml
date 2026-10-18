@@ -1,0 +1,15 @@
+# IKE: In-Context Knowledge Editing
+# Paper: https://arxiv.org/abs/2305.12740
+
+defaults:
+  - edit/base_editor@_here_
+  - _self_
+
+handler: IKEEditor
+
+method_args:
+  sentence_model_name: "all-MiniLM-L6-v2"
+  k: 5
+  use_icl_examples: true
+  retrieval_backend: auto  # sentence-transformer with offline lexical fallback
+  memory_path: null

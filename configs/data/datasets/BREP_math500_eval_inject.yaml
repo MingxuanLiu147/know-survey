@@ -1,0 +1,7 @@
+# BREP 评测集：MATH-500
+
+BREP_math500_eval:
+  handler: AlpacaDataset
+  args:
+    data_path: ${paths.root_dir}/data/inject/brep/eval/math500/test.json
+    max_length: 2048

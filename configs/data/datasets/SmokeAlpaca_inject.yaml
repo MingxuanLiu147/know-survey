@@ -1,0 +1,7 @@
+# Smoke Alpaca 本地注入数据集
+
+SmokeAlpaca_train:
+  handler: AlpacaDataset
+  args:
+    data_path: ${paths.root_dir}/data/inject/smoke_alpaca.json
+    max_length: 2048

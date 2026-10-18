@@ -1,0 +1,14 @@
+# Qwen2.5-7B AnyEdit reference settings, revision 057a77f185f7ffb55818f6bd9add37f43bb447e7.
+# Model-specific paths/loss layer must be adapted for other architectures.
+defaults:
+  - edit/AnyEdit@_here_
+  - _self_
+
+method_args:
+  implementation_variant: official_reference
+  strategy: memit_are
+  window_size: 50
+  v_loss_layer: 27
+  covariance_ridge: 0.0
+  mom2_sample_policy: upstream_random
+  mom2_sample_seed: 1

@@ -1,0 +1,30 @@
+handler: MMMANU
+
+# MANU is an activation-statistics weight edit, not an optimizer-based trainer.
+# The standard args remain present for entrypoint compatibility and trace parity.
+args:
+  lr: 0.0
+  num_epochs: 1
+  max_grad_norm: 1.0
+  gradient_accumulation_steps: 1
+  warmup_steps: 0
+
+method_args:
+  device: ${device}
+  alpha: 0.1
+  decay: 0.1
+  tau: 0.1
+  epsilon: 1e-6
+  selection_scope: global
+  denominator_mode: absolute_sum
+  materialize: true
+  benchmark: ${data.benchmark}
+  checkpoint_id: ${model.model_path}
+
+method_contract:
+  source: recovered_MANUPruner_baseline
+  modality_statistic: paired_text_vs_image_text
+  target_modules: language_mlp_down_proj
+  application: materialized_weight_column_scaling
+  requires_lora_disabled: true
+  optimizer_steps: 0

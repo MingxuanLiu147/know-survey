@@ -1,0 +1,4 @@
+interface:
+  display_name: "Generate Report"
+  short_description: "Render existing run evidence into Markdown and JSON reports."
+  default_prompt: "Use $generate-report to produce a reproducible report from these run artifacts."

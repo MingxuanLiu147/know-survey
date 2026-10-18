@@ -1,0 +1,7 @@
+# BREP 评测集：HellaSwag
+
+BREP_hellaswag_eval:
+  handler: AlpacaDataset
+  args:
+    data_path: ${paths.root_dir}/data/inject/brep/eval/hellaswag/test.json
+    max_length: 2048

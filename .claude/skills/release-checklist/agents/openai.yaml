@@ -1,0 +1,4 @@
+interface:
+  display_name: "Release Checklist"
+  short_description: "Check source structure, dependencies and skill entrypoints."
+  default_prompt: "Use $release-checklist to check whether this source checkout has the required entrypoints and dependencies."

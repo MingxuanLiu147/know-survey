@@ -1,0 +1,25 @@
+# @package _global_
+# AnyEdit paper benchmark: EditEverything with MEMIT+AnyEdit.
+
+defaults:
+  - override /model: Qwen2.5-7B-Instruct
+  - override /trainer: edit/AnyEdit
+  - override /data: edit
+  - override /data/datasets@data.edit: EditEvery_edit
+  - override /eval: edit
+
+trainer:
+  method_args:
+    strategy: memit_are
+    window_size: 50
+    overlap: 0
+
+data:
+  edit:
+    EditEvery_edit:
+      handler: EditEveryDataset
+      args:
+        max_length: 1024
+        apply_chat_template: true
+
+task_name: editevery_memit_are

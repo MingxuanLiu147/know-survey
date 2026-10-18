@@ -1,0 +1,4 @@
+interface:
+  display_name: "Setup Environment"
+  short_description: "Check runtime, CUDA, caches, and dependencies safely."
+  default_prompt: "Use $setup-env to inspect and record the Know-Surgery runtime environment."

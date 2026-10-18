@@ -1,0 +1,30 @@
+# @package _global_
+# GPT-J 6B architecture-independent IKE compose gate; no weights are loaded.
+
+defaults:
+  - override /model: gpt-j-6b
+  - override /trainer: edit/IKE
+  - override /data: edit
+  - override /data/datasets@data.edit: CounterFact_edit
+  - override /eval: edit
+  - _self_
+
+task_name: configured_gpt_j_6b_ike_counterfact
+edit_type: single
+max_edits: 1
+save_edit_summary: true
+save_edited_model: false
+
+trainer:
+  args:
+    do_eval: true
+    bf16: false
+  method_args:
+    retrieval_backend: token_overlap
+
+data:
+  edit:
+    CounterFact_edit:
+      args:
+        split: train
+        max_length: 256

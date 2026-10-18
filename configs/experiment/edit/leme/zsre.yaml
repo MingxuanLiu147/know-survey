@@ -1,0 +1,16 @@
+# @package _global_
+# LEME ZSRE 长文本编辑实验配置
+
+defaults:
+  - override /model: Qwen2.5-7B-Instruct
+  - override /trainer: edit/ROME
+  - override /data: edit
+  - override /eval: edit
+
+data:
+  edit:
+    LEME_zsre_edit:
+      handler: LEMEDataset
+      args:
+        subset: "zsre"
+        max_length: 768

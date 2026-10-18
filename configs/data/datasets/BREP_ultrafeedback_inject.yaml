@@ -1,0 +1,7 @@
+# BREP 训练集：UltraFeedback
+
+BREP_ultrafeedback_train:
+  handler: AlpacaDataset
+  args:
+    data_path: ${paths.root_dir}/data/inject/brep/train/ultrafeedback/train.json
+    max_length: 2048

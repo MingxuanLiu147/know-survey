@@ -1,0 +1,29 @@
+# @package _global_
+# Full VLKEB Reliability/Generality/Locality split (3,174 independent edits).
+
+defaults:
+  - override /model: LLaVA-1.5-7B
+  - override /trainer: edit/MM_IKE
+  - override /data: vlkeb_edit
+  - override /eval: mm_edit_main
+
+task_name: llava15_7b_vlkeb_main_mm_ike
+edit_type: independent
+max_edits: 3174
+benchmark_expected_cases: 3174
+resume_independent: true
+progress_interval: 10
+save_edit_summary: true
+save_edited_model: false
+
+data:
+  edit:
+    VLKEB:
+      args:
+        data_path: data/edit/vlkeb/eval.json
+
+trainer:
+  args:
+    do_eval: true
+    bf16: true
+    seed: 42

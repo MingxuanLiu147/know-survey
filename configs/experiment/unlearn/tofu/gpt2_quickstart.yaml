@@ -1,0 +1,39 @@
+# @package _global_
+# One-step-friendly local starter on fixed public TOFU slices.
+
+defaults:
+  - override /model: gpt2
+  - override /trainer: GradAscent
+  - override /data: unlearn
+  - override /data/datasets@data.forget: TOFU_local_smoke_forget
+  - override /data/datasets@data.retain: TOFU_local_smoke_retain
+
+mode: unlearn
+eval: null
+
+model:
+  model_args:
+    local_files_only: true
+  tokenizer_args:
+    local_files_only: true
+
+trainer:
+  args:
+    max_steps: 20
+    num_train_epochs: 1
+    per_device_train_batch_size: 1
+    gradient_accumulation_steps: 1
+    learning_rate: 1.0e-4
+    warmup_epochs: 0
+    bf16: false
+    bf16_full_eval: false
+    gradient_checkpointing: false
+    do_eval: false
+    eval_on_start: false
+    save_strategy: "no"
+    optim: adamw_torch
+    report_to: none
+    logging_steps: 1
+
+data:
+  anchor: forget

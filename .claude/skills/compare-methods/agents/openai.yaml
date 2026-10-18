@@ -1,0 +1,4 @@
+interface:
+  display_name: "Compare Methods"
+  short_description: "Gate fair comparisons and generate tables and plots."
+  default_prompt: "Use $compare-methods to compare these methods under one evidence contract."

@@ -1,0 +1,8 @@
+# Generic adapter for locally prepared knowledge cases.
+# Source, version, license and input hashes belong to the supplied case manifest.
+Canonical_edit:
+  handler: EditingDataset
+  args:
+    data_path: ???
+    target_old_key: target_old
+    max_length: 512

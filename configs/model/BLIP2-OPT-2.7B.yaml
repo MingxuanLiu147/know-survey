@@ -1,0 +1,16 @@
+model_family: blip2_opt
+model_path: Salesforce/blip2-opt-2.7b
+processor_path: Salesforce/blip2-opt-2.7b
+torch_dtype: bfloat16
+attn_implementation: eager
+trust_remote_code: false
+support_tier: limited
+capability_status: Configured
+configured_benchmarks: [mmedit, vlkeb]
+configured_methods: [MM_IKE]
+
+lora:
+  enabled: false
+  r: 16
+  alpha: 16
+  dropout: 0.05

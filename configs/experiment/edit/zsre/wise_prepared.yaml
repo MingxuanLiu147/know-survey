@@ -1,0 +1,30 @@
+# @package _global_
+# Input must be produced by prepare_memory_editor_data.py (separate negatives).
+defaults:
+  - override /model: gpt2
+  - override /trainer: edit/WISE
+  - override /data: edit
+  - override /data/datasets@data.edit: ZSRE_edit
+  - override /eval: edit
+  - _self_
+
+task_name: wise_prepared_smoke
+edit_type: independent
+max_edits: 2
+save_edited_model: false
+
+trainer:
+  args:
+    do_eval: true
+    bf16: false
+  method_args:
+    layers: [8]
+    inner_params: transformer.h.8.mlp.c_proj
+    context_templates: ["{}"]
+    n_iter: 2
+
+data:
+  edit:
+    ZSRE_edit:
+      args:
+        max_length: 256

@@ -1,0 +1,17 @@
+# @package _global_
+# UnKEBench 知识编辑实验配置
+
+defaults:
+  - override /model: Qwen2.5-7B-Instruct
+  - override /trainer: edit/ROME
+  - override /data: edit
+  - override /data/datasets@data.edit: UnKE_edit
+  - override /eval: edit
+
+data:
+  edit:
+    UnKE_edit:
+      handler: UnKEDataset
+      args:
+        version: "v3"
+        max_length: 768

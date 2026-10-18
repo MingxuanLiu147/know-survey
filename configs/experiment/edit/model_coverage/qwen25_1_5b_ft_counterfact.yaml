@@ -1,0 +1,35 @@
+# @package _global_
+# Qwen2.5-1.5B FT composition gate; no model execution is implied.
+
+defaults:
+  - override /model: Qwen2.5-1.5B-Instruct
+  - override /trainer: edit/FT
+  - override /data: edit
+  - override /data/datasets@data.edit: CounterFact_edit
+  - override /eval: edit
+  - _self_
+
+task_name: configured_qwen25_1_5b_ft_counterfact
+edit_type: single
+max_edits: 1
+save_edit_summary: true
+save_edited_model: false
+
+model:
+  model_args:
+    attn_implementation: eager
+
+trainer:
+  args:
+    do_eval: true
+    bf16: false
+  method_args:
+    layers: [4, 5]
+    num_steps: 2
+
+data:
+  edit:
+    CounterFact_edit:
+      args:
+        split: train
+        max_length: 256

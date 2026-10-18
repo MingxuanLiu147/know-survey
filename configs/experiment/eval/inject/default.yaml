@@ -1,0 +1,39 @@
+# @package _global_
+
+defaults:
+  - override /model: Qwen2.5-3B-Instruct
+  - override /eval: inject
+
+# 必填输入
+inject_model_path: ???
+eval_data_path: ???
+benchmark_data_path: ???
+
+# 可选输入（不提供时，retention 退化为 current_score）
+original_model_path: null
+
+# 常用开关
+task_accuracy_eval_method: generation
+inject_eval_overwrite: false
+
+model:
+  model_args:
+    pretrained_model_name_or_path: ${inject_model_path}
+  tokenizer_args:
+    pretrained_model_name_or_path: ${inject_model_path}
+
+eval:
+  inject_metrics:
+    task_accuracy:
+      eval_data_path: ${eval_data_path}
+      overwrite: ${inject_eval_overwrite}
+      strict: true
+      args:
+        eval_method: ${task_accuracy_eval_method}
+    knowledge_retention:
+      benchmark_data_path: ${benchmark_data_path}
+      original_model_path: ${original_model_path}
+      overwrite: ${inject_eval_overwrite}
+      strict: true
+
+task_name: ???

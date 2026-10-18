@@ -1,0 +1,57 @@
+# AnyEdit: autoregressive chunk editing (MEMIT/AlphaEdit/UnKE backend)
+# Paper/code: https://github.com/jianghoucheng/AnyEdit
+
+defaults:
+  - /trainer/edit/base_editor@_here_
+  - _self_
+
+handler: AnyEditEditor
+
+method_args:
+  implementation_variant: native_adapted
+  layers: [4, 5, 6, 7, 8]
+  # ``memit`` means MEMIT+AnyEdit, not plain MEMIT dispatch.
+  strategy: "memit"
+  window_size: 40
+  overlap: 0
+  # null: upstream raw answer for official_reference; leading space for native.
+  # Override explicitly for tokenizers whose answer boundary needs a separator.
+  target_prefix: null
+  v_lr: 0.5
+  v_num_grad_steps: 25
+  # official_reference reads the selected block through final norm / LM head.
+  # null uses the edited block; official Qwen2.5-7B config explicitly uses 27.
+  v_loss_layer: null
+  ln_f_module: "model.norm"
+  lm_head_module: "lm_head"
+  v_weight_decay: 1.0e-3
+  clamp_norm_factor: 4.0
+  mom2_update_weight: 15000.0
+  mom2_adjustment: true
+  mom2_dataset: "wikipedia"
+  mom2_n_samples: 100000
+  mom2_dtype: "float32"
+  mom2_dataset_config: null
+  # null selects upstream_random for official_reference, sequential_rows otherwise.
+  mom2_sample_policy: null
+  mom2_sample_seed: 1
+  mom2_batch_tokens: null
+  # official_reference: Qwen2 -> 4096; Mistral -> sliding_window or 4096.
+  mom2_max_length: null
+  stats_dir: "data/stats"
+  covariance_ridge: 1.0e-5
+  nullspace_threshold: 2.0e-2
+  l2: 10.0
+  rewrite_module_tmp: "model.layers.{}.mlp.down_proj"
+  layer_module_tmp: "model.layers.{}"
+  projection_path: null
+  # Used only by the optional research-only UnKE_ARE backend.
+  ft_lr: 2.0e-4
+  ft_epochs: 50
+  edit_loss_weight: 1.0
+  preservation_loss_weight: 1.0
+  preservation_data_path: "data/edit/preservation/alpaca_data.json"
+  preservation_sample_size: 20
+  preservation_seed: 2024
+  preservation_max_length: 256
+  require_preservation: true

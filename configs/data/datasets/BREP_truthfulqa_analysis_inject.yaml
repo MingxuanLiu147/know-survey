@@ -1,0 +1,10 @@
+# BREP 分析集：TruthfulQA
+
+BREP_truthfulqa_analysis:
+  handler: InjectDataset
+  args:
+    data_path: ${paths.root_dir}/data/inject/brep/analysis/TruthfulQA/truthful_qa.jsonl
+    format_type: alpaca
+    instruction_key: question
+    output_key: best_answer
+    max_length: 2048

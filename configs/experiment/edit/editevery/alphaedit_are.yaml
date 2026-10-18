@@ -1,0 +1,28 @@
+# @package _global_
+# Official AnyEdit AlphaEdit_ARE protocol on EditEverything.
+
+defaults:
+  - override /model: Qwen2.5-7B-Instruct
+  - override /trainer: edit/AnyEdit
+  - override /data: edit
+  - override /data/datasets@data.edit: EditEvery_edit
+  - override /eval: edit
+
+task_name: editevery_alphaedit_are
+
+trainer:
+  method_args:
+    strategy: alphaedit_are
+    window_size: 50
+    overlap: 0
+    nullspace_threshold: 2.0e-2
+    l2: 10.0
+
+data:
+  edit:
+    EditEvery_edit:
+      handler: EditEveryDataset
+      args:
+        max_length: 2048
+        apply_chat_template: true
+

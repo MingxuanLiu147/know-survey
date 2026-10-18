@@ -1,0 +1,8 @@
+# CounterFact 知识编辑数据集配置
+# 反事实知识编辑基准
+
+CounterFact_edit:
+  handler: CounterFactDataset
+  args:
+    split: "train"
+    max_length: 512

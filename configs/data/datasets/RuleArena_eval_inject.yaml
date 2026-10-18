@@ -1,0 +1,7 @@
+# RuleArena 评测集（全域；P0 推荐使用 RuleArena_airline_eval_inject.yaml）
+
+RuleArena_eval:
+  handler: AlpacaDataset
+  args:
+    data_path: ${paths.root_dir}/data/inject/logic/eval/rulearena/test.json
+    max_length: 4096

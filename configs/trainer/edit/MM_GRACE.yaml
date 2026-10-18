@@ -1,0 +1,20 @@
+# MM-GRACE: Multimodal GRACE Knowledge Editing
+# Papers: https://arxiv.org/abs/2211.11031 + https://arxiv.org/abs/2310.08475
+
+defaults:
+  - edit/base_editor@_here_
+  - _self_
+
+handler: MMGRACEEditor
+
+method_args:
+  layers: [9]
+  # Resolve the language backbone without accidentally selecting vision blocks.
+  inner_params: auto
+  edit_lr: 1.0e-1
+  n_iter: 40
+  eps: 5.0e-4
+  num_pert: 5
+  val_reg: 0.0
+  dropout: 0.0
+  replacement: "replace_last"

@@ -1,0 +1,9 @@
+# 知识编辑泛化性指标
+# 测试改写表达是否也能正确输出
+
+generalization:
+  handler: EditGeneralizationEvaluator
+  args:
+    metric_name: generalization
+    # 是否使用 rephrase prompts
+    use_rephrase: true

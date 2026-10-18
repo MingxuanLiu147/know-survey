@@ -1,0 +1,6 @@
+# Multimodal Knowledge Editing 数据配置
+
+defaults:
+  - datasets@edit: MMEdit_VQA
+
+anchor: edit

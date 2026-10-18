@@ -1,0 +1,49 @@
+# @package eval.tofu
+# NOTE: the above line is not a comment, but sets the package for config. See https://hydra.cc/docs/upgrades/0.11_to_1.0/adding_a_package_directive/
+# TOFU 评估配置：用于设置遗忘/保留数据上的各类 TOFU 指标及相关参数
+
+# defaults 块：包含本次评估要启用的所有 TOFU 指标配置
+defaults: # include all defined metrics files
+  # tofu_metrics：从 eval.tofu_metrics 配置树中选择要加载的一组 TOFU 指标
+  - tofu_metrics: # When you import a metric here, its configuration automatically populates the 
+  # metric key below, enabled by the @package directive at the top of each configuration file.
+    # 下方各 forget_* 指标：衡量遗忘质量（真值比例、答案概率、ROUGE 等多个维度）
+    - forget_Truth_Ratio
+    - forget_quality
+    - forget_Q_A_Prob
+    - forget_Q_A_ROUGE
+    # model_utility：评估模型在保留任务上的整体效用，作为遗忘后性能保持的衡量
+    - model_utility # populated in the metrics key as metrics.model_utility
+    # privleak / extraction_strength：评估私有信息泄露程度与被攻击者成功提取的强度
+    - privleak
+    - extraction_strength
+    # 下面被注释掉的指标为可选项，需要时可取消注释并在对应 metric 配置中设置好路径/参数
+    # - exact_memorization
+    # - mia_min_k_plus_plus
+    # - mia_min_k
+    # - mia_loss
+    # - mia_zlib
+    # - mia_gradnorm
+    # - mia_reference # set reference model path appropriately
+    # - forget_Q_A_gibberish
+
+# handler：指定用于运行 TOFU 评估的评估器类
+handler: TOFUEvaluator
+# output_dir：评估输出目录，这里复用全局 paths.output_dir 的默认评估路径
+output_dir: ${paths.output_dir} # set to default eval directory
+# metrics：保存每个评估指标到其配置的映射，内容将由上面的 defaults.tofu_metrics 自动填充
+metrics: {} # lists a mapping from each evaluation metric to its config 
+# 上一行的 metrics 映射通过各 metric 配置文件头部的 @package 指令自动注入，无需手动填写
+# populated through the first (@package) line in each metric config
+# overwrite：若为 true，则可以覆盖 output_dir 中已有的评估结果；false 时避免意外覆盖
+overwrite: false
+# forget_split：指定 TOFU 日志中用作遗忘集的 split 名称
+forget_split: forget10
+# holdout_split：指定 TOFU 日志中用作保留/对照集的 split 名称
+holdout_split: holdout10
+# retain_logs_path：可显式指定保留集日志路径；为 null 时使用默认路径或从其他配置推断
+retain_logs_path: null
+# question_key：指定在遗忘/保留评估中读取问题的字段名，如 "question" 或 "paraphrased_question"
+question_key: "question" # Specifies which key to use during forget and retain evaluations (e.g., "question" or "paraphrased_question")
+# batch_size：评估时每个批次处理的样本数，原为 32，为避免显存不足已改为 4
+batch_size: 4 #原来是32 进行一下修改 避免显存不足

@@ -1,0 +1,8 @@
+# MMKE-Bench User Specific 数据集 (ICLR 2025)
+
+MMKE_Bench_user_specific:
+  handler: MMKEBenchDataset
+  args:
+    subset: "user_specific"
+    image_dir: "data/edit/mmke_bench/images"
+    max_length: 512

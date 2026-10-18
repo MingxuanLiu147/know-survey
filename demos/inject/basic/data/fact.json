@@ -1,0 +1,66 @@
+[
+  {
+    "instruction": "Answer the factual question with a short phrase.",
+    "input": "Who wrote the novel 1984?",
+    "output": "George Orwell",
+    "answer": "George Orwell",
+    "source_dataset": "fact_qa",
+    "knowledge_type": "fact"
+  },
+  {
+    "instruction": "Answer the factual question with a short phrase.",
+    "input": "What is the capital of Japan?",
+    "output": "Tokyo",
+    "answer": "Tokyo",
+    "source_dataset": "fact_qa",
+    "knowledge_type": "fact"
+  },
+  {
+    "instruction": "Answer the factual question with a short phrase.",
+    "input": "What chemical element has the symbol O?",
+    "output": "Oxygen",
+    "answer": "Oxygen",
+    "source_dataset": "fact_qa",
+    "knowledge_type": "fact"
+  },
+  {
+    "instruction": "Answer the factual question with a short phrase.",
+    "input": "In which year did the Apollo 11 moon landing occur?",
+    "output": "1969",
+    "answer": "1969",
+    "source_dataset": "fact_qa",
+    "knowledge_type": "fact"
+  },
+  {
+    "instruction": "Answer the factual question with a short phrase.",
+    "input": "Who proposed the theory of general relativity?",
+    "output": "Albert Einstein",
+    "answer": "Albert Einstein",
+    "source_dataset": "fact_qa",
+    "knowledge_type": "fact"
+  },
+  {
+    "instruction": "Answer the factual question with a short phrase.",
+    "input": "What is the largest planet in the Solar System?",
+    "output": "Jupiter",
+    "answer": "Jupiter",
+    "source_dataset": "fact_qa",
+    "knowledge_type": "fact"
+  },
+  {
+    "instruction": "Answer the factual question with a short phrase.",
+    "input": "What language is primarily spoken in Brazil?",
+    "output": "Portuguese",
+    "answer": "Portuguese",
+    "source_dataset": "fact_qa",
+    "knowledge_type": "fact"
+  },
+  {
+    "instruction": "Answer the factual question with a short phrase.",
+    "input": "What is H2O commonly known as?",
+    "output": "Water",
+    "answer": "Water",
+    "source_dataset": "fact_qa",
+    "knowledge_type": "fact"
+  }
+]

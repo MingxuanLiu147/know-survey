@@ -1,0 +1,23 @@
+# GRACE: Lifelong Model Editing with Discrete Key-Value Adaptors
+# Paper: https://arxiv.org/abs/2211.11031
+
+defaults:
+  - edit/base_editor@_here_
+  - _self_
+
+handler: GRACEEditor
+
+method_args:
+  # `auto` maps GPT-2 to mlp.c_fc (Conv1D) and Qwen/Llama to
+  # mlp.down_proj. Production experiments should pin the exact path.
+  layers: [9]
+  inner_params: "auto"
+  edit_lr: 1.0
+  n_iter: 50
+  eps: 1.0
+  num_pert: 8
+  val_init: "cold"
+  val_train: "sgd"
+  val_reg: 0.0
+  dropout: 0.0
+  replacement: "replace_last"

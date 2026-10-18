@@ -1,0 +1,9 @@
+# AKEW CounterFact long-form protocol used by AnyEdit.
+
+AKEW_counterfact_unstructured_edit:
+  handler: AKEWDataset
+  args:
+    subset: counterfact
+    target_mode: unstructured
+    max_length: 2048
+    apply_chat_template: true

@@ -1,0 +1,7 @@
+# FOLIO 评测集（validation 作为公开评测切分）
+
+FOLIO_eval:
+  handler: AlpacaDataset
+  args:
+    data_path: ${paths.root_dir}/data/inject/logic/eval/folio/test.json
+    max_length: 4096

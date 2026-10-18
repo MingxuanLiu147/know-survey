@@ -1,0 +1,12 @@
+defaults:
+  - model: Qwen2VL-2B
+  - data: mllmu
+  - trainer: MMGradAscent
+  - _self_
+  - experiment: null
+
+device: cuda
+require_cuda: true
+seed: 42
+output_dir: saves/mm_unlearn/${trainer.handler}/${now:%Y-%m-%d_%H-%M-%S}
+save_model: true

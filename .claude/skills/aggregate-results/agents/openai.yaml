@@ -1,0 +1,4 @@
+interface:
+  display_name: "Aggregate Results"
+  short_description: "Validate and aggregate machine-readable run artifacts safely."
+  default_prompt: "Use $aggregate-results to aggregate these completed Know-Surgery runs."

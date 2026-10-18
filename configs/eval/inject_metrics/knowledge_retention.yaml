@@ -1,0 +1,15 @@
+# 知识保持指标
+# 测试微调后原有知识是否保持
+
+knowledge_retention:
+  handler: InjectRetentionEvaluator
+  output_dir: ${paths.output_dir}
+  overwrite: false
+  benchmark_data_path: null
+  original_model_path: null
+  # Fail fast on missing tokenizer/benchmark_data instead of writing fake 0.0 summaries.
+  strict: true
+  args:
+    metric_name: knowledge_retention
+    max_new_tokens: 50
+    max_length: 2048

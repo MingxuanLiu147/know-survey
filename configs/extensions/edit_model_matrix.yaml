@@ -1,0 +1,872 @@
+# Know-Surgery method catalog.
+schema_version: '1.0'
+operation: edit
+status_order:
+- registered
+- configured
+- verified
+compatibility_templates:
+  registered:
+    status: registered
+    experiment: null
+    evidence: null
+    mapping_profile: null
+    notes: Catalogued only; model-method execution compatibility is not claimed.
+methods:
+  FTEditor:
+    config: configs/trainer/edit/FT.yaml
+    compatibility_class: architecture_independent
+    requirements: []
+  IKEEditor:
+    config: configs/trainer/edit/IKE.yaml
+    compatibility_class: architecture_independent
+    requirements:
+    - retrieval_backend
+  SERACEditor:
+    config: configs/trainer/edit/SERAC.yaml
+    compatibility_class: meta_checkpointed
+    requirements:
+    - trained_scope_encoder_and_counterfactual_archive
+    - matching_causal_tokenizer
+    - disjoint_auxiliary_training_split
+  ROMEEditor:
+    config: configs/trainer/edit/ROME.yaml
+    compatibility_class: layer_mapped
+    requirements:
+    - rewrite_module_mapping
+    - layer_module_mapping
+    - covariance_statistics
+  MEMITEditor:
+    config: configs/trainer/edit/MEMIT.yaml
+    compatibility_class: layer_mapped
+    requirements:
+    - rewrite_module_mapping
+    - layer_module_mapping
+    - covariance_statistics
+  AlphaEditEditor:
+    config: configs/trainer/edit/AlphaEdit.yaml
+    compatibility_class: layer_mapped
+    requirements:
+    - rewrite_module_mapping
+    - layer_module_mapping
+    - projection_statistics
+  GRACEEditor:
+    config: configs/trainer/edit/GRACE.yaml
+    compatibility_class: layer_mapped
+    requirements:
+    - inner_parameter_mapping
+  AnyEditEditor:
+    config: configs/trainer/edit/AnyEdit.yaml
+    compatibility_class: backend_dependent
+    requirements:
+    - memit_are
+    - alphaedit_are
+    - backend_model_mapping
+  MENDEditor:
+    config: configs/trainer/edit/MEND.yaml
+    compatibility_class: meta_checkpointed
+    requirements:
+    - architecture_matched_edit_network_checkpoint
+  MALMENEditor:
+    config: configs/trainer/edit/MALMEN.yaml
+    compatibility_class: meta_checkpointed
+    requirements:
+    - architecture_matched_meta_network_checkpoint
+  InstructEditEditor:
+    config: configs/trainer/edit/InstructEdit.yaml
+    compatibility_class: meta_checkpointed
+    requirements:
+    - architecture_matched_instructedit_checkpoint
+    - task_template_registration
+  WISEMergeEditor:
+    config: configs/trainer/edit/WISE.yaml
+    compatibility_class: layer_mapped
+    requirements:
+    - value_projection_mapping
+    - independent_scope_training_negatives
+    - context_templates
+models:
+  gpt2:
+    display_name: GPT-2
+    aliases:
+    - gpt-2
+    - gpt2-124m
+    config: configs/model/gpt2.yaml
+    model_family: gpt2
+    parameter_scale_billion: 0.124
+    source_model_id: openai-community/gpt2
+    notes: "Small causal model with explicit GPT-2 module mappings."
+    methods:
+      FTEditor:
+        status: "configured"
+        experiment: edit/model_coverage/gpt2_ft_counterfact
+        evidence: null
+        mapping_profile: null
+        notes: "FT with a small optimization budget; inspect target and side-effect metrics."
+      IKEEditor:
+        status: "configured"
+        experiment: edit/model_coverage/gpt2_ike_counterfact
+        evidence: null
+        mapping_profile: null
+        notes: "IKE edit-memory configuration using token-overlap retrieval."
+      SERACEditor:
+        status: configured
+        experiment: edit/model_coverage/gpt2_serac_counterfact
+        evidence: null
+        mapping_profile: null
+        notes: "Requires method-specific inputs; alternative implementation checkpoints are not interchangeable."
+      ROMEEditor:
+        status: "configured"
+        experiment: edit/counterfact/gpt2_rome_real
+        evidence: null
+        mapping_profile: gpt2_transformer_h_mlp_c_proj
+        notes: "ROME with the GPT-2 Conv1D rewrite mapping."
+      MEMITEditor:
+        status: "configured"
+        experiment: edit/counterfact/gpt2_memit_real
+        evidence: null
+        mapping_profile: gpt2_transformer_h_mlp_c_proj
+        notes: "MEMIT with GPT-2 projection mappings; prepare compatible statistics."
+      AlphaEditEditor:
+        status: "configured"
+        experiment: edit/counterfact/gpt2_alphaedit_real
+        evidence: null
+        mapping_profile: gpt2_transformer_h_mlp_c_proj
+        notes: "AlphaEdit with GPT-2 mappings; preserve projection and continuation state."
+      GRACEEditor:
+        status: "configured"
+        experiment: edit/counterfact/gpt2_grace_real
+        evidence: null
+        mapping_profile: gpt2_transformer_h_mlp_c_fc
+        notes: "GRACE with a model-specific adapter location and prompt-boundary lookup."
+      AnyEditEditor:
+        status: configured
+        experiment: edit/editevery/gpt2_anyedit_real
+        evidence: null
+        mapping_profile: gpt2_memit_are
+        notes: "AnyEdit requires a compatible ARE backend, target chunks and preservation statistics."
+      MENDEditor:
+        status: "configured"
+        experiment: edit/zsre/gpt2_mend_real
+        evidence: null
+        mapping_profile: gpt2_meta_network
+        notes: "Compact MEND; requires an auxiliary network matching the exact base model."
+      MALMENEditor:
+        status: "configured"
+        experiment: edit/zsre/gpt2_malmen_smoke
+        evidence: null
+        mapping_profile: gpt2_compact_malmen_c_proj
+        notes: "Compact MALMEN; requires a matching native auxiliary checkpoint, not an upstream archive."
+      InstructEditEditor:
+        status: "configured"
+        experiment: edit/counterfact/gpt2_instructedit_smoke
+        evidence: null
+        mapping_profile: gpt2_compact_instructedit_mend
+        notes: "Compact InstructEdit; requires a dedicated checkpoint matching the base model and task template."
+      WISEMergeEditor:
+        status: configured
+        experiment: edit/counterfact/gpt2_wise_real
+        evidence: null
+        mapping_profile: gpt2_transformer_h_mlp_c_proj
+        notes: "Requires method-specific inputs; alternative implementation checkpoints are not interchangeable."
+  gpt2_xl:
+    display_name: GPT-2 XL
+    aliases:
+    - gpt2-xl
+    - gpt-2-xl
+    config: configs/model/gpt2-xl.yaml
+    model_family: gpt2
+    parameter_scale_billion: 1.5
+    source_model_id: openai-community/gpt2-xl
+    notes: "Registered model size; supply compatible weights and method settings."
+    methods:
+      FTEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      IKEEditor:
+        status: configured
+        experiment: edit/model_coverage/gpt2_xl_ike_counterfact
+        evidence: null
+        mapping_profile: null
+        notes: "IKE edit-memory configuration; check retrieval settings and available context length."
+      SERACEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: "Requires method-specific inputs; alternative implementation checkpoints are not interchangeable."
+      ROMEEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      MEMITEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      AlphaEditEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      GRACEEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      AnyEditEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      MENDEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      MALMENEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: easyedit_gpt2_xl_only
+        notes: EasyEdit's available MALMEN hparams target GPT-2 XL; this records scope,
+          not a runnable checkpoint.
+      InstructEditEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      WISEMergeEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: "Requires method-specific inputs; alternative implementation checkpoints are not interchangeable."
+  gpt_j_6b:
+    display_name: GPT-J 6B
+    aliases:
+    - gpt-j-6b
+    - gptj-6b
+    config: configs/model/gpt-j-6b.yaml
+    model_family: gptj
+    parameter_scale_billion: 6.0
+    source_model_id: EleutherAI/gpt-j-6b
+    notes: "Registered model architecture; supply compatible weights and method settings."
+    methods:
+      FTEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      IKEEditor:
+        status: configured
+        experiment: edit/model_coverage/gpt_j_6b_ike_counterfact
+        evidence: null
+        mapping_profile: null
+        notes: "IKE edit-memory configuration; check retrieval settings and available context length."
+      SERACEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: "Requires method-specific inputs; alternative implementation checkpoints are not interchangeable."
+      ROMEEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      MEMITEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      AlphaEditEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      GRACEEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      AnyEditEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      MENDEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      InstructEditEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      WISEMergeEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: "Requires method-specific inputs; alternative implementation checkpoints are not interchangeable."
+  qwen25_1_5b_instruct:
+    display_name: Qwen2.5-1.5B-Instruct
+    aliases:
+    - qwen2.5-1.5b-instruct
+    - qwen25-1.5b-instruct
+    config: configs/model/Qwen2.5-1.5B-Instruct.yaml
+    model_family: qwen2
+    parameter_scale_billion: 1.5
+    source_model_id: Qwen/Qwen2.5-1.5B-Instruct
+    notes: "Model-specific recipes; check method assets before execution."
+    methods:
+      FTEditor:
+        status: configured
+        experiment: edit/model_coverage/qwen25_1_5b_ft_counterfact
+        evidence: null
+        mapping_profile: null
+        notes: "FT with CounterFact data; set the editable layers and optimization budget."
+      IKEEditor:
+        status: configured
+        experiment: edit/model_coverage/qwen25_1_5b_ike_counterfact
+        evidence: null
+        mapping_profile: null
+        notes: "IKE edit-memory configuration using token-overlap retrieval."
+      SERACEditor:
+        status: configured
+        experiment: edit/model_coverage/qwen25_1_5b_serac_counterfact
+        evidence: null
+        mapping_profile: null
+        notes: "Requires method-specific inputs; alternative implementation checkpoints are not interchangeable."
+      ROMEEditor:
+        status: configured
+        experiment: edit/counterfact/qwen25_1_5b_rome_100
+        evidence: null
+        mapping_profile: qwen2_model_layers_mlp_down_proj
+        notes: "Sequential editing recipe; set the edit count and history evaluation steps explicitly."
+      MEMITEditor:
+        status: configured
+        experiment: edit/counterfact/qwen25_1_5b_memit_100
+        evidence: null
+        mapping_profile: qwen2_model_layers_mlp_down_proj
+        notes: "Sequential editing recipe; set the edit count and history evaluation steps explicitly."
+      AlphaEditEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      GRACEEditor:
+        status: configured
+        experiment: edit/counterfact/qwen25_1_5b_grace_configured
+        evidence: null
+        mapping_profile: qwen2_model_layers_mlp_down_proj
+        notes: "Qwen2.5-1.5B-Instruct adapter targeting layer 18."
+      AnyEditEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      MENDEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      InstructEditEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      WISEMergeEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: "Requires method-specific inputs; alternative implementation checkpoints are not interchangeable."
+  qwen25_1_5b_base:
+    display_name: Qwen2.5-1.5B
+    aliases:
+    - qwen2.5-1.5b-base
+    - qwen25-1.5b-base
+    config: configs/model/Qwen2.5-1.5B.yaml
+    model_family: qwen2
+    parameter_scale_billion: 1.5
+    source_model_id: Qwen/Qwen2.5-1.5B
+    notes: "Base non-chat checkpoint; use its matching tokenizer and prompt format."
+    methods:
+      FTEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      IKEEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      SERACEditor:
+        status: configured
+        experiment: edit/model_coverage/qwen25_1_5b_base_serac_counterfact
+        evidence: null
+        mapping_profile: null
+        notes: "Requires method-specific inputs; alternative implementation checkpoints are not interchangeable."
+      ROMEEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      MEMITEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      AlphaEditEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      GRACEEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      AnyEditEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      MENDEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      InstructEditEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      WISEMergeEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: "Requires method-specific inputs; alternative implementation checkpoints are not interchangeable."
+  qwen25_7b:
+    display_name: Qwen2.5-7B-Instruct
+    aliases:
+    - qwen2.5-7b
+    - qwen25-7b
+    config: configs/model/Qwen2.5-7B-Instruct.yaml
+    model_family: qwen2
+    parameter_scale_billion: 7.0
+    source_model_id: Qwen/Qwen2.5-7B-Instruct
+    notes: "Model-specific recipes; check statistics, auxiliary assets and available memory."
+    methods:
+      FTEditor:
+        status: configured
+        experiment: edit/model_coverage/qwen25_7b_ft_counterfact
+        evidence: null
+        mapping_profile: null
+        notes: "FT with CounterFact data; set the editable layers and optimization budget."
+      IKEEditor:
+        status: configured
+        experiment: edit/model_coverage/qwen25_7b_ike_counterfact
+        evidence: null
+        mapping_profile: null
+        notes: "IKE edit-memory configuration using token-overlap retrieval."
+      SERACEditor:
+        status: configured
+        experiment: edit/model_coverage/qwen25_7b_serac_counterfact
+        evidence: null
+        mapping_profile: null
+        notes: "Requires method-specific inputs; alternative implementation checkpoints are not interchangeable."
+      ROMEEditor:
+        status: configured
+        experiment: edit/counterfact/default
+        evidence: null
+        mapping_profile: qwen2_model_layers_mlp_down_proj
+        notes: "Qwen-specific layer mapping; prepare statistics before execution."
+      MEMITEditor:
+        status: configured
+        experiment: edit/counterfact/memit
+        evidence: null
+        mapping_profile: qwen2_model_layers_mlp_down_proj
+        notes: "Qwen-specific layer mapping; prepare statistics before execution."
+      AlphaEditEditor:
+        status: configured
+        experiment: edit/counterfact/alphaedit
+        evidence: null
+        mapping_profile: qwen2_model_layers_mlp_down_proj
+        notes: "Qwen-specific layer mapping; prepare compatible projection statistics."
+      GRACEEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      AnyEditEditor:
+        status: configured
+        experiment: edit/akew/anyedit
+        evidence: null
+        mapping_profile: qwen2_memit_are
+        notes: "MEMIT_ARE backend; requires model-specific preservation statistics."
+      MENDEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      InstructEditEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      WISEMergeEditor:
+        status: configured
+        experiment: edit/counterfact/qwen25_7b_wise_configured
+        evidence: null
+        mapping_profile: qwen2_model_layers_mlp_down_proj
+        notes: "Requires method-specific inputs; alternative implementation checkpoints are not interchangeable."
+  llama32_1b:
+    display_name: Llama-3.2-1B-Instruct
+    aliases:
+    - llama-3.2-1b
+    - llama32-1b
+    config: configs/model/Llama-3.2-1B-Instruct.yaml
+    model_family: llama3
+    parameter_scale_billion: 1.0
+    source_model_id: meta-llama/Llama-3.2-1B-Instruct
+    notes: "Use the model-specific recipe and check local weights and method assets."
+    methods:
+      FTEditor:
+        status: configured
+        experiment: edit/model_coverage/llama32_1b_ft_counterfact
+        evidence: null
+        mapping_profile: null
+        notes: "FT with CounterFact data; set the editable layers and optimization budget."
+      IKEEditor:
+        status: configured
+        experiment: edit/model_coverage/llama32_1b_ike_counterfact
+        evidence: null
+        mapping_profile: null
+        notes: "IKE edit-memory configuration using token-overlap retrieval."
+      SERACEditor:
+        status: configured
+        experiment: edit/model_coverage/llama32_1b_serac_counterfact
+        evidence: null
+        mapping_profile: null
+        notes: "Requires method-specific inputs; alternative implementation checkpoints are not interchangeable."
+      ROMEEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      MEMITEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      AlphaEditEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      GRACEEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      AnyEditEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      MENDEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      InstructEditEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      WISEMergeEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: "Requires method-specific inputs; alternative implementation checkpoints are not interchangeable."
+  llama32_3b:
+    display_name: Llama-3.2-3B-Instruct
+    aliases:
+    - llama-3.2-3b
+    - llama32-3b
+    config: configs/model/Llama-3.2-3B-Instruct.yaml
+    model_family: llama3
+    parameter_scale_billion: 3.0
+    source_model_id: meta-llama/Llama-3.2-3B-Instruct
+    notes: "Model-specific recipes; check layer mappings and method assets."
+    methods:
+      FTEditor:
+        status: configured
+        experiment: edit/model_coverage/llama32_3b_ft_counterfact
+        evidence: null
+        mapping_profile: null
+        notes: "FT with CounterFact data; set the editable layers and optimization budget."
+      IKEEditor:
+        status: configured
+        experiment: edit/model_coverage/llama32_3b_ike_counterfact
+        evidence: null
+        mapping_profile: null
+        notes: "IKE edit-memory configuration using token-overlap retrieval."
+      SERACEditor:
+        status: configured
+        experiment: edit/model_coverage/llama32_3b_serac_counterfact
+        evidence: null
+        mapping_profile: null
+        notes: "Requires method-specific inputs; alternative implementation checkpoints are not interchangeable."
+      ROMEEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      MEMITEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      AlphaEditEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      GRACEEditor:
+        status: configured
+        experiment: edit/counterfact/llama32_3b_grace_configured
+        evidence: null
+        mapping_profile: llama3_model_layers_mlp_down_proj
+        notes: "Llama-3.2-3B-Instruct adapter targeting layer 27."
+      AnyEditEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      MENDEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      InstructEditEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      WISEMergeEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: "Requires method-specific inputs; alternative implementation checkpoints are not interchangeable."
+  llama31_8b:
+    display_name: Llama-3.1-8B-Instruct
+    aliases:
+    - llama-3.1-8b
+    - llama31-8b
+    config: configs/model/Llama-3.1-8B-Instruct.yaml
+    model_family: llama3
+    parameter_scale_billion: 8.0
+    source_model_id: meta-llama/Llama-3.1-8B-Instruct
+    notes: This is the 3.1 checkpoint, not an alias for the original Meta-Llama-3-8B-Instruct.
+    methods:
+      FTEditor:
+        status: configured
+        experiment: edit/model_coverage/llama31_8b_ft_counterfact
+        evidence: null
+        mapping_profile: null
+        notes: "FT with CounterFact data; set the editable layers and optimization budget."
+      IKEEditor:
+        status: configured
+        experiment: edit/model_coverage/llama31_8b_ike_counterfact
+        evidence: null
+        mapping_profile: null
+        notes: "IKE edit-memory configuration using token-overlap retrieval."
+      SERACEditor:
+        status: configured
+        experiment: edit/model_coverage/llama31_8b_serac_counterfact
+        evidence: null
+        mapping_profile: null
+        notes: "Requires method-specific inputs; alternative implementation checkpoints are not interchangeable."
+      ROMEEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      MEMITEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      AlphaEditEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      GRACEEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      AnyEditEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      MENDEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      InstructEditEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      WISEMergeEditor:
+        status: configured
+        experiment: edit/counterfact/llama31_8b_wise_configured
+        evidence: null
+        mapping_profile: llama3_model_layers_mlp_down_proj
+        notes: "Requires method-specific inputs; alternative implementation checkpoints are not interchangeable."
+  llama3_8b:
+    display_name: Meta-Llama-3-8B-Instruct
+    aliases:
+    - llama-3-8b
+    - llama3-8b
+    - meta-llama-3-8b
+    config: configs/model/Llama-3-8B-Instruct.yaml
+    model_family: llama3
+    parameter_scale_billion: 8.0
+    source_model_id: meta-llama/Meta-Llama-3-8B-Instruct
+    notes: "Original Llama 3 checkpoint, distinct from Llama 3.1; check method compatibility."
+    methods:
+      FTEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      IKEEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      SERACEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: "Requires method-specific inputs; alternative implementation checkpoints are not interchangeable."
+      ROMEEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      MEMITEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      AlphaEditEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      GRACEEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      AnyEditEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      MENDEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      InstructEditEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: Catalogued only; model-method execution compatibility is not claimed.
+      WISEMergeEditor:
+        status: registered
+        experiment: null
+        evidence: null
+        mapping_profile: null
+        notes: "Requires method-specific inputs; alternative implementation checkpoints are not interchangeable."

@@ -1,0 +1,7 @@
+# WikiHow 过程知识训练集（Alpaca 格式）
+
+WikiHow_train:
+  handler: AlpacaDataset
+  args:
+    data_path: ${paths.root_dir}/data/inject/procedural/train/wikihow/train.json
+    max_length: 4096

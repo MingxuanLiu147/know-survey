@@ -1,0 +1,76 @@
+# @package _global_
+# Paper-aligned MLLMU-Bench/LLaVA inventory. This is a configured composition,
+# not a benchmark replication until the benchmark-trained checkpoint and
+# method dependencies are supplied and a complete run is recorded.
+defaults:
+  - override /model: LLaVA-1.5-7B
+  - override /data: mllmu
+  - override /trainer: MMGradAscent
+
+model:
+  lora:
+    enabled: true
+    r: 16
+    alpha: 16
+    dropout: 0.05
+
+data:
+  forget_split_ratio: 5
+  batch_size: 4
+  ans_only: true
+
+trainer:
+  args:
+    lr: 2e-5
+    num_epochs: 1
+
+benchmark_protocol:
+  paper_arxiv: "2410.22108"
+  start_checkpoint: full-data-finetuned-vanilla
+  start_checkpoint_override: model.model_path
+  lora_target_policy: auto-linear-excluding-embeddings-lm-head-patch-embed
+  paper_hardware: 2x-NVIDIA-L40S-48GB-for-LLaVA
+  replication_requirements:
+    - benchmark_trained_base_checkpoint
+    - retain_or_oracle_artifacts_for_dependent_methods
+    - complete_benchmark_evaluation
+  original_model_families:
+    - LLaVA-1.5-7B
+    - Idefics2-8B
+  baseline_family:
+    - MMGradAscent
+    - MMGradDiff
+    - MMKLMin
+    - MMNPO
+    - MMPrompting
+  method_matrix:
+    MMGradAscent:
+      role: original-baseline
+      data_mode: unlearn
+      requirements: [benchmark_trained_base_checkpoint]
+      memory_tier: single-model
+    MMGradDiff:
+      role: original-baseline
+      data_mode: unlearn
+      requirements: [benchmark_trained_base_checkpoint, retain_set]
+      memory_tier: single-model-paired-batches
+    MMKLMin:
+      role: original-baseline
+      data_mode: unlearn
+      requirements:
+        - benchmark_trained_base_checkpoint
+        - retain_set
+        - frozen_reference_model
+      memory_tier: dual-model-over-24GB-or-offload
+    MMNPO:
+      role: original-baseline
+      data_mode: unlearn
+      requirements:
+        - benchmark_trained_base_checkpoint
+        - retain_only_oracle_checkpoint
+      memory_tier: dual-model-over-24GB-or-offload
+    MMRetainFT:
+      role: oracle-construction-stage
+      data_mode: reference
+      requirements: [retain_set]
+      memory_tier: single-model

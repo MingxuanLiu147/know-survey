@@ -1,0 +1,84 @@
+# Docker
+
+[Documentation](README.md) · [Configuration](experiments.md) · [Agent workflows](agent_mode.md)
+
+The image includes the Python package, source workbench, shared Agent Skills and
+built React interface. Keep model weights, datasets and run outputs in mounted
+folders. GPU execution requires a compatible host NVIDIA driver and NVIDIA
+Container Toolkit; configuration previews can run without a GPU.
+
+## Build and check
+
+From the repository root:
+
+```bash
+docker build --tag know-surgery:local .
+docker run --rm --network none know-surgery:local know-surgery --help
+docker run --rm --network none know-surgery:local \
+  know-surgery operation=edit experiment=edit/smoke/ft_counterfact --cfg job
+```
+
+The Dockerfile builds the frontend with Node and installs Python 3.11 and the
+runtime requirements. Dependency constraints come from `requirements-know.lock`.
+Building requires direct network access or an appropriately populated build
+cache; the image does not contain model weights. Its default command opens a
+shell. The source workbench is `/workspace/know-surgery`.
+
+Optional build arguments are `BASE_IMAGE`, `NODE_IMAGE`, `UV_VERSION` and
+`PYTHON_VERSION`. Changing them changes the environment and may require checking
+model and CUDA compatibility again. The build rejects restricted implementation
+modules and `.dockerignore` excludes local caches, datasets, outputs and secrets.
+
+## Mount local inputs and results
+
+Set the three directories to existing absolute paths on your machine. The model
+folder must contain the model weights and tokenizer; the data folder must contain
+`counterfact.json` in the supported format.
+
+```bash
+export MODEL_DIR=/path/to/model
+export DATA_DIR=/path/to/data
+export RESULT_DIR=/path/to/results
+mkdir -p "$RESULT_DIR"
+
+docker run --rm --gpus all --shm-size 16g \
+  -e HF_HUB_OFFLINE=1 -e HF_DATASETS_OFFLINE=1 \
+  -v "$MODEL_DIR:/models/base:ro" \
+  -v "$DATA_DIR:/inputs:ro" \
+  -v "$RESULT_DIR:/results" \
+  know-surgery:local \
+  know-surgery operation=edit experiment=edit/smoke/ft_counterfact \
+  task_name=ft_example max_edits=1 \
+  model.model_args.pretrained_model_name_or_path=/models/base \
+  model.tokenizer_args.pretrained_model_name_or_path=/models/base \
+  data.edit.CounterFact_edit.args.data_path=/inputs/counterfact.json \
+  paths.output_dir=/results/ft_example --cfg job
+```
+
+Inspect the composed configuration before removing `--cfg job` for an actual run.
+Change the model and experiment together when their layer mappings differ.
+Use `--gpus '"device=0"'` to expose a particular device, or omit GPU options for a
+CPU-compatible configuration. Mounted outputs survive container removal.
+
+## Start the WebUI
+
+```bash
+docker run --rm -p 127.0.0.1:7860:7860 \
+  know-surgery:local \
+  python -m uvicorn webui.backend.app:app --host 0.0.0.0 --port 7860
+```
+
+Open `http://127.0.0.1:7860`. Add model/data/output mounts and GPU options when you
+want the interface to execute jobs. For an Agent provider, pass the required key
+at runtime with `-e OPENAI_API_KEY` or `-e DEEPSEEK_API_KEY`; keep it out of the
+image, configuration exports and version control.
+
+The same environment can run skills, for example:
+
+```bash
+docker run --rm know-surgery:local \
+  python .claude/skills/inspect-repo/scripts/run.py --help
+```
+
+A successful build or configuration preview does not establish algorithm quality.
+See [evaluation](evaluation.md) for interpreting results and side effects.

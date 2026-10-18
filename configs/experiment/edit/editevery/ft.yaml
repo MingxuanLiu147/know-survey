@@ -1,0 +1,16 @@
+# @package _global_
+# EditEverything + FT baseline
+
+defaults:
+  - override /model: Qwen2.5-7B-Instruct
+  - override /trainer: edit/FT
+  - override /data: edit
+  - override /data/datasets@data.edit: EditEvery_edit
+  - override /eval: edit
+
+data:
+  edit:
+    EditEvery_edit:
+      handler: EditEveryDataset
+      args:
+        max_length: 512

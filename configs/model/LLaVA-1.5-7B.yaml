@@ -1,0 +1,49 @@
+model_family: llava
+model_path: llava-hf/llava-1.5-7b-hf
+processor_path: llava-hf/llava-1.5-7b-hf
+torch_dtype: bfloat16
+attn_implementation: sdpa
+trust_remote_code: false
+local_files_only: false
+minimum_transformers_version: 4.45.0
+processor_args:
+  use_fast: false
+support_tier: experimental
+capability_status: Implemented
+# One Hydra model registration is shared by edit and unlearning routes.
+# This list records configuration coverage, not completed benchmark runs.
+configured_benchmarks: [mmedit, vlkeb, mllmu, clear]
+configured_methods:
+  - MMGradAscent
+  - MMGradDiff
+  - MMKLMin
+  - MMNPO
+  - MMRetainFT
+  - MMSCRUB
+  - MMUnlearner
+  - MMMANU
+  - MM_IKE
+  - MM_LORA
+  - MM_GRACE
+  - MM_WISE
+
+checkpoint_contract:
+  applies_to: unlearning
+  source_model_id: llava-hf/llava-1.5-7b-hf
+  benchmark_trained_checkpoint_required: true
+  paper_original_benchmarks: [mllmu, clear]
+
+resource_profile:
+  parameter_scale: 7B
+  dual_model_methods: [MMKLMin, MMNPO, MMSCRUB]
+  dual_model_memory_tier: "dual-model; additional devices or offload may be needed"
+  full_parameter_weight_edit_methods: [MMMANU]
+lora:
+  enabled: false
+  r: 16
+  alpha: 16
+  dropout: 0.05
+  # transformers 4.57 exposes the LLaVA text backbone as
+  # ``model.language_model.layers`` (not ``language_model.model.layers``).
+  target_modules: ".*model\\.language_model\\.layers\\.\\d+\\.self_attn\\.(q_proj|v_proj)$"
+  target_policy: auto-linear-excluding-embeddings-lm-head-patch-embed

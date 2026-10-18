@@ -1,0 +1,41 @@
+# @package _global_
+# One-record Qwen2-VL-2B portability smoke on MLLMU-Bench.
+defaults:
+  - override /model: Qwen2VL-2B
+  - override /data: mllmu
+  - override /trainer: MMGradAscent
+
+model:
+  processor_args:
+    min_pixels: 200704
+    max_pixels: 200704
+  lora:
+    enabled: true
+    r: 8
+    alpha: 16
+    dropout: 0.0
+
+data:
+  forget_split_ratio: 5
+  batch_size: 1
+  ans_only: true
+  max_samples: 1
+
+trainer:
+  args:
+    lr: 1e-5
+    num_epochs: 1
+
+smoke_protocol:
+  model_role: portability-extension-not-benchmark-original
+  configured_methods:
+    - MMGradAscent
+    - MMGradDiff
+    - MMKLMin
+    - MMNPO
+    - MMRetainFT
+    - MMUnlearner
+    - MMMANU
+
+output_dir: saves/mm_unlearn/smoke_qwen2vl2b_mllmu/${trainer.handler}
+save_model: false

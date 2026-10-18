@@ -1,0 +1,25 @@
+# @package _global_
+
+defaults:
+  - override /model: gpt2
+  - override /trainer: edit/MEND
+  - override /data: edit
+  - override /data/datasets@data.edit: ZSRE_edit
+  - override /eval: edit
+
+trainer:
+  method_args:
+    layers: [5]
+    rank: 8
+    n_hidden: 16
+    edit_lr: 1.0e-3
+    edit_network_path: "saves/edit/mend_networks/gpt2_zsre_v2.pt"
+    require_pretrained: true
+
+data:
+  edit:
+    ZSRE_edit:
+      handler: ZSREDataset
+      args:
+        split: test
+        max_length: 256

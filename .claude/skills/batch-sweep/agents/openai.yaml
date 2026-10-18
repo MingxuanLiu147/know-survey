@@ -1,0 +1,4 @@
+interface:
+  display_name: "Batch Sweep"
+  short_description: "Expand compatible method-model-seed runs without duplicate work."
+  default_prompt: "Use $batch-sweep to build a compatible and auditable experiment matrix."

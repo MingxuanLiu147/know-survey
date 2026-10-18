@@ -1,0 +1,4 @@
+interface:
+  display_name: "Reproduce Run"
+  short_description: "Rebuild argv and verify environment, data, and metric deltas."
+  default_prompt: "Use $reproduce-run to reconstruct and verify this Know-Surgery run."

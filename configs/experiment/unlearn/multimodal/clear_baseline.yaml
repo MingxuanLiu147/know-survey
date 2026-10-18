@@ -1,0 +1,95 @@
+# @package _global_
+# Paper-aligned CLEAR/LLaVA inventory. This is a configured composition, not a
+# benchmark replication until the full-data base checkpoint and method
+# dependencies are supplied and a complete run is recorded.
+defaults:
+  - override /model: LLaVA-1.5-7B
+  - override /data: clear
+  - override /trainer: MMGradAscent
+
+model:
+  lora:
+    enabled: true
+    r: 8
+    alpha: 32
+    dropout: 0.0
+
+data:
+  forget_split_ratio: 10
+  training_split_suffix: +tofu
+  batch_size: 1
+  ans_only: true
+  train_mode: caption
+
+trainer:
+  args:
+    lr: 1e-5
+    num_epochs: 5
+    gradient_accumulation_steps: 2
+
+benchmark_protocol:
+  paper_arxiv: "2410.18057"
+  start_checkpoint: full-data-finetuned-base
+  start_checkpoint_override: model.model_path
+  lora_target_policy: auto-linear-excluding-embeddings-lm-head-patch-embed
+  memory_tier: "method-dependent; check the configured model and auxiliary assets"
+  replication_requirements:
+    - base_checkpoint_finetuned_on_full_clear_text_and_images
+    - retain_or_teacher_artifacts_for_dependent_methods
+    - complete_four_set_evaluation
+  original_model_families:
+    - LLaVA-1.5-7B
+    - Qwen2-VL-2B
+  implemented_prototype_baselines:
+    - MMGradAscent
+    - MMGradDiff
+    - MMKLMin
+    - MMNPO
+    - MMRetainFT
+    - MMSCRUB
+  registered_pending_baselines:
+    - MMIDK
+    - MMDPO
+    - MMLLMU
+    - MMRMU
+    - MMSKU
+  method_matrix:
+    MMGradAscent:
+      role: original-baseline
+      data_mode: unlearn
+      requirements: [benchmark_trained_base_checkpoint]
+      memory_tier: single-model
+    MMGradDiff:
+      role: original-baseline
+      data_mode: unlearn
+      requirements: [benchmark_trained_base_checkpoint, retain_set]
+      memory_tier: single-model-paired-batches
+    MMKLMin:
+      role: original-baseline
+      data_mode: unlearn
+      requirements:
+        - benchmark_trained_base_checkpoint
+        - retain_set
+        - frozen_reference_model
+      memory_tier: dual-model-over-24GB-or-offload
+    MMNPO:
+      role: original-baseline
+      data_mode: unlearn
+      requirements:
+        - benchmark_trained_base_checkpoint
+        - retain_only_oracle_checkpoint
+      memory_tier: dual-model-over-24GB-or-offload
+    MMRetainFT:
+      role: original-baseline-and-gold-construction
+      data_mode: reference
+      requirements: [retain_set]
+      memory_tier: single-model
+    MMSCRUB:
+      role: original-baseline-prototype
+      data_mode: unlearn
+      requirements:
+        - benchmark_trained_base_checkpoint
+        - retain_set
+        - frozen_teacher_model
+        - multi_gpu_or_model_offload
+      memory_tier: dual-model-over-24GB-or-offload

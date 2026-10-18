@@ -1,0 +1,28 @@
+# @package _global_
+
+defaults:
+  - override /model: gpt2
+  - override /trainer: edit/MEMIT
+  - override /data: edit
+  - override /data/datasets@data.edit: CounterFact_edit
+  - override /eval: edit
+
+trainer:
+  method_args:
+    layers: [5]
+    rewrite_module_tmp: "transformer.h.{}.mlp.c_proj"
+    layer_module_tmp: "transformer.h.{}"
+    lm_head_module: "lm_head"
+    ln_f_module: "transformer.ln_f"
+    mom2_adjustment: false
+    mom2_update_weight: 0.1
+    edit_weight: 1.0
+    v_num_grad_steps: 3
+
+data:
+  edit:
+    CounterFact_edit:
+      handler: CounterFactDataset
+      args:
+        split: train
+        max_length: 256

@@ -1,0 +1,7 @@
+# LogicBench 评测集（BQA + MCQA）
+
+LogicBench_eval:
+  handler: AlpacaDataset
+  args:
+    data_path: ${paths.root_dir}/data/inject/logic/eval/logicbench/test.json
+    max_length: 4096

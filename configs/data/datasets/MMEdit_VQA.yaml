@@ -1,0 +1,9 @@
+# MMEdit E-VQA 多模态编辑数据集 (EMNLP 2023)
+
+MMEdit_VQA:
+  handler: MMEditVQADataset
+  args:
+    data_path: "data/edit/mmedit/vqa/vqa_eval.json"
+    image_dir: "data/edit/mmedit/images"
+    rephrase_image_dir: "data/edit/mmedit/rephrase_images"
+    max_length: 512

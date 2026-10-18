@@ -1,0 +1,36 @@
+# AlphaEdit: Null-Space Constrained Knowledge Editing
+# Paper: https://arxiv.org/abs/2410.02355
+
+defaults:
+  - /trainer/edit/base_editor@_here_
+  - _self_
+
+handler: AlphaEditEditor
+
+method_args:
+  implementation_variant: native_adapted
+  v_loss_mode: final_logits
+  kl_direction: base_to_edited
+  context_templates: ["{}"]
+  layers: [4, 5, 6, 7, 8]
+  v_lr: 0.5
+  v_num_grad_steps: 20
+  v_weight_decay: 0.5
+  v_loss_layer: 31
+  clamp_norm_factor: 4.0
+  kl_factor: 0.0625
+  fact_token: "subject_last"
+  # Paper Eq. 8-9: keep SVD directions below this singular-value threshold.
+  nullspace_threshold: 1.0e-2
+  # Ridge term in the projected least-squares solve (authors' default).
+  l2: 10.0
+  rewrite_module_tmp: "model.layers.{}.mlp.down_proj"
+  layer_module_tmp: "model.layers.{}"
+  lm_head_module: "lm_head"
+  ln_f_module: "model.norm"
+  stats_dir: "data/stats"
+  mom2_dataset: "wikipedia"
+  mom2_n_samples: 100000
+  mom2_dtype: "float32"
+  projection_path: null
+  save_projection: true

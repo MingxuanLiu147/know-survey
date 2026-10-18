@@ -1,0 +1,4 @@
+interface:
+  display_name: "Build Cases"
+  short_description: "Build algorithm-ready cases and side-effect evaluation probes."
+  default_prompt: "Use $build-cases to create runnable cases and evaluation probes from normalized data."

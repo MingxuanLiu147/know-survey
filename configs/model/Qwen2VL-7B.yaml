@@ -1,0 +1,44 @@
+model_family: qwen2vl
+model_path: Qwen/Qwen2-VL-7B-Instruct
+processor_path: Qwen/Qwen2-VL-7B-Instruct
+torch_dtype: bfloat16
+attn_implementation: sdpa
+trust_remote_code: false
+local_files_only: false
+minimum_transformers_version: 4.45.0
+support_tier: experimental
+capability_status: Configured
+configured_benchmarks: [mllmu, clear]
+configured_methods:
+  - MMGradAscent
+  - MMGradDiff
+  - MMKLMin
+  - MMNPO
+  - MMRetainFT
+  - MMSCRUB
+  - MMUnlearner
+  - MMMANU
+
+# Qwen2-VL-7B is a portability target, not an original model in either paper.
+# MLLMU-Bench used LLaVA-1.5-7B/Idefics2-8B; CLEAR used LLaVA and reported an
+# additional Qwen2-VL-2B experiment in its appendix.
+checkpoint_contract:
+  source_model_id: Qwen/Qwen2-VL-7B-Instruct
+  benchmark_trained_checkpoint_required: true
+  paper_original_benchmarks: []
+
+processor_args:
+  min_pixels: 200704
+  max_pixels: 1003520
+
+resource_profile:
+  parameter_scale: 7B
+  dual_model_methods: [MMKLMin, MMNPO, MMSCRUB]
+  dual_model_memory_tier: "dual-model; additional devices or offload may be needed"
+  full_parameter_weight_edit_methods: [MMMANU]
+lora:
+  enabled: true
+  r: 8
+  alpha: 16
+  dropout: 0.0
+  target_policy: auto-linear-excluding-embeddings-lm-head-patch-embed

@@ -1,0 +1,9 @@
+# 知识编辑可靠性指标
+# 测试编辑后的知识是否能正确输出
+
+reliability:
+  handler: EditReliabilityEvaluator
+  args:
+    metric_name: reliability
+    # 成功阈值
+    success_threshold: 0.9

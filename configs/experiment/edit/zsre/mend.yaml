@@ -1,0 +1,22 @@
+# @package _global_
+# zsRE + MEND (requires edit_network_path)
+
+defaults:
+  - override /model: Qwen2.5-7B-Instruct
+  - override /trainer: edit/MEND
+  - override /data: edit
+  - override /data/datasets@data.edit: ZSRE_edit
+  - override /eval: edit
+
+trainer:
+  method_args:
+    edit_network_path: null  # set after scripts/train_mend_edit_network.py
+    require_pretrained: true
+
+data:
+  edit:
+    ZSRE_edit:
+      handler: ZSREDataset
+      args:
+        split: "test"
+        max_length: 512

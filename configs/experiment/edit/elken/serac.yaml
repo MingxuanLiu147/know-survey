@@ -1,0 +1,18 @@
+# @package _global_
+# SERAC auxiliary-checkpoint gated; set archive to a newly trained supervised archive.
+defaults:
+- override /model: Qwen2.5-7B-Instruct
+- override /trainer: edit/SERAC
+- override /data: edit
+- override /data/datasets@data.edit: ELKEN_edit
+- override /eval: edit
+trainer:
+  method_args:
+    archive: null
+data:
+  edit:
+    ELKEN_edit:
+      handler: ELKENDataset
+      args:
+        split: train
+        max_length: 1024

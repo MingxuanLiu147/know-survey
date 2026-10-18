@@ -1,0 +1,19 @@
+# Pinned authors' reference protocol; model-specific layers live in experiments.
+# See docs/editing.md.
+defaults:
+  - /trainer/edit/MEMIT@_here_
+  - _self_
+
+method_args:
+  implementation_variant: official_reference
+  v_loss_mode: intermediate_logits
+  kl_direction: edited_to_base
+  context_templates: null
+  mom2_dataset_config: 20200501.en
+  mom2_sample_seed: 1
+  mom2_batch_tokens: null
+  covariance_ridge: 0.0
+  edit_weight: 1.0
+  mom2_adjustment: true
+  mom2_update_weight: 20000.0
+  clamp_norm_factor: 0.75

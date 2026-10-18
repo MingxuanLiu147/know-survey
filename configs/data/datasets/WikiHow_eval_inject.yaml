@@ -1,0 +1,7 @@
+# WikiHow 过程知识评测集（Alpaca 格式）
+
+WikiHow_eval:
+  handler: AlpacaDataset
+  args:
+    data_path: ${paths.root_dir}/data/inject/procedural/eval/wikihow/test.json
+    max_length: 4096

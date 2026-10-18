@@ -1,0 +1,21 @@
+# @package _global_
+# AKEW CounterFact unstructured long target + plain AlphaEdit baseline.
+
+defaults:
+  - override /model: Qwen2.5-7B-Instruct
+  - override /trainer: edit/AlphaEdit
+  - override /data: edit
+  - override /data/datasets@data.edit: AKEW_counterfact_unstructured_edit
+  - override /eval: edit
+
+task_name: akew_counterfact_alphaedit_long
+
+trainer:
+  method_args:
+    layers: [4, 5, 6, 7, 8]
+    v_num_grad_steps: 25
+    v_weight_decay: 1.0e-3
+    v_loss_layer: 27
+    nullspace_threshold: 2.0e-2
+    l2: 1.0
+

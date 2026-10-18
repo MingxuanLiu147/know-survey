@@ -1,0 +1,20 @@
+# MEND meta-learning editor (requires pretrained edit network by default)
+
+defaults:
+  - edit/base_editor@_here_
+  - _self_
+
+handler: MENDEditor
+
+method_args:
+  layers: [5]
+  edit_lr: 1e-4
+  n_hidden: 128
+  # Gradient factor rank (kept modest for runnable demos)
+  rank: 64
+  # Path to checkpoint from scripts/train_mend_edit_network.py
+  edit_network_path: null
+  require_pretrained: true
+  locality_weight: 1.0
+  update_norm_weight: 1.0e-4
+  max_locality_samples: 2

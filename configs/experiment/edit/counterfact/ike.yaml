@@ -1,0 +1,17 @@
+# @package _global_
+# CounterFact + IKE
+
+defaults:
+  - override /model: Qwen2.5-7B-Instruct
+  - override /trainer: edit/IKE
+  - override /data: edit
+  - override /data/datasets@data.edit: CounterFact_edit
+  - override /eval: edit
+
+data:
+  edit:
+    CounterFact_edit:
+      handler: CounterFactDataset
+      args:
+        split: "train"
+        max_length: 512

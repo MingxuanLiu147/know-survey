@@ -1,0 +1,13 @@
+# MM-LoRA: short image-text editing through a pre-attached PEFT adapter.
+
+defaults:
+  - edit/base_editor@_here_
+  - _self_
+
+handler: MMLoRAEditor
+
+method_args:
+  num_steps: 5
+  edit_lr: 5.0e-4
+  weight_decay: 0.0
+  max_grad_norm: 1.0

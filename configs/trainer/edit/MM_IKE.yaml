@@ -1,0 +1,18 @@
+# MM-IKE: Multimodal In-Context Knowledge Editing
+# Papers: https://arxiv.org/abs/2305.12740 + https://arxiv.org/abs/2310.08475
+
+defaults:
+  - edit/base_editor@_here_
+  - _self_
+
+handler: MMIKEEditor
+
+method_args:
+  sentence_model_name: "all-MiniLM-L6-v2"
+  k: 3
+  use_icl_examples: true
+  # VLKEB Appendix B.3 demonstration format.
+  icl_prompt_template: "New Fact: {fact}\nPrompt: {fact}\n\n"
+  image_description_template: "{prompt}"
+  # Deterministic and offline-safe; opt into sentence_transformer explicitly.
+  retrieval_backend: token_overlap

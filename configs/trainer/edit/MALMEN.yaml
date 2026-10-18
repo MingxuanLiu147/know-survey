@@ -1,0 +1,25 @@
+# Compact native MALMEN path (prototype; not EasyEdit archive-compatible).
+# Paper: https://arxiv.org/abs/2304.00740
+# Pretrain with scripts/train_malmen_auxiliary_network.py before editing.
+
+defaults:
+  - edit/base_editor@_here_
+  - _self_
+
+handler: MALMENEditor
+
+method_args:
+  layers: [5]
+  archive: null
+  require_pretrained: true
+  target_modules: ["mlp.down_proj", "mlp.c_proj", "mlp.dense_4h_to_h"]
+  edit_lr: 1.0e-4
+  meta_lr: 1.0e-4
+  rank: 64
+  n_blocks: 2
+  batch_size: 4
+  n_edits: 16
+  lambda_reg: 1.0e-3
+  locality_weight: 1.0
+  update_norm_weight: 1.0e-6
+  max_locality_samples: 2

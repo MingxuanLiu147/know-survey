@@ -1,0 +1,27 @@
+defaults:
+  - datasets@_here_: CLEAR_unlearn
+  - _self_
+
+benchmark: clear
+data_dir: data/CLEAR
+forget_split_ratio: 5
+batch_size: 4
+ans_only: false
+train_mode: caption
+# Empty selects image-caption splits. Paper-aligned CLEAR baselines override
+# this to `+tofu`, which mixes caption and text QA as in the official trainer.
+training_split_suffix: ""
+mask_training_split_suffix: ""
+mode: unlearn
+reference_source: retain
+reference_train_mode: caption
+max_samples: null
+full_dir: data/CLEAR/full
+full_tofu_dir: data/CLEAR/full+tofu
+mask_batch_size: 2
+mask_ans_only: false
+mask_max_samples: null
+vision_mask_modules:
+  - visual
+language_mask_modules:
+  - model

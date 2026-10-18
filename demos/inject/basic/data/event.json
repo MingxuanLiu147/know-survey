@@ -1,0 +1,55 @@
+[
+  {
+    "instruction": "Answer the event question with a short phrase.",
+    "input": "Which country hosted the 2008 Summer Olympics?",
+    "output": "China",
+    "answer": "China",
+    "source_dataset": "event_qa",
+    "knowledge_type": "event",
+    "event_year": 2008
+  },
+  {
+    "instruction": "Answer the event question with a short phrase.",
+    "input": "What major financial crisis began in 2008?",
+    "output": "Global financial crisis",
+    "answer": "Global financial crisis",
+    "source_dataset": "event_qa",
+    "knowledge_type": "event",
+    "event_year": 2008
+  },
+  {
+    "instruction": "Answer the event question with a short phrase.",
+    "input": "Which company released the first iPhone in 2007?",
+    "output": "Apple",
+    "answer": "Apple",
+    "source_dataset": "event_qa",
+    "knowledge_type": "event",
+    "event_year": 2007
+  },
+  {
+    "instruction": "Answer the event question with a short phrase.",
+    "input": "Who became the first woman to win a Nobel Prize?",
+    "output": "Marie Curie",
+    "answer": "Marie Curie",
+    "source_dataset": "event_qa",
+    "knowledge_type": "event"
+  },
+  {
+    "instruction": "Answer the event question with a short phrase.",
+    "input": "In which city was the United Nations Charter signed in 1945?",
+    "output": "San Francisco",
+    "answer": "San Francisco",
+    "source_dataset": "event_qa",
+    "knowledge_type": "event",
+    "event_year": 1945
+  },
+  {
+    "instruction": "Answer the event question with a short phrase.",
+    "input": "Which spacecraft carried the first humans to land on the Moon?",
+    "output": "Apollo 11",
+    "answer": "Apollo 11",
+    "source_dataset": "event_qa",
+    "knowledge_type": "event",
+    "event_year": 1969
+  }
+]

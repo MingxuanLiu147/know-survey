@@ -1,0 +1,35 @@
+benchmark: mllmu
+task_semantics: full_multimodal_deletion
+protocol:
+  source_repository: https://github.com/franciscoliu/MLLMU-Bench
+  source_commit: 0e3098e5ea7e4878ce4f19cdf873de1410b4d427
+  native_tasks:
+    - classification
+    - fill_in_the_blank
+    - generation
+  external_utility_benchmarks:
+    - MMMU
+    - LLaVA-Bench
+  notes:
+    - Classification and cloze report accuracy with explicit numerators and denominators.
+    - Generation reports macro ROUGE-1/2/L F1 and sentence BLEU.
+    - External utility and optional LLM-judge factuality remain unavailable until their own runners execute.
+data_dir: data/MLLMU-Bench
+forget_split_ratio: 5
+output_dir: saves/mm_eval/mllmu
+tasks:
+  - classification
+  - fill_in_the_blank
+  - generation
+splits:
+  - forget
+  - retain_shared
+  - retain_celebrity
+  - test
+test_data_dir: data/MLLMU-Bench/Test_Set
+retain_celebrity_data: data/MLLMU-Bench/Retain_Set/train-00000-of-00001.parquet
+few_shot_parquet: data/MLLMU-Bench/Full_Set/train-00000-of-00001.parquet
+shot_num: zero_shot
+max_records: null
+max_new_tokens: 50
+generation_max_new_tokens: 200

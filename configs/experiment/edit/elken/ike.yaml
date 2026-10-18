@@ -1,0 +1,17 @@
+# @package _global_
+# ELKEN + IKE (event knowledge case study)
+
+defaults:
+  - override /model: Qwen2.5-7B-Instruct
+  - override /trainer: edit/IKE
+  - override /data: edit
+  - override /data/datasets@data.edit: ELKEN_edit
+  - override /eval: edit
+
+data:
+  edit:
+    ELKEN_edit:
+      handler: ELKENDataset
+      args:
+        split: "train"
+        max_length: 512

@@ -1,0 +1,21 @@
+# Pinned authors' reference protocol; model-specific layers live in experiments.
+# See docs/editing.md.
+defaults:
+  - /trainer/edit/ROME@_here_
+  - _self_
+
+method_args:
+  implementation_variant: official_reference
+  v_loss_mode: final_logits
+  kl_direction: edited_to_base
+  context_templates: null
+  mom2_dataset_config: 20200501.en
+  mom2_sample_seed: 1
+  mom2_batch_tokens: null
+  covariance_ridge: 0.0
+  mlp_module_tmp: model.layers.{}.mlp
+  context_template_length_params:
+  - - 5
+    - 10
+  - - 10
+    - 10

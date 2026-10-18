@@ -1,0 +1,35 @@
+# @package _global_
+# zsRE + IKE (Qwen2.5-7B). Offline token-overlap retrieval; EditSuite metrics.
+
+defaults:
+  - override /model: Qwen2.5-7B-Instruct
+  - override /trainer: edit/IKE
+  - override /data: edit
+  - override /data/datasets@data.edit: ZSRE_edit
+  - override /eval: edit
+  - _self_
+
+task_name: zsre_ike_qwen25_7b
+edit_type: single
+max_edits: 5
+save_edit_summary: true
+save_edited_model: false
+
+model:
+  model_args:
+    attn_implementation: eager
+
+trainer:
+  args:
+    do_eval: true
+    bf16: true
+  method_args:
+    retrieval_backend: token_overlap
+
+data:
+  edit:
+    ZSRE_edit:
+      handler: ZSREDataset
+      args:
+        split: test
+        max_length: 512

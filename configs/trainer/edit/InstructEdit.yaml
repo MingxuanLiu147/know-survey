@@ -1,0 +1,23 @@
+# Compact native InstructEdit path (instruction-conditioned MEND).
+# Paper: https://arxiv.org/abs/2402.16123
+# Requires a dedicated checkpoint from scripts/train_mend_edit_network.py
+# --editor instructedit; plain MEND/EasyEdit checkpoints are rejected.
+
+defaults:
+  - edit/base_editor@_here_
+  - _self_
+
+handler: InstructEditEditor
+
+method_args:
+  layers: [5]
+  edit_lr: 1.0e-4
+  n_hidden: 128
+  rank: 64
+  edit_network_path: null
+  require_pretrained: true
+  default_task_type: "default"
+  instruction_index: 0
+  locality_weight: 1.0
+  update_norm_weight: 1.0e-4
+  max_locality_samples: 2

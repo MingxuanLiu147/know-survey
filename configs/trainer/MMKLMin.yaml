@@ -1,0 +1,21 @@
+handler: MMKLMin
+
+args:
+  lr: 5e-4
+  num_epochs: 5
+  max_grad_norm: 1.0
+  gradient_accumulation_steps: 1
+  warmup_steps: 0
+
+method_args:
+  # Bounds temporary [token, vocab] probability tensors without approximating KL.
+  kl_chunk_size: 16
+  # Optional separate frozen checkpoint/device. Supplying both enables an exact
+  # two-GPU path for 7B models without deep-copying the student on its GPU.
+  reference_model_path: null
+  reference_device: null
+  benchmark: ${data.benchmark}
+  # Auto resolves to CLEAR paired `-CE_forget + KL_retain` or the original
+  # MLLMU sequential schedule with `CE_retain + KL_retain`.
+  schedule_mode: auto
+  retain_ce_weight: null

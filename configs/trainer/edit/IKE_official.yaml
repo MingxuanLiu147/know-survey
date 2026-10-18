@@ -1,0 +1,16 @@
+# Original 32-demo composition; independent corpus is mandatory.
+defaults:
+  - edit/base_editor@_here_
+  - _self_
+
+handler: IKEEditor
+
+method_args:
+  protocol: paper_copy_update_retain
+  demonstration_path: null
+  demonstration_seed: 42
+  k: 32
+  retrieval_backend: sentence_transformer
+  sentence_model_name: sentence-transformers/all-MiniLM-L6-v2
+  use_icl_examples: true
+  memory_path: null

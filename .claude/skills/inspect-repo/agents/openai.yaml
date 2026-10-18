@@ -1,0 +1,4 @@
+interface:
+  display_name: "Inspect Repository"
+  short_description: "Inventory registries, configs, capabilities, and evidence."
+  default_prompt: "Use $inspect-repo to audit the current Know-Surgery repository capabilities."

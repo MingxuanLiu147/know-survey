@@ -1,0 +1,48 @@
+# @package _global_
+# GPT-2 + real zsRE one-record compact MALMEN connectivity smoke.
+# This is a prototype smoke, not an official MALMEN benchmark result.
+# Prerequisite:
+#   PYTHONPATH=src python scripts/train_malmen_auxiliary_network.py \
+#     --model openai-community/gpt2 \
+#     --data data/edit/zsre/zsre_mend_train.json \
+#     --output saves/edit/malmen/gpt2_zsre_v3.pt \
+#     --layers 5 --rank 16 --max-edits 4 --epochs 1
+
+defaults:
+  - override /model: gpt2
+  - override /trainer: edit/MALMEN
+  - override /data: edit
+  - override /data/datasets@data.edit: ZSRE_edit
+  - override /eval: edit
+
+task_name: gpt2_zsre_compact_malmen_smoke
+edit_type: independent
+max_edits: 1
+save_edit_summary: true
+save_edited_model: false
+
+trainer:
+  args:
+    do_eval: true
+    bf16: false
+  method_args:
+    layers: [5]
+    archive: saves/edit/malmen/gpt2_zsre_v3.pt
+    require_pretrained: true
+    target_modules: ["mlp.c_proj"]
+    edit_lr: 1.0e-4
+    meta_lr: 1.0e-4
+    rank: 16
+    n_blocks: 2
+    batch_size: 1
+    n_edits: 4
+    lambda_reg: 1.0e-3
+
+data:
+  edit:
+    ZSRE_edit:
+      handler: ZSREDataset
+      args:
+        split: test
+        max_length: 256
+        data_path: data/edit/zsre/ZsRE-test-all.json

@@ -1,0 +1,33 @@
+include README.md README.zh-CN.md LICENSE THIRD_PARTY_NOTICES.md
+include requirements.txt requirements-know.lock Makefile Dockerfile .dockerignore
+recursive-include LICENSES *.txt
+recursive-include assets *.png *.svg
+recursive-include configs *.yaml
+recursive-include src *.py
+recursive-include .claude/skills *.md *.py *.json *.yaml
+recursive-include docs *.md
+recursive-include demos *.json *.jsonl *.md *.yaml *.png
+recursive-include webui *.py
+include webui/frontend/package.json webui/frontend/package-lock.json
+include webui/frontend/tsconfig*.json webui/frontend/vite.config.ts webui/frontend/index.html
+recursive-include webui/frontend/src *.ts *.tsx *.js *.css *.json *.svg *.png
+recursive-include webui/frontend/public *.svg *.png
+include webui/frontend/README.md
+include scripts/skill_runtime.py
+include scripts/evaluate_unlearning_local.py
+include scripts/train_serac.py
+include scripts/prepare_memory_editor_data.py
+include scripts/train_mend_edit_network.py
+include scripts/train_malmen_auxiliary_network.py
+include scripts/validate_extension.py
+include scripts/run_mm_generate_mask.py
+prune webui/frontend/node_modules
+prune webui/frontend/dist
+prune webui/frontend/test-results
+prune webui/frontend/playwright-report
+prune webui/backend/data
+prune tests
+prune artifacts
+prune saves
+prune data
+global-exclude __pycache__ *.py[cod] *.tsbuildinfo .env .env.* *.log

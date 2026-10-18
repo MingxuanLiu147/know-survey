@@ -1,0 +1,28 @@
+# @package _global_
+# One local request; set model paths before execution.
+defaults:
+  - override /model: gpt2
+  - override /trainer: edit/FT
+  - override /data: edit
+  - override /eval: edit
+
+task_name: demo_edit_addition_intent
+edit_type: single
+max_edits: 1
+save_edit_summary: true
+save_edited_model: false
+
+trainer:
+  args:
+    bf16: false
+  method_args:
+    layers: [4, 5]
+    num_steps: 10
+
+data:
+  edit:
+    Demo_addition_edit:
+      handler: EditingDataset
+      args:
+        data_path: demos/editing/addition/requests.jsonl
+        max_length: 128

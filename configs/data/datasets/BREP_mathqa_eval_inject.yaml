@@ -1,0 +1,7 @@
+# BREP 评测集：MathQA
+
+BREP_mathqa_eval:
+  handler: AlpacaDataset
+  args:
+    data_path: ${paths.root_dir}/data/inject/brep/eval/mathqa/test.json
+    max_length: 2048

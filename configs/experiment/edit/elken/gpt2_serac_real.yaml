@@ -1,0 +1,21 @@
+# @package _global_
+# SERAC auxiliary-checkpoint gated; set archive to a newly trained supervised archive.
+defaults:
+- override /model: gpt2
+- override /trainer: edit/SERAC
+- override /data: edit
+- override /data/datasets@data.edit: ELKEN_edit
+- override /eval: edit
+task_name: serac_gpt2_elken_edit_smoke_v2
+max_edits: 1
+save_edited_model: false
+trainer:
+  method_args:
+    archive: null
+data:
+  edit:
+    ELKEN_edit:
+      handler: ELKENDataset
+      args:
+        split: train
+        max_length: 512

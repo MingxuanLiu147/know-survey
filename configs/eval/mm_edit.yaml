@@ -1,0 +1,7 @@
+# Multimodal Knowledge Editing 评估配置
+
+defaults:
+  - mm_edit_metrics/mm_reliability
+  - mm_edit_metrics/mm_generalization
+  - mm_edit_metrics/mm_locality
+  - mm_edit_metrics/mm_portability

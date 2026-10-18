@@ -1,0 +1,30 @@
+# @package _global_
+# One-record MANU smoke on the Qwen2-VL-2B architecture reported by CLEAR.
+defaults:
+  - override /model: Qwen2VL-2B
+  - override /data: clear
+  - override /trainer: MMMANU
+
+model:
+  processor_args:
+    min_pixels: 200704
+    max_pixels: 200704
+  lora:
+    enabled: false
+
+data:
+  forget_split_ratio: 5
+  training_split_suffix: ""
+  train_mode: caption
+  batch_size: 1
+  ans_only: true
+  max_samples: 1
+  paired_modalities: true
+
+smoke_protocol:
+  model_role: clear-appendix-architecture-off-the-shelf-checkpoint
+  method: MMMANU
+  scope: one-forget-one-retain-paired-text-image-activation-statistic
+
+output_dir: saves/mm_unlearn/smoke_qwen2vl2b_clear_manu
+save_model: false

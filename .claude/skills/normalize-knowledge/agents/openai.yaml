@@ -1,0 +1,4 @@
+interface:
+  display_name: "Normalize Knowledge"
+  short_description: "Normalize raw knowledge into operation-aware canonical records."
+  default_prompt: "Use $normalize-knowledge to validate and normalize these knowledge records."

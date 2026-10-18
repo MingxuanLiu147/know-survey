@@ -1,0 +1,46 @@
+model_family: qwen2_5_vl
+model_path: Qwen/Qwen2.5-VL-3B-Instruct
+processor_path: Qwen/Qwen2.5-VL-3B-Instruct
+torch_dtype: bfloat16
+attn_implementation: sdpa
+trust_remote_code: false
+local_files_only: false
+processor_args:
+  use_fast: false
+  min_pixels: 200704
+  max_pixels: 1003520
+
+capability_status: Implemented
+minimum_transformers_version: 4.49.0
+support_tier: experimental
+configured_benchmarks: [mmedit, vlkeb, mllmu, clear]
+configured_methods:
+  - MMGradAscent
+  - MMGradDiff
+  - MMKLMin
+  - MMNPO
+  - MMRetainFT
+  - MMSCRUB
+  - MMUnlearner
+  - MMMANU
+  - MM_IKE
+  - MM_LORA
+  - MM_GRACE
+  - MM_WISE
+
+checkpoint_contract:
+  applies_to: unlearning
+  source_model_id: Qwen/Qwen2.5-VL-3B-Instruct
+  benchmark_trained_checkpoint_required: true
+  paper_original_benchmarks: []
+
+resource_profile:
+  parameter_scale: 3B
+  full_parameter_methods: [MMUnlearner, MMMANU]
+
+lora:
+  enabled: true
+  r: 16
+  alpha: 16
+  dropout: 0.05
+  target_policy: auto-linear-excluding-embeddings-lm-head-patch-embed

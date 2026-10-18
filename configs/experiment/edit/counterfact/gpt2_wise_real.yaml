@@ -1,0 +1,43 @@
+# @package _global_
+# Local small-model candidate: real GPT-2 + CounterFact + WISE.
+# This is a smoke configuration, not a benchmark result by itself.
+
+defaults:
+  - override /model: gpt2
+  - override /trainer: edit/WISE
+  - override /data: edit
+  - override /data/datasets@data.edit: CounterFact_edit
+  - override /eval: edit
+
+task_name: wise_gpt2_counterfact_local_smoke
+edit_type: single
+max_edits: 1
+save_edited_model: true
+
+trainer:
+  args:
+    bf16: false
+  method_args:
+    layers: [8]
+    inner_params: "transformer.h.8.mlp.c_proj"
+    edit_lr: 1.0
+    n_iter: 10
+    mask_ratio: 0.2
+    norm_constraint: 1.0
+    act_ratio: 0.8
+    save_freq: 500
+    merge_freq: 1000
+    merge_strategy: "ties"
+    merge_weight: 1.0
+    density: 0.53
+    alpha: 5.0
+    beta: 20.0
+    gamma: 10.0
+
+data:
+  edit:
+    CounterFact_edit:
+      handler: CounterFactDataset
+      args:
+        split: train
+        max_length: 256

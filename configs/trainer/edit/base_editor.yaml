@@ -1,0 +1,19 @@
+# Knowledge Editing 基础配置
+# 所有编辑方法的共享配置
+
+handler: EditTrainer
+
+# 训练参数（编辑方法通常不需要完整训练循环）
+args:
+  output_dir: saves/${mode}/${task_name}
+  do_train: false
+  do_eval: true
+  seed: 42
+  bf16: true
+  per_device_eval_batch_size: 1
+  logging_steps: 1
+
+# 编辑方法参数
+method_args:
+  layers: [5, 6, 7, 8]
+  preserve_memory: true

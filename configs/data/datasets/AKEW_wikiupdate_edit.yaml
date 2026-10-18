@@ -1,0 +1,7 @@
+# AKEW WikiUpdate 子集配置
+
+AKEW_wikiupdate_edit:
+  handler: AKEWDataset
+  args:
+    subset: "wikiupdate"
+    max_length: 512

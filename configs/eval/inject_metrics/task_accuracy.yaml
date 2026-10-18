@@ -1,0 +1,15 @@
+# 微调任务准确率指标
+
+task_accuracy:
+  handler: InjectAccuracyEvaluator
+  output_dir: ${paths.output_dir}
+  overwrite: false
+  eval_data_path: null
+  # Fail fast on missing tokenizer/eval_data instead of writing fake 0.0 summaries.
+  strict: true
+  args:
+    metric_name: task_accuracy
+    # 评估方法
+    eval_method: generation  # generation | perplexity
+    max_new_tokens: 100
+    max_length: 2048

@@ -1,0 +1,7 @@
+# RuleTaker 评测集
+
+RuleTaker_eval:
+  handler: AlpacaDataset
+  args:
+    data_path: ${paths.root_dir}/data/inject/logic/eval/ruletaker/test.json
+    max_length: 4096

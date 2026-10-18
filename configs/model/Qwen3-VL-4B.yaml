@@ -1,0 +1,19 @@
+model_family: qwen3vl
+model_path: Qwen/Qwen3-VL-4B-Instruct
+processor_path: Qwen/Qwen3-VL-4B-Instruct
+torch_dtype: bfloat16
+attn_implementation: sdpa
+trust_remote_code: false
+support_tier: config_only
+capability_status: Prototype
+configured_methods: []
+
+processor_args:
+  min_pixels: 200704
+  max_pixels: 1003520
+
+lora:
+  enabled: true
+  r: 16
+  alpha: 16
+  dropout: 0.05

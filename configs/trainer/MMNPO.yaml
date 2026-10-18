@@ -1,0 +1,19 @@
+handler: MMNPO
+
+args:
+  lr: 5e-4
+  num_epochs: 5
+  max_grad_norm: 1.0
+  gradient_accumulation_steps: 1
+  warmup_steps: 0
+
+method_args:
+  beta: 0.4
+  benchmark: ${data.benchmark}
+  # MLLMU: scalar loss-ratio logsigmoid. CLEAR: public trainer's flattened
+  # probability-ratio objective, evaluated in exact token chunks.
+  objective_mode: auto
+  probability_chunk_size: 8
+  oracle_model_path: null
+  # Set e.g. cuda:1 when the frozen 7B oracle cannot share a 24 GB card.
+  oracle_device: null

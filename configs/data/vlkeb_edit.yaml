@@ -1,0 +1,6 @@
+# VLKEB image-text editing data path
+
+defaults:
+  - datasets@edit: VLKEB
+
+anchor: edit

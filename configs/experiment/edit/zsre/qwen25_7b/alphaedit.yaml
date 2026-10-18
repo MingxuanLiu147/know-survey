@@ -1,0 +1,48 @@
+# @package _global_
+# Qwen2.5-7B-Instruct + AlphaEdit, zsRE independent-100 benchmark.
+# The reduced Wikitext statistic is persisted and recorded as an adapted protocol.
+
+defaults:
+  - override /model: Qwen2.5-7B-Instruct
+  - override /trainer: edit/AlphaEdit
+  - override /data: edit
+  - override /data/datasets@data.edit: ZSRE_edit
+  - override /eval: edit_benchmark
+  - _self_
+
+task_name: qwen25_7b_zsre_alphaedit_independent100
+edit_type: independent
+max_edits: 100
+save_edit_summary: true
+save_edited_model: false
+
+model:
+  model_args:
+    attn_implementation: eager
+
+trainer:
+  args:
+    output_dir: ${paths.output_dir}
+    do_eval: true
+    bf16: true
+    seed: 42
+  method_args:
+    layers: [4, 5, 6, 7, 8]
+    v_num_grad_steps: 25
+    v_weight_decay: 1.0e-3
+    v_loss_layer: 27
+    nullspace_threshold: 2.0e-2
+    l2: 1.0
+    mom2_dataset: wikitext
+    mom2_n_samples: 200
+    stats_dir: ${paths.root_dir}/data/stats/qwen25_7b/alphaedit_stats
+    projection_path: ${paths.root_dir}/data/stats/qwen25_7b/alphaedit_projection.pt
+    save_projection: true
+
+data:
+  edit:
+    ZSRE_edit:
+      handler: ZSREDataset
+      args:
+        split: test
+        max_length: 512

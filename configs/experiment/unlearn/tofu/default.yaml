@@ -1,0 +1,105 @@
+# @package _global_
+# 顶层 Hydra 配置包：为一次 TOFU unlearn 实验组合模型 / 训练器 / 数据 / 评估等子配置
+
+# defaults：指定本实验所使用的基础配置，按路径覆盖各子配置节点
+defaults:
+  # 使用的基础模型配置，这里选择 Llama-3.2-1B-Instruct 作为 unlearn 起点
+  - override /model: Llama-3.2-1B-Instruct
+  # 训练算法配置，这里使用 GradAscent 作为遗忘优化方法
+  - override /trainer: GradAscent
+  # 数据配置根节点，使用通用的 unlearn 数据流程
+  - override /data: unlearn
+  # 将 data.forget 绑定到 TOFU 的遗忘 QA 子集
+  - override /data/datasets@data.forget: TOFU_QA_forget
+  # 将 data.retain 绑定到 TOFU 的保留 QA 子集
+  - override /data/datasets@data.retain: TOFU_QA_retain
+  # 评估配置使用 tofu 评估方案（对应 configs/eval/tofu.yaml）
+  - override /eval: tofu
+
+# model：指定本次实验所加载的预训练模型或微调模型
+model:
+  model_args:
+    # pretrained_model_name_or_path：作为 unlearn 起点的模型 checkpoint 名称或路径
+    pretrained_model_name_or_path: open-unlearning/tofu_Llama-3.2-1B-Instruct_full
+
+# forget_split：TOFU 日志中用作“遗忘集”的 split 名称
+forget_split: forget10
+# retain_split：TOFU 日志中用作“保留集”的 split 名称
+retain_split: retain90
+# holdout_split：TOFU 日志中用作“保留对照/测试集”的 split 名称
+holdout_split: holdout10
+# retain_logs_path：可显式指定保留集日志路径；null 表示使用默认或从其他配置推断
+retain_logs_path: null
+# question_key：在 TOFU QA 数据中读取问题 text 时所使用的字段名
+question_key: "question"
+
+# eval：评估相关配置，这里仅覆盖 tofu 子配置中的少量关键字段
+eval:
+  tofu:
+    # 评估时使用的遗忘集 split，直接引用上面的 forget_split
+    forget_split: ${forget_split}
+    # 评估时使用的 holdout split，直接引用上面的 holdout_split
+    holdout_split: ${holdout_split}
+    # 保留集日志所在路径，从 retain_logs_path 继承
+    retain_logs_path: ${retain_logs_path}
+    # 若为 true，则运行评估时可以覆盖已有结果
+    overwrite: true
+    # 评估时读取问题字段的 key，保持与训练数据一致
+    question_key: ${question_key}
+
+# mode：设置当前运行模式为 unlearn（遗忘训练），而非普通微调或仅评估
+mode: unlearn
+
+# data：配置遗忘/保留数据及评估数据的加载方式
+data:
+  # anchor：指定用于某些指标计算的基准数据，这里以遗忘集 forget 为 anchor
+  anchor: forget
+  # forget：配置 TOFU 的遗忘 QA 子集
+  forget:
+    TOFU_QA_forget: 
+      args:
+        hf_args:
+          # name：具体使用哪个 TOFU split，这里引用 forget_split
+          name: ${forget_split}
+  # retain：配置 TOFU 的保留 QA 子集
+  retain: 
+    TOFU_QA_retain:
+      args:
+        hf_args:
+          # name：具体使用哪个 TOFU split，这里引用 retain_split
+          name: ${retain_split}
+  # eval：配置用于评估的 QA 数据集，这里基于 TOFU 的保留部分
+  eval: #新增
+    TOFU_QA_retain:
+      # handler：将样本解析为 QA 形式的数据集处理器
+      handler: QADataset
+      args:
+        hf_args:
+          # path：Hugging Face 上的 TOFU 数据集标识
+          path: "locuslab/TOFU"
+          # split：从数据集中读取的 split，这里使用训练集 "train"
+          split: "train"
+          # name：选择具体的子 split，这里引用 retain_split
+          name: ${retain_split}
+        # question_key：指定样本中哪一个字段作为问题文本
+        question_key: ${question_key}
+        # answer_key：指定样本中哪一个字段作为标准答案
+        answer_key: "answer"
+
+# trainer：训练器和优化相关的超参数设置
+trainer:
+  args:
+    # warmup_epochs：学习率预热所占的 epoch 比例，这里为 1.0（一个完整 epoch 预热）
+    warmup_epochs: 1.0 # custom parameter
+    # learning_rate：优化器的基础学习率
+    learning_rate: 1e-5
+    # weight_decay：权重衰减系数，防止过拟合
+    weight_decay: 0.01
+    # num_train_epochs：总训练轮数（对遗忘任务的训练时长）
+    num_train_epochs: 10
+    # save_strategy / save_steps：可选的 checkpoint 保存策略与间隔，当前保持注释状态
+    # save_strategy: steps
+    # save_steps: 0.5
+
+# task_name：本次实验的任务名称/标识，占位符 ??? 需要在实际运行前由用户填写
+task_name: ???

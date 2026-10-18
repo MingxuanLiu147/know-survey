@@ -1,0 +1,17 @@
+# @package _global_
+# Canonical P0 pairing: LEME long-text knowledge + MEMIT.
+
+defaults:
+  - override /model: Qwen2.5-7B-Instruct
+  - override /trainer: edit/MEMIT
+  - override /data: edit
+  - override /data/datasets@data.edit: LEME_counterfact_edit
+  - override /eval: edit
+
+data:
+  edit:
+    LEME_counterfact_edit:
+      handler: LEMEDataset
+      args:
+        subset: counterfact
+        max_length: 768

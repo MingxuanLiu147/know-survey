@@ -1,0 +1,6 @@
+# VLKEB main split: Reliability, text/image Generality, and text/image Locality.
+
+defaults:
+  - mm_edit_metrics/mm_reliability
+  - mm_edit_metrics/mm_generalization
+  - mm_edit_metrics/mm_locality

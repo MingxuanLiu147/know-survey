@@ -1,0 +1,7 @@
+defaults:
+  - mm_train
+  - _self_
+
+model:
+  lora:
+    enabled: false

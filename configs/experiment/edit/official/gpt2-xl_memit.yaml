@@ -1,0 +1,22 @@
+# @package _global_
+# Authors' GPT-2-XL layers/objective/statistics configuration.
+defaults:
+  - override /model: gpt2-xl
+  - override /trainer: edit/MEMIT_Official
+  - override /data: edit
+  - override /data/datasets@data.edit: CounterFact_edit
+  - override /eval: edit
+
+trainer:
+  method_args:
+    layers:
+    - 13
+    - 14
+    - 15
+    - 16
+    - 17
+    v_loss_layer: 47
+    rewrite_module_tmp: transformer.h.{}.mlp.c_proj
+    layer_module_tmp: transformer.h.{}
+    lm_head_module: lm_head
+    ln_f_module: transformer.ln_f

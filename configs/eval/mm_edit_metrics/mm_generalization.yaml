@@ -1,0 +1,7 @@
+# 多模态知识编辑泛化性指标
+# 包含文本改写准确率 + 图像改写准确率
+
+mm_generalization:
+  handler: MMEditGeneralizationEvaluator
+  args:
+    metric_name: mm_generalization

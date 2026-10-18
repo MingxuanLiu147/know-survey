@@ -1,0 +1,17 @@
+# Registered extension point only. The paper calls the method VKD.
+handler: MMVKD
+status: Planned
+runnable: false
+paper_arxiv: "2512.11325"
+
+args:
+  lr: 1e-5
+  num_epochs: 1
+  max_grad_norm: 1.0
+  gradient_accumulation_steps: 1
+  warmup_steps: 0
+
+method_args:
+  teacher_model_path: null
+  visual_feature_layers: null
+  vision_only_updates: true

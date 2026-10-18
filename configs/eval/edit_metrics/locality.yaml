@@ -1,0 +1,9 @@
+# 知识编辑局部性指标
+# 测试无关知识是否保持不变
+
+locality:
+  handler: EditLocalityEvaluator
+  args:
+    metric_name: locality
+    # 允许的最大变化
+    max_change_threshold: 0.1

@@ -1,0 +1,31 @@
+# @package _global_
+# WikiHow LoRA injection (procedural knowledge, P0)
+
+defaults:
+  - override /model: Qwen2.5-3B-Instruct
+  - override /trainer: inject/LoRA
+  - override /data: inject
+  - override /data/datasets@data.train: WikiHow_train_inject
+  - override /eval: inject
+
+trainer:
+  args:
+    num_train_epochs: 1
+    per_device_train_batch_size: 2
+    gradient_accumulation_steps: 4
+    learning_rate: 2e-4
+    do_eval: false
+  method_args:
+    r: 8
+    lora_alpha: 16
+    target_modules:
+      - q_proj
+      - v_proj
+
+# Formal eval (after training):
+# python src/eval.py --config-name=eval.yaml experiment=eval/inject/default \
+#   task_name=wikihow_eval \
+#   inject_model_path=saves/inject/<task_name> \
+#   eval_data_path=demos/inject/basic/data/procedure_wikihow.json \
+#   benchmark_data_path=demos/inject/basic/data/retention_benchmark.json \
+#   original_model_path=<base_model>

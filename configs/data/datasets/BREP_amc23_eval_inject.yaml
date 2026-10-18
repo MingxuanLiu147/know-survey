@@ -1,0 +1,7 @@
+# BREP 评测集：AMC23
+
+BREP_amc23_eval:
+  handler: AlpacaDataset
+  args:
+    data_path: ${paths.root_dir}/data/inject/brep/eval/amc23/test.json
+    max_length: 2048

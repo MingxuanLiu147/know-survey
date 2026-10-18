@@ -1,0 +1,8 @@
+# MMKE-Bench Visual Semantic 数据集 (ICLR 2025)
+
+MMKE_Bench_visual_semantic:
+  handler: MMKEBenchDataset
+  args:
+    subset: "visual_semantic"
+    image_dir: "data/edit/mmke_bench/images"
+    max_length: 512

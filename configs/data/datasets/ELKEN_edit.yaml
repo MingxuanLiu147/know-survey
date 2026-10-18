@@ -1,0 +1,7 @@
+# ELKEN 事件级知识编辑数据集配置
+
+ELKEN_edit:
+  handler: ELKENDataset
+  args:
+    split: "train"
+    max_length: 512

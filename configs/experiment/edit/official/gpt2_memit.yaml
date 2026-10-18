@@ -1,0 +1,20 @@
+# @package _global_
+# GPT-2 model adapter for the reference mechanism, not a published benchmark setting.
+defaults:
+  - override /model: gpt2
+  - override /trainer: edit/MEMIT_Official
+  - override /data: edit
+  - override /data/datasets@data.edit: CounterFact_edit
+  - override /eval: edit
+
+trainer:
+  method_args:
+    layers:
+    - 3
+    - 4
+    - 5
+    v_loss_layer: 11
+    rewrite_module_tmp: transformer.h.{}.mlp.c_proj
+    layer_module_tmp: transformer.h.{}
+    lm_head_module: lm_head
+    ln_f_module: transformer.ln_f

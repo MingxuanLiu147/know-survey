@@ -1,0 +1,51 @@
+# @package _global_
+# Qwen2.5-7B-Instruct + WISE, zsRE independent-100 benchmark.
+
+defaults:
+  - override /model: Qwen2.5-7B-Instruct
+  - override /trainer: edit/WISE
+  - override /data: edit
+  - override /data/datasets@data.edit: ZSRE_edit
+  - override /eval: edit_benchmark
+  - _self_
+
+task_name: qwen25_7b_zsre_wise_independent100
+edit_type: independent
+max_edits: 100
+save_edit_summary: true
+save_edited_model: false
+
+model:
+  model_args:
+    attn_implementation: eager
+
+trainer:
+  args:
+    output_dir: ${paths.output_dir}
+    do_eval: true
+    bf16: true
+    seed: 42
+  method_args:
+    layers: [23]
+    inner_params: model.layers.23.mlp.down_proj
+    edit_lr: 1.0
+    n_iter: 70
+    mask_ratio: 0.2
+    norm_constraint: 1.0
+    act_ratio: 0.88
+    save_freq: 500
+    merge_freq: 1000
+    merge_strategy: ties
+    merge_weight: 1.0
+    density: 0.53
+    alpha: 5.0
+    beta: 20.0
+    gamma: 10.0
+
+data:
+  edit:
+    ZSRE_edit:
+      handler: ZSREDataset
+      args:
+        split: test
+        max_length: 512

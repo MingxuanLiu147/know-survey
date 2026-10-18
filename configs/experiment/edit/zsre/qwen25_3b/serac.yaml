@@ -1,0 +1,10 @@
+# @package _global_
+# Configured Qwen2.5-3B template; requires a matching offline-trained SERAC archive.
+
+defaults:
+  - /experiment/edit/zsre/qwen25_7b/serac
+  - override /model: Qwen2.5-3B-Instruct
+  - _self_
+
+task_name: qwen25_3b_zsre_serac_independent1301
+max_edits: 1301

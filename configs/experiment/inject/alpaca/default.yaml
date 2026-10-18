@@ -1,0 +1,23 @@
+# @package _global_
+# Alpaca LoRA injection — general SFT-format baseline (not a Fact/Event knowledge benchmark).
+# Fact and Event knowledge use demos/inject/basic/data/{fact,event}.json separately.
+
+defaults:
+  - override /model: Qwen2.5-7B-Instruct
+  - override /trainer: inject/LoRA
+  - override /data: inject
+  - override /eval: inject
+
+trainer:
+  args:
+    num_train_epochs: 3
+    per_device_train_batch_size: 4
+    gradient_accumulation_steps: 4
+    learning_rate: 2e-4
+    do_eval: false
+  method_args:
+    r: 8
+    lora_alpha: 16
+    target_modules:
+      - q_proj
+      - v_proj

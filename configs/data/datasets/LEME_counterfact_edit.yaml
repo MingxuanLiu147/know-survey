@@ -1,0 +1,7 @@
+# LEME CounterFact 长文本编辑数据集配置
+
+LEME_counterfact_edit:
+  handler: LEMEDataset
+  args:
+    subset: "counterfact"
+    max_length: 768

@@ -1,0 +1,30 @@
+# DoRA 微调配置
+# Weight-Decomposed Low-Rank Adaptation
+
+defaults:
+  - inject/base_inject@_here_
+  - _self_
+
+handler: DoRATrainer
+
+method_args:
+  # DoRA 核心参数
+  r: 8
+  lora_alpha: 16
+  lora_dropout: 0.05
+  
+  # 启用 DoRA
+  use_dora: true
+  
+  # 目标模块（DoRA 通常应用于更多模块）
+  target_modules:
+    - q_proj
+    - v_proj
+    - k_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+    
+  bias: none
+  task_type: CAUSAL_LM

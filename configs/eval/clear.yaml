@@ -1,0 +1,39 @@
+benchmark: clear
+task_semantics: full_multimodal_deletion
+protocol:
+  paper: https://arxiv.org/abs/2410.18057v4
+  dataset: https://huggingface.co/datasets/therem/CLEAR
+  source_repository: https://github.com/somvy/multimodal_unlearning
+  source_commit: bb14c967b8e9096727a1a7a19842f25ab11730a8
+  paper_metrics:
+    - rougeL_recall
+    - probability_score
+    - truth_ratio
+    - harmonic_split_aggregate
+    - forget_quality
+  notes:
+    - Probability Score and Truth Ratio require the *_perturbed split schemas.
+    - The final public code uses min(R,1/R) on forget and max(0,1-1/R) on retain/real, where R is paraphrase probability divided by the geometric mean perturbed probability.
+    - Forget Quality requires aligned raw caption Truth Ratio vectors from a retain-only gold model on identical forget examples.
+    - Classification accuracy and BLEU are diagnostics and are not substituted into the paper aggregate.
+data_dir: data/CLEAR
+forget_split_ratio: 5
+output_dir: saves/mm_eval/clear
+tasks:
+  - classification
+  - generation
+  - paper_likelihood
+splits:
+  - forget
+  - retain
+  - realface
+  - realworld
+retain_classification_folder: retain_perturbed
+max_new_tokens: 50
+max_records: null
+seed: 42
+# JSON list or {truth_ratio_raw_values: [...]} produced by evaluating the
+# retain-only gold model on the same ordered forget-caption records. Null means
+# Forget Quality is unavailable.
+gold_truth_ratio_file: null
+forget_quality_bins: 50

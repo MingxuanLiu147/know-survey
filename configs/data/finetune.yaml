@@ -1,0 +1,5 @@
+defaults:
+  - datasets@train: TOFU_QA_full
+  - datasets@eval: null
+# 如需开启评估，可改为下行配置（暂保持关闭以避免 HF Trainer 报缺 eval_dataset）：
+  #- datasets@eval: TOFU_QA_retain_eval

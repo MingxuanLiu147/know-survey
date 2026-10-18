@@ -1,0 +1,14 @@
+# GPT-J 6B text model registration. No download or edit run is implied.
+
+model_args:
+  pretrained_model_name_or_path: "EleutherAI/gpt-j-6b"
+  attn_implementation: "eager"
+  torch_dtype: float16
+tokenizer_args:
+  pretrained_model_name_or_path: "EleutherAI/gpt-j-6b"
+template_args:
+  apply_chat_template: false
+  user_start_tag: ""
+  user_end_tag: ""
+  asst_start_tag: ""
+  asst_end_tag: ""

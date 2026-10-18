@@ -1,0 +1,20 @@
+# @package _global_
+# Official AnyEdit AlphaEdit_ARE protocol on AKEW CounterFact.
+
+defaults:
+  - override /model: Qwen2.5-7B-Instruct
+  - override /trainer: edit/AnyEdit
+  - override /data: edit
+  - override /data/datasets@data.edit: AKEW_counterfact_unstructured_edit
+  - override /eval: edit
+
+task_name: akew_counterfact_alphaedit_are
+
+trainer:
+  method_args:
+    strategy: alphaedit_are
+    window_size: 50
+    overlap: 0
+    l2: 10.0
+    nullspace_threshold: 2.0e-2
+

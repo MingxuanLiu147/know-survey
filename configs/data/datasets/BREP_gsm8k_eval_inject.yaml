@@ -1,0 +1,7 @@
+# BREP 评测集：GSM8K
+
+BREP_gsm8k_eval:
+  handler: AlpacaDataset
+  args:
+    data_path: ${paths.root_dir}/data/inject/brep/eval/gsm8k/test.json
+    max_length: 2048

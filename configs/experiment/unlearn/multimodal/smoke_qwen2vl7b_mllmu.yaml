@@ -1,0 +1,60 @@
+# @package _global_
+# One-record Qwen2-VL-7B portability preflight for MLLMU-Bench. Qwen2-VL-7B
+# was not an original MLLMU-Bench model. The evidence below is bounded smoke
+# evidence, never a benchmark-result claim.
+defaults:
+  - override /model: Qwen2VL-7B
+  - override /data: mllmu
+  - override /trainer: MMGradAscent
+
+model:
+  processor_args:
+    min_pixels: 200704
+    max_pixels: 200704
+  lora:
+    enabled: true
+    r: 8
+    alpha: 16
+    dropout: 0.0
+
+data:
+  forget_split_ratio: 5
+  batch_size: 1
+  ans_only: true
+  max_samples: 1
+
+trainer:
+  args:
+    lr: 1e-5
+    num_epochs: 1
+    gradient_accumulation_steps: 1
+
+smoke_protocol:
+  model_role: portability-extension-not-paper-original
+  start_checkpoint: benchmark-trained-checkpoint-required-for-benchmark-claims
+  lora_target_policy: auto-linear-excluding-embeddings-lm-head-patch-embed
+  method_matrix:
+    MMGradAscent:
+      data_mode: unlearn
+      requirements: []
+    MMGradDiff:
+      data_mode: unlearn
+      requirements: [retain_set]
+    MMKLMin:
+      data_mode: unlearn
+      requirements: [retain_set, frozen_reference_model, multi_gpu_or_model_offload]
+    MMNPO:
+      data_mode: unlearn
+      requirements: [retain_only_oracle_checkpoint, multi_gpu_or_model_offload]
+    MMRetainFT:
+      data_mode: reference
+      requirements: [retain_set]
+    MMUnlearner:
+      data_mode: unlearn
+      requirements: [saliency_mask, retain_set, architecture_mask_selector]
+    MMMANU:
+      data_mode: unlearn
+      requirements: [paired_text_multimodal_inputs, retain_set]
+
+output_dir: saves/mm_unlearn/smoke_qwen2vl7b_mllmu/${trainer.handler}
+save_model: false

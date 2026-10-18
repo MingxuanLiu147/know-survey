@@ -1,0 +1,7 @@
+# BREP 训练集：标准化后的 PRM800K
+
+BREP_prm800k_train:
+  handler: AlpacaDataset
+  args:
+    data_path: ${paths.root_dir}/data/inject/brep/train/prm800k/train.json
+    max_length: 2048

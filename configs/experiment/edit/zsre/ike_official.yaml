@@ -1,0 +1,20 @@
+# @package _global_
+# Supply independently prepared corpus and held-out data via overrides.
+defaults:
+  - override /model: Qwen2.5-1.5B
+  - override /trainer: edit/IKE_official
+  - override /data: edit
+  - override /data/datasets@data.edit: ZSRE_edit
+  - override /eval: edit
+  - _self_
+
+task_name: ike_official_smoke
+edit_type: independent
+max_edits: 2
+save_edited_model: false
+
+data:
+  edit:
+    ZSRE_edit:
+      args:
+        max_length: 4096

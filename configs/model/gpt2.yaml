@@ -1,0 +1,12 @@
+model_args:
+  pretrained_model_name_or_path: "openai-community/gpt2"
+  attn_implementation: "eager"
+  torch_dtype: float32
+tokenizer_args:
+  pretrained_model_name_or_path: "openai-community/gpt2"
+template_args:
+  apply_chat_template: false
+  user_start_tag: ""
+  user_end_tag: ""
+  asst_start_tag: ""
+  asst_end_tag: ""

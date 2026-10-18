@@ -1,0 +1,30 @@
+# @package _global_
+
+# not list SimNPO, so this is a configured reproduction candidate rather than
+# proof of the unpublished runtime argv.  Launch with two processes through
+# configs/accelerate/default_config.yaml; 4 samples/device x 2 devices x 4
+# accumulation steps gives the published script's effective batch size of 32.
+defaults:
+  - /experiment/unlearn/tofu/default
+  - override /trainer: SimNPO
+  - _self_
+
+trainer:
+  args:
+    per_device_train_batch_size: 4
+    gradient_accumulation_steps: 4
+    learning_rate: 1.0e-5
+    optim: paged_adamw_32bit
+    num_train_epochs: 10
+    bf16: true
+    gradient_checkpointing: true
+    ddp_find_unused_parameters: true
+    seed: 0
+  method_args:
+    delta: 0.0
+    beta: 4.5
+    alpha: 1.0
+    gamma: 0.125
+    retain_loss_type: NLL
+
+task_name: tofu_llama32_1b_forget10_repro_simnpo

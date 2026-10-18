@@ -1,0 +1,50 @@
+# @package eval.edit
+# Knowledge Editing 评估配置
+
+handler: EditSuiteEvaluator
+output_dir: ${paths.output_dir}
+overwrite: false
+edit_data_path: null
+original_model_path: null
+
+metrics:
+  reliability:
+    handler: EditReliabilityEvaluator
+    args:
+      metric_name: reliability
+      success_threshold: 0.9
+  generalization:
+    handler: EditGeneralizationEvaluator
+    args:
+      metric_name: generalization
+      use_rephrase: true
+  locality:
+    handler: EditLocalityEvaluator
+    args:
+      metric_name: locality
+      max_change_threshold: 0.1
+  portability:
+    handler: EditPortabilityEvaluator
+    args:
+      metric_name: portability
+      test_types:
+        - one_hop
+        - synonym
+        - inverse_relation
+  long_form:
+    handler: EditLongFormEvaluator
+    args:
+      # Generated-output protocol used by AnyEdit/UnKE long-form datasets.
+      max_new_tokens: 512
+      generation_margin: 16
+      max_pairs_per_group: 5
+      # Optional local SentenceTransformer path. Null is reported explicitly.
+      semantic_model_name: null
+  comprehensive:
+    handler: EditComprehensiveEvaluator
+    args:
+      reliability_weight: 0.25
+      generalization_weight: 0.25
+      locality_weight: 0.25
+      portability_weight: 0.25
+      require_all_metrics: true

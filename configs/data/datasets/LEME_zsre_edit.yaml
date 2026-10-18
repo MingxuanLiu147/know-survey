@@ -1,0 +1,7 @@
+# LEME ZSRE 长文本编辑数据集配置
+
+LEME_zsre_edit:
+  handler: LEMEDataset
+  args:
+    subset: "zsre"
+    max_length: 768

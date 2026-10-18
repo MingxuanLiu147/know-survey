@@ -1,0 +1,31 @@
+# @package _global_
+# One-record MANU portability smoke on CLEAR visual-only splits.
+defaults:
+  - override /model: Qwen2.5-VL-3B
+  - override /data: clear
+  - override /trainer: MMMANU
+
+model:
+  processor_args:
+    use_fast: false
+    min_pixels: 200704
+    max_pixels: 200704
+  lora:
+    enabled: false
+
+data:
+  forget_split_ratio: 5
+  training_split_suffix: ""
+  train_mode: caption
+  batch_size: 1
+  ans_only: true
+  max_samples: 1
+  paired_modalities: true
+
+smoke_protocol:
+  model_role: portability-extension-not-benchmark-original
+  method: MMMANU
+  scope: one-forget-one-retain-paired-text-image-activation-statistic
+
+output_dir: saves/mm_unlearn/smoke_qwen25vl3b_clear_manu
+save_model: false

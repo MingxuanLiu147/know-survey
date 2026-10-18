@@ -1,0 +1,34 @@
+# @package _global_
+# Llama-3.2-3B IKE composition gate; no gated model execution is implied.
+
+defaults:
+  - override /model: Llama-3.2-3B-Instruct
+  - override /trainer: edit/IKE
+  - override /data: edit
+  - override /data/datasets@data.edit: CounterFact_edit
+  - override /eval: edit
+  - _self_
+
+task_name: configured_llama32_3b_ike_counterfact
+edit_type: single
+max_edits: 1
+save_edit_summary: true
+save_edited_model: false
+
+model:
+  model_args:
+    attn_implementation: eager
+
+trainer:
+  args:
+    do_eval: true
+    bf16: false
+  method_args:
+    retrieval_backend: token_overlap
+
+data:
+  edit:
+    CounterFact_edit:
+      args:
+        split: train
+        max_length: 256

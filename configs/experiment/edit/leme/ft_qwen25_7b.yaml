@@ -1,0 +1,29 @@
+# @package _global_
+# Configured Qwen2.5-7B FT baseline for LEME long-text knowledge.
+
+defaults:
+  - override /model: Qwen2.5-7B-Instruct
+  - override /trainer: edit/FT
+  - override /data: edit
+  - override /data/datasets@data.edit: LEME_counterfact_edit
+  - override /eval: edit
+
+task_name: leme_qwen25_7b_ft
+edit_type: single
+max_edits: 1
+save_edited_model: false
+
+trainer:
+  method_args:
+    layers: [4, 5, 6, 7, 8]
+    ft_lr: 5.0e-5
+    num_steps: 25
+    edit_layers_only: true
+
+data:
+  edit:
+    LEME_counterfact_edit:
+      handler: LEMEDataset
+      args:
+        subset: counterfact
+        max_length: 768

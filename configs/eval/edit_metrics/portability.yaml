@@ -1,0 +1,12 @@
+# 知识编辑可移植性指标
+# 测试编辑后的知识是否能迁移到相关推理
+
+portability:
+  handler: EditPortabilityEvaluator
+  args:
+    metric_name: portability
+    # 测试类型
+    test_types:
+      - one_hop
+      - synonym
+      - inverse_relation

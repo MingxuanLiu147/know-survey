@@ -1,0 +1,9 @@
+# AKEW MQuAKE-CF long-form protocol used by AnyEdit.
+
+AKEW_mquake_unstructured_edit:
+  handler: AKEWDataset
+  args:
+    subset: mquake-cf
+    target_mode: unstructured
+    max_length: 2048
+    apply_chat_template: true

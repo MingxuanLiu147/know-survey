@@ -1,0 +1,17 @@
+# @package _global_
+# AKEW MQuAKE-CF 子集实验配置
+
+defaults:
+  - override /model: Qwen2.5-7B-Instruct
+  - override /trainer: edit/ROME
+  - override /data: edit
+  - override /data/datasets@data.edit: AKEW_mquake_cf_edit
+  - override /eval: edit
+
+data:
+  edit:
+    AKEW_mquake_cf_edit:
+      handler: AKEWDataset
+      args:
+        subset: "mquake-cf"
+        max_length: 512

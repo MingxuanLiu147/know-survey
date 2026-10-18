@@ -1,0 +1,4 @@
+interface:
+  display_name: "Add Dataset"
+  short_description: "Register a dataset with provenance, schema, and fixtures."
+  default_prompt: "Use $add-dataset to add a dataset through the canonical Know-Surgery contract."

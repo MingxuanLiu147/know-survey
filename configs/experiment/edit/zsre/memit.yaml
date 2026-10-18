@@ -1,0 +1,16 @@
+# @package _global_
+# ZSRE + MEMIT 批量编辑实验配置
+
+defaults:
+  - override /model: Qwen2.5-7B-Instruct
+  - override /trainer: edit/MEMIT
+  - override /data: edit
+  - override /eval: edit
+
+data:
+  edit:
+    ZSRE_edit:
+      handler: ZSREDataset
+      args:
+        split: "test"
+        max_length: 512

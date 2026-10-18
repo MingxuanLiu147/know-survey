@@ -1,0 +1,4 @@
+interface:
+  display_name: "Run Editing"
+  short_description: "Preview and execute knowledge editing with side-effect metrics."
+  default_prompt: "Use $run-edit to preview and run this knowledge editing plan."

@@ -1,0 +1,7 @@
+# CLUTRR 训练集
+
+CLUTRR_train:
+  handler: AlpacaDataset
+  args:
+    data_path: ${paths.root_dir}/data/inject/logic/train/clutrr/train.json
+    max_length: 4096

@@ -1,0 +1,43 @@
+# @package _global_
+# Two actual AKEW long targets, jointly edited. Engineering adapter, not benchmark.
+defaults:
+  - override /model: gpt2
+  - override /trainer: edit/AnyEditOfficial
+  - override /data: edit
+  - override /data/datasets@data.edit: AKEW_counterfact_unstructured_edit
+  - override /eval: edit
+
+task_name: anyedit_joint_gpt2_akew_smoke
+edit_type: batch
+max_edits: 2
+save_edited_model: false
+
+trainer:
+  args:
+    bf16: false
+  method_args:
+    implementation_variant: official_reference
+    layers: [5]
+    strategy: memit_are
+    target_prefix: " "
+    window_size: 40
+    v_num_grad_steps: 5
+    v_loss_layer: 11
+    rewrite_module_tmp: "transformer.h.{}.mlp.c_proj"
+    layer_module_tmp: "transformer.h.{}"
+    ln_f_module: "transformer.ln_f"
+    lm_head_module: "lm_head"
+    mom2_dataset: wikitext
+    mom2_n_samples: 8
+    # Explicit small-budget sequential statistics.
+    mom2_dataset_config: wikitext-103-raw-v1
+    mom2_sample_policy: sequential_rows
+    covariance_ridge: 0.1
+    projection_path: null
+
+data:
+  edit:
+    AKEW_counterfact_unstructured_edit:
+      args:
+        max_length: 1024
+        apply_chat_template: false

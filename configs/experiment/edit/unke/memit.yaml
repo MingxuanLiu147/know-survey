@@ -1,0 +1,30 @@
+# @package _global_
+# UnKEBench long-form plain MEMIT baseline.
+
+defaults:
+  - override /model: Qwen2.5-7B-Instruct
+  - override /trainer: edit/MEMIT
+  - override /data: edit
+  - override /data/datasets@data.edit: UnKE_edit
+  - override /eval: edit
+
+task_name: unke_memit
+
+trainer:
+  method_args:
+    layers: [4, 5, 6, 7, 8]
+    v_num_grad_steps: 25
+    v_weight_decay: 1.0e-3
+    v_loss_layer: 27
+    edit_weight: 1.0
+    mom2_update_weight: 15000.0
+
+data:
+  edit:
+    UnKE_edit:
+      handler: UnKEDataset
+      args:
+        version: v3
+        max_length: 2048
+        apply_chat_template: true
+

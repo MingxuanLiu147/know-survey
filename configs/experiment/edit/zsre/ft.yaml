@@ -1,0 +1,17 @@
+# @package _global_
+# zsRE + FT baseline
+
+defaults:
+  - override /model: Qwen2.5-7B-Instruct
+  - override /trainer: edit/FT
+  - override /data: edit
+  - override /data/datasets@data.edit: ZSRE_edit
+  - override /eval: edit
+
+data:
+  edit:
+    ZSRE_edit:
+      handler: ZSREDataset
+      args:
+        split: "test"
+        max_length: 512

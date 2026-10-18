@@ -1,0 +1,12 @@
+model_args:
+  pretrained_model_name_or_path: deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B
+  attn_implementation: sdpa
+  torch_dtype: bfloat16
+tokenizer_args:
+  pretrained_model_name_or_path: deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B
+template_args:
+  apply_chat_template: true
+  # DeepSeek recommends putting all instructions in the user prompt.
+  system_prompt: null
+  # Its generation template opens <think>, while the training template does not.
+  response_prefix: "</think>\n"

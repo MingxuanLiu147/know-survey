@@ -1,0 +1,195 @@
+# ============================================================================
+# TOFU评估配置文件
+# 用途：评估模型在TOFU基准上的遗忘效果
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# 模型配置
+# ----------------------------------------------------------------------------
+model:
+  # 模型加载参数
+  model_args:
+    device_map: cuda  # 模型加载到CUDA设备（GPU）
+    pretrained_model_name_or_path: open-unlearning/tofu_Llama-3.2-1B-Instruct_full  # 预训练模型路径（HuggingFace格式）
+    attn_implementation: flash_attention_2  # 使用Flash Attention 2加速注意力计算，提升训练/推理速度
+    torch_dtype: bfloat16  # 使用bfloat16精度，节省显存并保持数值稳定性
+  
+  # 分词器配置
+  tokenizer_args:
+    pretrained_model_name_or_path: meta-llama/Llama-3.2-1B-Instruct  # 分词器路径（可能与模型路径不同）
+  
+  # 聊天模板配置（用于格式化输入输出）
+  template_args:
+    apply_chat_template: true  # 是否应用聊天模板
+    system_prompt: You are a helpful assistant.  # 系统提示词
+    system_prompt_with_special_tokens: '<|begin_of_text|><|start_header_id|>system<|end_header_id|>
+
+
+      You are a helpful assistant.<|eot_id|>'  # 带特殊token的系统提示词（Llama格式）
+    user_start_tag: '<|start_header_id|>user<|end_header_id|>
+
+
+      '  # 用户消息开始标记
+    user_end_tag: <|eot_id|>  # 用户消息结束标记
+    asst_start_tag: '<|start_header_id|>assistant<|end_header_id|>
+
+
+      '  # 助手消息开始标记
+    asst_end_tag: <|eot_id|>  # 助手消息结束标记
+
+# ----------------------------------------------------------------------------
+# 运行模式配置
+# ----------------------------------------------------------------------------
+# mode: 运行模式，决定代码的执行流程
+#   - "train": 普通训练模式
+#     * 数据加载：按split返回原始数据集 {"forget": Dataset, "retain": Dataset, "eval": Dataset}
+#     * 用途：用于预训练或微调模型
+#   - "unlearn": 遗忘训练模式
+#     * 数据加载：将forget和retain合并为ForgetRetainDataset，返回 {"train": ForgetRetainDataset, "eval": Dataset}
+#     * ForgetRetainDataset每次返回一对样本：{"forget": sample, "retain": sample}
+#     * 用途：执行遗忘训练，让模型忘记forget集的知识，同时保留retain集的知识
+#   - "eval": 评估模式（当前模式）
+#     * 数据加载：只加载评估所需的数据集
+#     * 用途：仅评估模型性能，不进行训练
+#     * 执行流程：加载模型 → 加载评估数据集 → 计算评估指标 → 输出结果
+mode: eval
+task_name: SAMPLE_EVAL  # 任务名称，用于组织输出目录和日志文件
+seed: 0  # 随机种子，保证结果可复现
+
+# ----------------------------------------------------------------------------
+# 评估配置
+# ----------------------------------------------------------------------------
+eval:
+  tofu:  # TOFU基准评估配置
+    # 评估指标配置
+    metrics:
+      # forget_quality: 遗忘质量指标（核心指标）
+      # 通过KS检验比较遗忘集和保留集的truth_ratio分布，评估遗忘效果
+      forget_quality:
+        # 预计算依赖指标：需要先计算forget_truth_ratio
+        pre_compute:
+          forget_truth_ratio:  # 遗忘集的truth_ratio（真实度比率）
+            # truth_ratio需要先计算两个概率：correct和wrong
+            pre_compute:
+              # forget_Q_A_PARA_Prob: 计算模型对正确答案（paraphrased版本）的概率
+              forget_Q_A_PARA_Prob:
+                datasets:
+                  TOFU_QA_forget_para:  # 数据集名称（内部标识）
+                    handler: QADataset  # 使用QADataset加载问答数据
+                    args:
+                      hf_args:  # HuggingFace数据集参数
+                        name: ${eval.tofu.forget_split}_perturbed  # 数据集名称（如forget10_perturbed）
+                        split: train  # 使用训练集split
+                        path: locuslab/TOFU  # HuggingFace Hub上的数据集路径
+                      question_key: question  # 数据集中问题字段的名称
+                      answer_key: paraphrased_answer  # 答案字段名称（改写后的正确答案）
+                      max_length: 512  # 最大序列长度（token数）
+                collators:  # 批处理整理器配置
+                  DataCollatorForSupervisedDataset:
+                    handler: DataCollatorForSupervisedDataset  # 监督学习数据整理器
+                    args:
+                      padding_side: right  # 右侧填充（用于生成任务）
+                      index: index  # 保留数据索引字段，用于追踪样本
+                handler: probability  # 使用probability handler计算模型对答案的概率
+                batch_size: 32  # 批处理大小
+                access_key: correct  # 在truth_ratio计算中作为"正确"答案的键
+            
+              # forget_Q_A_PERT_Prob: 计算模型对错误答案（perturbed版本）的概率
+              forget_Q_A_PERT_Prob:
+                datasets:
+                  TOFU_QA_forget_pert:  # 数据集名称（内部标识）
+                    handler: QADataset
+                    args:
+                      hf_args:
+                        name: ${eval.tofu.forget_split}_perturbed  # 同样使用perturbed版本的数据集
+                        split: train
+                        path: locuslab/TOFU
+                      question_key: question
+                      answer_key: perturbed_answer  # 答案字段名称（扰动后的错误答案）
+                      max_length: 512
+                collators:
+                  DataCollatorForSupervisedDataset:
+                    handler: DataCollatorForSupervisedDataset
+                    args:
+                      padding_side: right
+                      index: index
+                handler: probability
+                batch_size: 32
+                access_key: wrong  # 在truth_ratio计算中作为"错误"答案的键
+            
+            # truth_ratio计算器：计算 wrong_prob / correct_prob
+            # 对于遗忘数据，理想值接近1（表示模型对真假答案的置信度相近，已成功遗忘）
+            handler: truth_ratio
+            aggregator: closer_to_1_better  # 聚合函数：越接近1越好
+            access_key: forget  # 在forget_quality中访问的键
+        
+        # 参考模型日志配置（用于比较）
+        reference_logs:
+          retain_model_logs:  # 保留集模型的评估日志
+            path: ${eval.tofu.retain_logs_path}  # 参考模型日志文件路径
+            include:  # 从参考日志中提取的指标
+              forget_truth_ratio:
+                access_key: retain  # 提取retain集的truth_ratio值
+        
+        # KS检验handler：比较forget和retain的truth_ratio分布
+        # p值越大，说明遗忘集与保留集分布越相似，遗忘效果越好
+        handler: ks_test
+      
+      # forget_Q_A_Prob: 直接计算模型对遗忘集问答对的概率
+      # 用于评估模型对遗忘数据的记忆程度
+      forget_Q_A_Prob:
+        datasets:
+          TOFU_QA_forget:  # 遗忘集数据
+            handler: QADataset
+            args:
+              hf_args:
+                name: ${eval.tofu.forget_split}  # 遗忘集名称（如forget10）
+                split: train
+                path: locuslab/TOFU
+              question_key: question
+              answer_key: answer  # 原始答案
+              max_length: 512
+        collators:
+          DataCollatorForSupervisedDataset:
+            handler: DataCollatorForSupervisedDataset
+            args:
+              padding_side: right
+              index: index
+        handler: probability  # 计算概率
+        batch_size: 32
+    
+    # TOFU评估器
+    handler: TOFUEvaluator
+    output_dir: ${paths.output_dir}  # 评估结果输出目录
+    overwrite: false  # 是否覆盖已有结果（false表示不覆盖，避免重复计算）
+    forget_split: ${forget_split}  # 遗忘集split名称（变量引用）
+    holdout_split: ${holdout_split}  # 保留集split名称（变量引用）
+    retain_logs_path: ${retain_logs_path}  # 参考模型日志路径（变量引用）
+
+# ----------------------------------------------------------------------------
+# 路径配置
+# ----------------------------------------------------------------------------
+paths:
+  root_dir: .  # 项目根目录
+  data_dir: ${paths.root_dir}/data/  # 数据存储目录
+  datasets: ${paths.root_dir}/configs/data/datasets  # 数据集配置文件目录
+  output_dir: ${paths.root_dir}/saves/${mode}/${task_name}  # 输出目录（根据mode和task_name动态生成）
+  work_dir: ${hydra:runtime.cwd}  # 工作目录（Hydra运行时当前目录）
+
+# ----------------------------------------------------------------------------
+# 全局变量配置
+# ----------------------------------------------------------------------------
+# TOFU数据集划分说明：
+# 整个TOFU数据集被划分为三个部分，总计100%：
+#   - forget: 需要被遗忘的数据（如forget10表示10%）
+#   - holdout: 保留评估集，用于评估模型是否保留了知识（如holdout10表示10%）
+#   - retain: 保留训练集，用于训练时保留知识（如retain90表示90%）
+# 例如：forget10 + holdout10 + retain90 = 10% + 10% + 90% = 100%
+#
+# 注意：holdout和retain都是"保留"数据，但用途不同：
+#   - retain: 参与训练，模型应该保留这些知识
+#   - holdout: 不参与训练，仅用于评估，测试模型是否真的保留了知识（防止过拟合）
+forget_split: forget10  # 遗忘集：10%的数据需要被遗忘
+holdout_split: holdout10  # 保留评估集：10%的数据用于评估模型保留知识的能力（不参与训练）
+retain_logs_path: saves/eval/tofu_Llama-3.2-1B-Instruct_retain90/TOFU_EVAL.json  # 参考模型（在90%保留数据上训练）的评估日志路径
+# 说明：retain90表示在90%的保留数据上训练的参考模型，用于与遗忘后的模型进行比较

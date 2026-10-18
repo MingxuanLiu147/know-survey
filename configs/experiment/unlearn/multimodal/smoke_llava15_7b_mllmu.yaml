@@ -1,0 +1,43 @@
+# @package _global_
+# Original-model, one-record MLLMU-Bench wiring smoke. This is not a benchmark
+# result because the off-the-shelf source checkpoint is not the required
+# full-data-finetuned vanilla checkpoint.
+defaults:
+  - override /model: LLaVA-1.5-7B
+  - override /data: mllmu
+  - override /trainer: MMGradAscent
+
+model:
+  lora:
+    enabled: true
+    r: 16
+    alpha: 16
+    dropout: 0.05
+
+data:
+  forget_split_ratio: 5
+  batch_size: 1
+  ans_only: true
+  max_samples: 1
+
+trainer:
+  args:
+    lr: 2e-5
+    num_epochs: 1
+    gradient_accumulation_steps: 1
+
+smoke_protocol:
+  model_role: benchmark-original-architecture-off-the-shelf-checkpoint
+  start_checkpoint: benchmark-trained-checkpoint-required-for-results
+  lora_target_policy: auto-linear-excluding-embeddings-lm-head-patch-embed
+  method_matrix:
+    MMGradAscent:
+    MMGradDiff:
+    MMKLMin:
+    MMNPO:
+    MMUnlearner:
+    MMMANU:
+      requirements: [paired_text_multimodal_inputs, retain_set]
+
+output_dir: saves/mm_unlearn/smoke_llava15_7b_mllmu/${trainer.handler}
+save_model: false

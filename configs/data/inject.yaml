@@ -1,0 +1,7 @@
+# Knowledge Injection 数据配置
+
+defaults:
+  - datasets@train: Alpaca_inject
+
+# 训练数据锚定
+anchor: train

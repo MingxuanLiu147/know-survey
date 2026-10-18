@@ -1,0 +1,14 @@
+defaults:
+  - mm_train
+  - override /trainer: MMRetainFT
+  - _self_
+
+output_dir: saves/mm_reference/${data.benchmark}/forget${data.forget_split_ratio}
+
+data:
+  mode: reference
+  reference_source: retain
+
+model:
+  lora:
+    enabled: false

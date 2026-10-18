@@ -1,0 +1,4 @@
+interface:
+  display_name: "Smoke Test"
+  short_description: "Compose configs and run bounded, evidence-aware smoke checks."
+  default_prompt: "Use $smoke-test to validate this plan before any expensive run."

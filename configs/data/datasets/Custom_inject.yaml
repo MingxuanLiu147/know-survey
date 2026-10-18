@@ -1,0 +1,23 @@
+# 自定义微调数据集配置模板
+# 用户可以基于此模板配置自己的数据集
+
+Custom_train:
+  handler: InjectDataset
+  args:
+    # 本地数据路径（二选一）
+    data_path: null  # 例如: data/custom/train.json
+
+    # HuggingFace 数据集参数（二选一）
+    hf_args: null
+    #  path: "your-org/your-dataset"
+    #  split: "train"
+
+    # 数据格式
+    format_type: alpaca  # alpaca | sharegpt | custom
+
+    # 字段映射（用于自定义格式）
+    instruction_key: instruction
+    input_key: input
+    output_key: output
+
+    max_length: 2048

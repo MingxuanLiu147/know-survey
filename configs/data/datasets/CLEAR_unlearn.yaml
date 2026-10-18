@@ -1,0 +1,32 @@
+# Public CLEAR registration. Runtime paths remain overrideable.
+benchmark: clear
+data_dir: data/CLEAR
+forget_split_ratio: 5
+
+registration:
+  name: CLEAR
+  status: Implemented
+  source: therem/CLEAR
+  paper_arxiv: "2410.18057"
+  license: unknown
+  license_note: Verify the dataset card before public redistribution.
+  modality: image-text
+  operations:
+    - delete
+  loader: data.clear_dataset.get_clear_data
+  evaluator: evals.clear.CLEAREvaluator
+  original_models:
+    - LLaVA-1.5-7B
+    - Qwen2-VL-2B
+  original_baselines:
+    - MMRetainFT
+    - MMIDK
+    - MMDPO
+    - MMLLMU
+    - MMSCRUB
+    - MMRMU
+    - MMGradAscent
+    - MMGradDiff
+    - MMKLMin
+    - MMNPO
+    - MMSKU

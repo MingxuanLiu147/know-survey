@@ -1,0 +1,14 @@
+handler: MMGradDiff
+
+args:
+  lr: 5e-4
+  num_epochs: 5
+  max_grad_norm: 1.0
+  gradient_accumulation_steps: 1
+  warmup_steps: 0
+
+method_args:
+  benchmark: ${data.benchmark}
+  # Resolves to CLEAR paired batches or MLLMU-Bench sequential full-split
+  # passes. This is included in resolved configs and run summaries.
+  schedule_mode: auto

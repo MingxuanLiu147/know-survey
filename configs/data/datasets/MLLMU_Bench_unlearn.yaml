@@ -1,0 +1,26 @@
+# Public MLLMU-Bench registration. Runtime paths remain overrideable.
+benchmark: mllmu
+data_dir: data/MLLMU-Bench
+forget_split_ratio: 5
+
+registration:
+  name: MLLMU-Bench
+  status: Implemented
+  source: MLLMMU/MLLMU-Bench
+  paper_arxiv: "2410.22108"
+  license: unknown
+  license_note: Verify the dataset card before public redistribution.
+  modality: image-text
+  operations:
+    - delete
+  loader: data.multimodal.get_mm_data
+  evaluator: evals.mllmu.MLLMUEvaluator
+  original_models:
+    - LLaVA-1.5-7B
+    - Idefics2-8B
+  original_baselines:
+    - MMGradAscent
+    - MMGradDiff
+    - MMKLMin
+    - MMNPO
+    - MMPrompting

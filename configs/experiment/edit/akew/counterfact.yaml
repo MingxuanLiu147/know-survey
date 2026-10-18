@@ -1,0 +1,17 @@
+# @package _global_
+# AKEW CounterFact 子集实验配置
+
+defaults:
+  - override /model: Qwen2.5-7B-Instruct
+  - override /trainer: edit/ROME
+  - override /data: edit
+  - override /data/datasets@data.edit: AKEW_counterfact_edit
+  - override /eval: edit
+
+data:
+  edit:
+    AKEW_counterfact_edit:
+      handler: AKEWDataset
+      args:
+        subset: "counterfact"
+        max_length: 512

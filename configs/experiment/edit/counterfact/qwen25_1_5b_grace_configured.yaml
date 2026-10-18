@@ -1,0 +1,25 @@
+# @package _global_
+# Model-specific GRACE configuration for Qwen2.5-1.5B.
+# Layer/path follows the Qwen2.5 GRACE family configuration in EasyEdit.
+
+defaults:
+  - override /model: Qwen2.5-1.5B-Instruct
+  - override /trainer: edit/GRACE
+  - override /data: edit
+  - override /data/datasets@data.edit: CounterFact_edit
+  - override /eval: edit
+
+task_name: grace_qwen25_1_5b_counterfact_configured
+edit_type: single
+max_edits: 1
+save_edited_model: false
+
+trainer:
+  method_args:
+    layers: [18]
+    inner_params: "model.layers.18.mlp.down_proj"
+    edit_lr: 1.0
+    n_iter: 50
+    eps: 1.0
+    val_init: "cold"
+    val_train: "sgd"

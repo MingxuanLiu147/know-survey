@@ -1,0 +1,27 @@
+# CLEAR-native teacher/student baseline. Prototype until a complete benchmark
+# run is recorded; a 7B student plus frozen 7B teacher generally needs offload
+# or more than one 24 GB GPU.
+handler: MMSCRUB
+
+args:
+  # CLEAR public multimodal configuration uses 1e-5 for five epochs.
+  lr: 1e-5
+  num_epochs: 5
+  max_grad_norm: 1.0
+  gradient_accumulation_steps: 4
+  warmup_steps: 0
+
+method_args:
+  # Appendix B: LR - LF + Ltask with alpha=gamma=1.
+  forget_weight: 1.0
+  retain_kl_weight: 1.0
+  retain_task_weight: 1.0
+  # Paper-faithful default. Use student_to_teacher only to reproduce the
+  # argument order in CLEAR's bb14c967 public implementation.
+  kl_direction: teacher_to_student
+  # Exact full-vocabulary KL, chunked only across token rows.
+  kl_chunk_size: 16
+  # Supplying both fields enables a two-GPU 7B path without deep-copying the
+  # student on its GPU. The teacher must be the original/base checkpoint.
+  teacher_model_path: null
+  teacher_device: null

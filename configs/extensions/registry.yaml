@@ -1,0 +1,612 @@
+# Know-Surgery method catalog.
+schema_version: '1.0'
+installed: []
+handlers:
+  model:
+    AutoModelForCausalLM:
+      registry_module: model
+      registry_attribute: MODEL_REGISTRY
+      operations:
+      - unlearning
+      - inject
+      - edit
+      model_families:
+      - '*'
+    ProbedLlamaForCausalLM:
+      registry_module: model
+      registry_attribute: MODEL_REGISTRY
+      operations:
+      - unlearning
+      - inject
+      - edit
+      model_families:
+      - llama2
+      - llama3
+  dataset:
+    QADataset:
+      registry_module: data
+      registry_attribute: DATASET_REGISTRY
+      operations:
+      - unlearning
+      model_families:
+      - '*'
+      dataset_roles:
+      - forget
+      - retain
+      - eval
+      knowledge_types:
+      - fact
+      - event
+      - rule
+    QAwithIdkDataset:
+      registry_module: data
+      registry_attribute: DATASET_REGISTRY
+      operations:
+      - unlearning
+      model_families:
+      - '*'
+      dataset_roles:
+      - forget
+      - retain
+      - eval
+      knowledge_types:
+      - fact
+      - event
+      - rule
+    QAwithAlternateDataset:
+      registry_module: data
+      registry_attribute: DATASET_REGISTRY
+      operations:
+      - unlearning
+      model_families:
+      - '*'
+      dataset_roles:
+      - forget
+      - retain
+      - eval
+      knowledge_types:
+      - fact
+      - event
+      - rule
+    PretrainingDataset:
+      registry_module: data
+      registry_attribute: DATASET_REGISTRY
+      operations:
+      - unlearning
+      - inject
+      model_families:
+      - '*'
+      dataset_roles:
+      - train
+      - forget
+      - retain
+      - eval
+      knowledge_types:
+      - free_text
+      - concept
+    CompletionDataset:
+      registry_module: data
+      registry_attribute: DATASET_REGISTRY
+      operations:
+      - unlearning
+      - inject
+      model_families:
+      - '*'
+      dataset_roles:
+      - train
+      - forget
+      - retain
+      - eval
+      knowledge_types:
+      - free_text
+      - concept
+    ForgetRetainDataset:
+      registry_module: data
+      registry_attribute: DATASET_REGISTRY
+      operations:
+      - unlearning
+      model_families:
+      - '*'
+      dataset_roles:
+      - forget
+      - retain
+      knowledge_types:
+      - '*'
+    EditingDataset:
+      registry_module: data
+      registry_attribute: DATASET_REGISTRY
+      operations:
+      - edit
+      model_families:
+      - '*'
+      dataset_roles:
+      - edit
+      - eval
+      knowledge_types:
+      - fact
+      - event
+      - procedural
+      - rule
+      - free_text
+      - concept
+    ZSREDataset:
+      registry_module: data
+      registry_attribute: DATASET_REGISTRY
+      operations:
+      - edit
+      model_families:
+      - '*'
+      dataset_roles:
+      - edit
+      - eval
+      knowledge_types:
+      - fact
+      - event
+      - procedural
+      - rule
+      - free_text
+      - concept
+    CounterFactDataset:
+      registry_module: data
+      registry_attribute: DATASET_REGISTRY
+      operations:
+      - edit
+      model_families:
+      - '*'
+      dataset_roles:
+      - edit
+      - eval
+      knowledge_types:
+      - fact
+      - event
+      - procedural
+      - rule
+      - free_text
+      - concept
+    ELKENDataset:
+      registry_module: data
+      registry_attribute: DATASET_REGISTRY
+      operations:
+      - edit
+      model_families:
+      - '*'
+      dataset_roles:
+      - edit
+      - eval
+      knowledge_types:
+      - fact
+      - event
+      - procedural
+      - rule
+      - free_text
+      - concept
+    UnKEDataset:
+      registry_module: data
+      registry_attribute: DATASET_REGISTRY
+      operations:
+      - edit
+      model_families:
+      - '*'
+      dataset_roles:
+      - edit
+      - eval
+      knowledge_types:
+      - fact
+      - event
+      - procedural
+      - rule
+      - free_text
+      - concept
+    ConceptEditDataset:
+      registry_module: data
+      registry_attribute: DATASET_REGISTRY
+      operations:
+      - edit
+      model_families:
+      - '*'
+      dataset_roles:
+      - edit
+      - eval
+      knowledge_types:
+      - fact
+      - event
+      - procedural
+      - rule
+      - free_text
+      - concept
+    AKEWDataset:
+      registry_module: data
+      registry_attribute: DATASET_REGISTRY
+      operations:
+      - edit
+      model_families:
+      - '*'
+      dataset_roles:
+      - edit
+      - eval
+      knowledge_types:
+      - fact
+      - event
+      - procedural
+      - rule
+      - free_text
+      - concept
+    LEMEDataset:
+      registry_module: data
+      registry_attribute: DATASET_REGISTRY
+      operations:
+      - edit
+      model_families:
+      - '*'
+      dataset_roles:
+      - edit
+      - eval
+      knowledge_types:
+      - fact
+      - event
+      - procedural
+      - rule
+      - free_text
+      - concept
+    EditEveryDataset:
+      registry_module: data
+      registry_attribute: DATASET_REGISTRY
+      operations:
+      - edit
+      model_families:
+      - '*'
+      dataset_roles:
+      - edit
+      - eval
+      knowledge_types:
+      - fact
+      - event
+      - procedural
+      - rule
+      - free_text
+      - concept
+    InjectDataset:
+      registry_module: data
+      registry_attribute: DATASET_REGISTRY
+      operations:
+      - inject
+      model_families:
+      - '*'
+      dataset_roles:
+      - train
+      - eval
+      knowledge_types:
+      - fact
+      - event
+      - procedural
+      - rule
+      - free_text
+      - concept
+    AlpacaDataset:
+      registry_module: data
+      registry_attribute: DATASET_REGISTRY
+      operations:
+      - inject
+      model_families:
+      - '*'
+      dataset_roles:
+      - train
+      - eval
+      knowledge_types:
+      - fact
+      - event
+      - procedural
+      - rule
+      - free_text
+      - concept
+    ShareGPTDataset:
+      registry_module: data
+      registry_attribute: DATASET_REGISTRY
+      operations:
+      - inject
+      model_families:
+      - '*'
+      dataset_roles:
+      - train
+      - eval
+      knowledge_types:
+      - fact
+      - event
+      - procedural
+      - rule
+      - free_text
+      - concept
+  algorithm:
+    Trainer:
+      registry_module: trainer
+      registry_attribute: TRAINER_REGISTRY
+      operations:
+      - unlearning
+      - inject
+      model_families:
+      - '*'
+      architecture_specific: false
+    FinetuneTrainer:
+      registry_module: trainer
+      registry_attribute: TRAINER_REGISTRY
+      operations:
+      - unlearning
+      - inject
+      model_families:
+      - '*'
+      architecture_specific: false
+    GradAscent:
+      registry_module: trainer
+      registry_attribute: TRAINER_REGISTRY
+      operations:
+      - unlearning
+      model_families:
+      - '*'
+      architecture_specific: false
+    GradDiff:
+      registry_module: trainer
+      registry_attribute: TRAINER_REGISTRY
+      operations:
+      - unlearning
+      model_families:
+      - '*'
+      architecture_specific: false
+    NPO:
+      registry_module: trainer
+      registry_attribute: TRAINER_REGISTRY
+      operations:
+      - unlearning
+      model_families:
+      - '*'
+      architecture_specific: false
+    DPO:
+      registry_module: trainer
+      registry_attribute: TRAINER_REGISTRY
+      operations:
+      - unlearning
+      model_families:
+      - '*'
+      architecture_specific: false
+    SimNPO:
+      registry_module: trainer
+      registry_attribute: TRAINER_REGISTRY
+      operations:
+      - unlearning
+      model_families:
+      - '*'
+      architecture_specific: false
+    RMU:
+      registry_module: trainer
+      registry_attribute: TRAINER_REGISTRY
+      operations:
+      - unlearning
+      model_families:
+      - '*'
+      architecture_specific: false
+    UNDIAL:
+      registry_module: trainer
+      registry_attribute: TRAINER_REGISTRY
+      operations:
+      - unlearning
+      model_families:
+      - '*'
+      architecture_specific: false
+    CEU:
+      registry_module: trainer
+      registry_attribute: TRAINER_REGISTRY
+      operations:
+      - unlearning
+      model_families:
+      - '*'
+      architecture_specific: false
+    SatImp:
+      registry_module: trainer
+      registry_attribute: TRAINER_REGISTRY
+      operations:
+      - unlearning
+      model_families:
+      - '*'
+      architecture_specific: false
+    WGA:
+      registry_module: trainer
+      registry_attribute: TRAINER_REGISTRY
+      operations:
+      - unlearning
+      model_families:
+      - '*'
+      architecture_specific: false
+    PDU:
+      registry_module: trainer
+      registry_attribute: TRAINER_REGISTRY
+      operations:
+      - unlearning
+      model_families:
+      - '*'
+      architecture_specific: false
+    InjectTrainer:
+      registry_module: trainer
+      registry_attribute: TRAINER_REGISTRY
+      operations:
+      - inject
+      model_families:
+      - '*'
+      architecture_specific: false
+    LoRATrainer:
+      registry_module: trainer
+      registry_attribute: TRAINER_REGISTRY
+      operations:
+      - inject
+      model_families:
+      - '*'
+      architecture_specific: false
+    DoRATrainer:
+      registry_module: trainer
+      registry_attribute: TRAINER_REGISTRY
+      operations:
+      - inject
+      model_families:
+      - '*'
+      architecture_specific: false
+    AdaLoRATrainer:
+      registry_module: trainer
+      registry_attribute: TRAINER_REGISTRY
+      operations:
+      - inject
+      model_families:
+      - '*'
+      architecture_specific: false
+    LoReFTTrainer:
+      registry_module: trainer
+      registry_attribute: TRAINER_REGISTRY
+      operations:
+      - inject
+      model_families:
+      - '*'
+      architecture_specific: false
+    EditTrainer:
+      registry_module: trainer
+      registry_attribute: TRAINER_REGISTRY
+      operations:
+      - edit
+      model_families:
+      - '*'
+      architecture_specific: false
+    FTEditor:
+      registry_module: trainer
+      registry_attribute: TRAINER_REGISTRY
+      operations:
+      - edit
+      model_families:
+      - '*'
+      architecture_specific: false
+    MENDEditor:
+      registry_module: trainer
+      registry_attribute: TRAINER_REGISTRY
+      operations:
+      - edit
+      model_families:
+      - '*'
+      architecture_specific: true
+      requires_checkpoints: true
+    GRACEEditor:
+      registry_module: trainer
+      registry_attribute: TRAINER_REGISTRY
+      operations:
+      - edit
+      model_families:
+      - gpt2
+      - llama3
+      - qwen2
+      architecture_specific: true
+    WISEEditor:
+      registry_module: trainer
+      registry_attribute: TRAINER_REGISTRY
+      operations:
+      - edit
+      model_families:
+      - gpt2
+      - llama3
+      - qwen2
+      architecture_specific: true
+    WISEMergeEditor:
+      registry_module: trainer
+      registry_attribute: TRAINER_REGISTRY
+      operations:
+      - edit
+      model_families:
+      - gpt2
+      - llama3
+      - qwen2
+      architecture_specific: true
+    IKEEditor:
+      registry_module: trainer
+      registry_attribute: TRAINER_REGISTRY
+      operations:
+      - edit
+      model_families:
+      - '*'
+      architecture_specific: false
+    SERACEditor:
+      registry_module: trainer
+      registry_attribute: TRAINER_REGISTRY
+      operations:
+      - edit
+      model_families:
+      - '*'
+      architecture_specific: false
+      requires_checkpoints: true
+    SERACCompactEditor:
+      registry_module: trainer
+      registry_attribute: TRAINER_REGISTRY
+      operations:
+      - edit
+      model_families:
+      - '*'
+      architecture_specific: false
+    MALMENEditor:
+      registry_module: trainer
+      registry_attribute: TRAINER_REGISTRY
+      operations:
+      - edit
+      model_families:
+      - '*'
+      architecture_specific: true
+      requires_checkpoints: true
+    InstructEditEditor:
+      registry_module: trainer
+      registry_attribute: TRAINER_REGISTRY
+      operations:
+      - edit
+      model_families:
+      - '*'
+      architecture_specific: true
+      requires_checkpoints: true
+    AnyEditEditor:
+      registry_module: trainer
+      registry_attribute: TRAINER_REGISTRY
+      operations:
+      - edit
+      model_families:
+      - gpt2
+      - llama3
+      - qwen2
+      architecture_specific: true
+      strategies:
+      - memit_are
+      - alphaedit_are
+    ROMEEditor:
+      registry_module: trainer
+      registry_attribute: TRAINER_REGISTRY
+      operations:
+      - edit
+      model_families:
+      - gpt2
+      - llama2
+      - llama3
+      - qwen2
+      architecture_specific: true
+      requires_statistics: true
+    MEMITEditor:
+      registry_module: trainer
+      registry_attribute: TRAINER_REGISTRY
+      operations:
+      - edit
+      model_families:
+      - gpt2
+      - llama2
+      - llama3
+      - qwen2
+      architecture_specific: true
+      requires_statistics: true
+    AlphaEditEditor:
+      registry_module: trainer
+      registry_attribute: TRAINER_REGISTRY
+      operations:
+      - edit
+      model_families:
+      - gpt2
+      - llama2
+      - llama3
+      - qwen2
+      architecture_specific: true
+      requires_statistics: true

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Run Injection"
+  short_description: "Preview and execute knowledge injection through the unified CLI."
+  default_prompt: "Use $run-inject to preview and run this knowledge injection plan."

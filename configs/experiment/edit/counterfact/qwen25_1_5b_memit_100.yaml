@@ -1,0 +1,31 @@
+# @package _global_
+# Agent Mode example: CounterFact-style 100-edit run with MEMIT.
+
+defaults:
+  - override /model: Qwen2.5-1.5B-Instruct
+  - override /trainer: edit/MEMIT
+  - override /data: edit
+  - override /data/datasets@data.edit: CounterFact_edit
+  - override /eval: edit
+  - _self_
+
+task_name: agent_counterfact_qwen25_15b_memit_100
+edit_type: batch
+max_edits: 100
+save_edit_summary: true
+save_edited_model: true
+
+model:
+  model_args:
+    attn_implementation: eager
+
+data:
+  edit:
+    CounterFact_edit:
+      args:
+        split: train
+        max_length: 512
+
+trainer:
+  args:
+    do_eval: true

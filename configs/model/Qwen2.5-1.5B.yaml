@@ -1,0 +1,16 @@
+# Qwen2.5-1.5B base (non-instruction) checkpoint.
+# Keep this separate from Qwen2.5-1.5B-Instruct because prompt formatting and
+# locally available snapshots differ.
+
+model_args:
+  pretrained_model_name_or_path: "Qwen/Qwen2.5-1.5B"
+  attn_implementation: "flash_attention_2"
+  torch_dtype: bfloat16
+tokenizer_args:
+  pretrained_model_name_or_path: "Qwen/Qwen2.5-1.5B"
+template_args:
+  apply_chat_template: false
+  user_start_tag: ""
+  user_end_tag: ""
+  asst_start_tag: ""
+  asst_end_tag: ""

@@ -1,0 +1,10 @@
+# @package _global_
+# Qwen2.5-3B-Instruct full benchmark; inherits the adapted MEMIT protocol.
+
+defaults:
+  - /experiment/edit/zsre/qwen25_7b/memit
+  - override /model: Qwen2.5-3B-Instruct
+  - _self_
+
+task_name: qwen25_3b_zsre_memit_independent1301
+max_edits: 1301

@@ -1,0 +1,16 @@
+# @package _global_
+# RuleTaker rule injection. Select the library method with trainer=inject/<method>.
+
+defaults:
+  - override /model: Qwen2.5-3B-Instruct
+  - override /data: inject
+  - override /data/datasets@data.train: RuleTaker_train_inject
+  - override /eval: inject
+
+trainer:
+  args:
+    num_train_epochs: 1
+    per_device_train_batch_size: 2
+    gradient_accumulation_steps: 4
+    learning_rate: 2e-4
+    do_eval: false

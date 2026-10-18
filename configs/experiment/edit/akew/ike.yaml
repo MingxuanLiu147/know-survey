@@ -1,0 +1,17 @@
+# @package _global_
+# Canonical P0 pairing: AKEW event knowledge + IKE.
+
+defaults:
+  - override /model: Qwen2.5-7B-Instruct
+  - override /trainer: edit/IKE
+  - override /data: edit
+  - override /data/datasets@data.edit: AKEW_counterfact_edit
+  - override /eval: edit
+
+data:
+  edit:
+    AKEW_counterfact_edit:
+      handler: AKEWDataset
+      args:
+        subset: counterfact
+        max_length: 512

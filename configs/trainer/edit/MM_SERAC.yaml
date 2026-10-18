@@ -1,0 +1,18 @@
+# MM-SERAC: Multimodal SERAC Knowledge Editing
+# Papers: https://arxiv.org/abs/2206.06520 + https://arxiv.org/abs/2310.08475
+
+defaults:
+  - edit/base_editor@_here_
+  - _self_
+
+handler: MMSERACEditor
+
+method_args:
+  # Checkpoint-gated prototype; no archive means edit() must fail before updates.
+  require_pretrained: true
+  archive: null
+  edit_lr: 1.0e-4
+  cedit: 0.1
+  cloc: 1.0
+  cbase: 1.0
+  num_edit_steps: 50

@@ -1,0 +1,34 @@
+# @package eval.edit
+# Efficient four-metric protocol for independent knowledge-edit benchmarks.
+# Each component is computed exactly once; unavailable probes remain null.
+
+handler: EditSuiteEvaluator
+output_dir: ${paths.output_dir}
+overwrite: false
+edit_data_path: null
+original_model_path: null
+
+metrics:
+  reliability:
+    handler: EditReliabilityEvaluator
+    args:
+      metric_name: reliability
+      success_threshold: 0.9
+  generalization:
+    handler: EditGeneralizationEvaluator
+    args:
+      metric_name: generalization
+      use_rephrase: true
+  locality:
+    handler: EditLocalityEvaluator
+    args:
+      metric_name: locality
+      max_change_threshold: 0.1
+  portability:
+    handler: EditPortabilityEvaluator
+    args:
+      metric_name: portability
+      test_types:
+        - one_hop
+        - synonym
+        - inverse_relation

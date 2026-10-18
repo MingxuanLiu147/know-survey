@@ -1,0 +1,18 @@
+# @package _global_
+# Official AnyEdit MEMIT_ARE protocol on AKEW MQuAKE-CF.
+
+defaults:
+  - override /model: Qwen2.5-7B-Instruct
+  - override /trainer: edit/AnyEdit
+  - override /data: edit
+  - override /data/datasets@data.edit: AKEW_mquake_unstructured_edit
+  - override /eval: edit
+
+task_name: akew_mquake_memit_are
+
+trainer:
+  method_args:
+    strategy: memit_are
+    window_size: 50
+    overlap: 0
+

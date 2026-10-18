@@ -1,0 +1,4 @@
+interface:
+  display_name: "Run Unlearning"
+  short_description: "Preview and execute knowledge unlearning with retention checks."
+  default_prompt: "Use $run-unlearn to preview and run this knowledge unlearning plan."

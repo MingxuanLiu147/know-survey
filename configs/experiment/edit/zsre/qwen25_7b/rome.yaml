@@ -1,0 +1,42 @@
+# @package _global_
+# Qwen2.5-7B-Instruct + ROME, zsRE independent-100 benchmark.
+# Covariance whitening is disabled; provide model-specific statistics before enabling it.
+
+defaults:
+  - override /model: Qwen2.5-7B-Instruct
+  - override /trainer: edit/ROME
+  - override /data: edit
+  - override /data/datasets@data.edit: ZSRE_edit
+  - override /eval: edit_benchmark
+  - _self_
+
+task_name: qwen25_7b_zsre_rome_independent100
+edit_type: independent
+max_edits: 100
+save_edit_summary: true
+save_edited_model: false
+
+model:
+  model_args:
+    attn_implementation: eager
+
+trainer:
+  args:
+    output_dir: ${paths.output_dir}
+    do_eval: true
+    bf16: true
+    seed: 42
+  method_args:
+    layers: [5]
+    v_num_grad_steps: 25
+    v_weight_decay: 1.0e-3
+    v_loss_layer: 27
+    mom2_adjustment: false
+
+data:
+  edit:
+    ZSRE_edit:
+      handler: ZSREDataset
+      args:
+        split: test
+        max_length: 512

@@ -1,0 +1,47 @@
+# @package _global_
+# GPT-2 + real CounterFact one-record compact InstructEdit connectivity smoke.
+# This is a prototype smoke, not an official InstructEdit benchmark result.
+# Prerequisite:
+#   PYTHONPATH=src python scripts/train_mend_edit_network.py \
+#     --editor instructedit --task-type counterfact \
+#     --model openai-community/gpt2 \
+#     --data data/edit/counterfact/counterfact_train.json \
+#     --output saves/edit/instructedit/gpt2_counterfact_v3.pt \
+#     --layers 5 --rank 16 --max-edits 4 --epochs 1
+
+defaults:
+  - override /model: gpt2
+  - override /trainer: edit/InstructEdit
+  - override /data: edit
+  - override /data/datasets@data.edit: CounterFact_edit
+  - override /eval: edit
+
+task_name: gpt2_counterfact_compact_instructedit_smoke
+edit_type: independent
+max_edits: 1
+save_edit_summary: true
+save_edited_model: false
+
+trainer:
+  args:
+    do_eval: true
+    bf16: false
+  method_args:
+    layers: [5]
+    edit_lr: 1.0e-4
+    n_hidden: 32
+    rank: 16
+    edit_network_path: saves/edit/instructedit/gpt2_counterfact_v3.pt
+    require_pretrained: true
+    default_task_type: counterfact
+    instruction_index: 0
+
+data:
+  edit:
+    CounterFact_edit:
+      handler: CounterFactDataset
+      args:
+        # Held-out from the four-record counterfact_train.json used above.
+        split: test
+        max_length: 256
+        data_path: data/edit/counterfact/counterfact_test.json

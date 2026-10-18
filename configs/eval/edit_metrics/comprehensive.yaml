@@ -1,0 +1,14 @@
+# 知识编辑综合评估指标
+# 整合 reliability, generalization, locality, portability 四个指标
+
+comprehensive:
+  handler: EditComprehensiveEvaluator
+  args:
+    metric_name: comprehensive
+    # 各指标权重
+    reliability_weight: 0.25
+    generalization_weight: 0.25
+    locality_weight: 0.25
+    portability_weight: 0.25
+    # 是否使用概率评估（而非精确匹配）
+    use_probability: false

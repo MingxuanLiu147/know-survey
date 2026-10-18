@@ -1,0 +1,10 @@
+# VLKEB 多模态编辑数据集（含一跳 portability probes）
+
+VLKEB:
+  handler: MMEditVQADataset
+  args:
+    data_path: "data/edit/vlkeb/eval_edit_onehop.json"
+    image_dir: "data/edit/vlkeb/images"
+    rephrase_image_dir: "data/edit/vlkeb/images"
+    portability_hop: null
+    max_length: 512

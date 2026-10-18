@@ -1,0 +1,7 @@
+# LogicBench 训练集（Aug）
+
+LogicBench_train:
+  handler: AlpacaDataset
+  args:
+    data_path: ${paths.root_dir}/data/inject/logic/train/logicbench/train.json
+    max_length: 4096

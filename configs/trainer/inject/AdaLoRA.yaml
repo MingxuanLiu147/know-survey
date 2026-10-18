@@ -1,0 +1,41 @@
+# AdaLoRA 微调配置
+# Adaptive Low-Rank Adaptation
+# 自适应秩分配，根据重要性动态调整
+
+defaults:
+  - inject/base_inject@_here_
+  - _self_
+
+handler: AdaLoRATrainer
+
+method_args:
+  # AdaLoRA 核心参数
+  init_r: 12                # 初始秩（训练开始时）
+  target_r: 8               # 目标秩（训练结束时，通过剪枝达到）
+  lora_alpha: 32            # 缩放因子
+  lora_dropout: 0.05        # Dropout 比例
+  
+  # 目标模块
+  target_modules:
+    - q_proj
+    - v_proj
+    - k_proj
+    - o_proj
+  
+  # 秩调度参数
+  tinit: 0                  # 开始调整秩的训练步数
+  tfinal: 0                 # 停止调整秩的训练步数（0 表示训练结束）
+  deltaT: 1                 # 秩更新间隔
+  
+  # 重要性得分 EMA 系数
+  beta1: 0.85               # 奇异值的 EMA 系数
+  beta2: 0.85               # 敏感度的 EMA 系数
+  
+  # 正则化
+  orth_reg_weight: 0.5      # 正交正则化权重
+  
+  # Bias 设置
+  bias: none                # none | all | lora_only
+  
+  # 任务类型
+  task_type: CAUSAL_LM

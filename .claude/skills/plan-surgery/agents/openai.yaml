@@ -1,0 +1,4 @@
+interface:
+  display_name: "Plan Surgery"
+  short_description: "Turn a knowledge-update intent into a validated SurgeryPlan."
+  default_prompt: "Use $plan-surgery to convert my request into a validated Know-Surgery plan."

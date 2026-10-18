@@ -1,0 +1,34 @@
+# Knowledge Injection 基础配置
+# 所有微调方法的共享配置
+
+handler: InjectTrainer
+
+args:
+  output_dir: ${paths.output_dir}
+  do_train: true
+  # Training-time eval does not receive eval_data/benchmark_data and would
+  # silently write fake 0.0 summaries. Formal inject eval goes through src/eval.py.
+  do_eval: false
+  seed: 42
+  bf16: true
+  
+  # 训练参数
+  num_train_epochs: 3
+  per_device_train_batch_size: 4
+  per_device_eval_batch_size: 4
+  gradient_accumulation_steps: 4
+  
+  # 优化器参数
+  learning_rate: 2e-4
+  weight_decay: 0.01
+  warmup_ratio: 0.03
+  lr_scheduler_type: cosine
+  
+  # 日志和保存
+  logging_steps: 10
+  save_steps: 500
+  save_total_limit: 3
+  eval_strategy: 'no'
+  eval_steps: 500
+
+method_args: {}

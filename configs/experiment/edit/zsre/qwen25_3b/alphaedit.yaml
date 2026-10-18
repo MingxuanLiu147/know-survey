@@ -1,0 +1,15 @@
+# @package _global_
+# Qwen2.5-3B-Instruct full benchmark with model-specific AlphaEdit assets.
+
+defaults:
+  - /experiment/edit/zsre/qwen25_7b/alphaedit
+  - override /model: Qwen2.5-3B-Instruct
+  - _self_
+
+task_name: qwen25_3b_zsre_alphaedit_independent1301
+max_edits: 1301
+
+trainer:
+  method_args:
+    stats_dir: ${paths.root_dir}/data/stats/qwen25_3b/alphaedit_stats
+    projection_path: ${paths.root_dir}/data/stats/qwen25_3b/alphaedit_projection.pt

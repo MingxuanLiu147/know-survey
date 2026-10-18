@@ -1,0 +1,43 @@
+# @package _global_
+# Qwen2.5-7B-Instruct + MEMIT_ARE AnyEdit, zsRE independent-100 benchmark.
+
+defaults:
+  - override /model: Qwen2.5-7B-Instruct
+  - override /trainer: edit/AnyEdit
+  - override /data: edit
+  - override /data/datasets@data.edit: ZSRE_edit
+  - override /eval: edit_benchmark
+  - _self_
+
+task_name: qwen25_7b_zsre_anyedit_independent100
+edit_type: independent
+max_edits: 100
+save_edit_summary: true
+save_edited_model: false
+
+model:
+  model_args:
+    attn_implementation: eager
+
+trainer:
+  args:
+    output_dir: ${paths.output_dir}
+    do_eval: true
+    bf16: true
+    seed: 42
+  method_args:
+    strategy: memit_are
+    layers: [4, 5, 6, 7, 8]
+    window_size: 50
+    overlap: 0
+    v_num_grad_steps: 25
+    v_weight_decay: 1.0e-3
+    mom2_adjustment: false
+
+data:
+  edit:
+    ZSRE_edit:
+      handler: ZSREDataset
+      args:
+        split: test
+        max_length: 512

@@ -1,0 +1,7 @@
+# FOLIO 训练集
+
+FOLIO_train:
+  handler: AlpacaDataset
+  args:
+    data_path: ${paths.root_dir}/data/inject/logic/train/folio/train.json
+    max_length: 4096

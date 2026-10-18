@@ -1,0 +1,25 @@
+# @package _global_
+# One-record MANU smoke on the original MLLMU LLaVA architecture.
+defaults:
+  - override /model: LLaVA-1.5-7B
+  - override /data: mllmu
+  - override /trainer: MMMANU
+
+model:
+  lora:
+    enabled: false
+
+data:
+  forget_split_ratio: 5
+  batch_size: 1
+  ans_only: true
+  max_samples: 1
+  paired_modalities: true
+
+smoke_protocol:
+  model_role: benchmark-original-architecture-off-the-shelf-checkpoint
+  method: MMMANU
+  scope: one-forget-one-retain-paired-text-image-activation-statistic
+
+output_dir: saves/mm_unlearn/smoke_llava15_7b_mllmu_manu
+save_model: false
