@@ -1,7 +1,6 @@
 import {
   Activity,
   Blocks,
-  BrainCircuit,
   Languages,
   Menu,
   Moon,
@@ -63,7 +62,7 @@ export function Layout() {
     <>
       <div className="brand">
         <div className="brand-symbol" aria-hidden="true">
-          <BrainCircuit size={22} />
+          <img src="/know-surgery-mark.png" alt="" width={32} height={32} />
         </div>
         <div className="brand-copy">
           <strong>Know-Surgery</strong>
@@ -139,6 +138,9 @@ export function Layout() {
           aria-label={t("openNavigation")}
         >
           <Menu size={20} />
+          <span className="brand-symbol" aria-hidden="true">
+            <img src="/know-surgery-mark.png" alt="" width={24} height={24} />
+          </span>
           <strong>Know-Surgery</strong>
         </button>
         <div className="mobile-actions">

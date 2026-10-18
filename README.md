@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="webui/frontend/public/know-surgery-mark.png" alt="Know-Surgery alpaca mark" width="128" height="128" />
+
 # Know-Surgery
 
 **A workbench for knowledge unlearning, injection, and editing.**

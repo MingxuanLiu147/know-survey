@@ -239,8 +239,15 @@ code,
   place-items: center;
   border: 1px solid var(--teal-border);
   border-radius: var(--radius);
-  background: var(--teal-soft);
+  background: #fffdf5;
   color: var(--teal);
+}
+
+.brand-symbol img {
+  display: block;
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
 }
 
 .brand-copy {
@@ -2890,6 +2897,17 @@ textarea::placeholder {
     padding: 0 5px;
     border: 0;
     background: transparent;
+  }
+
+  .mobile-brand .brand-symbol {
+    width: 28px;
+    height: 28px;
+    flex-basis: 28px;
+  }
+
+  .mobile-brand .brand-symbol img {
+    width: 24px;
+    height: 24px;
   }
 
   .mobile-actions {

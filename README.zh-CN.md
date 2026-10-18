@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="webui/frontend/public/know-surgery-mark.png" alt="Know-Surgery 羊驼精修标志" width="128" height="128" />
+
 # Know-Surgery
 
 **统一的模型知识遗忘、注入与编辑工作台。**
