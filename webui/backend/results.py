@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +48,18 @@ METRICS: dict[str, dict[str, Any]] = {
         "label": {"en": "Knowledge retention", "zh": "知识保持"},
         "direction": "higher",
         "category": "side_effect",
+        "unit": "ratio",
+    },
+    "current_score": {
+        "label": {"en": "Current benchmark accuracy", "zh": "当前基准绝对准确率"},
+        "direction": "higher",
+        "category": "side_effect",
+        "unit": "ratio",
+    },
+    "original_score": {
+        "label": {"en": "Original benchmark accuracy", "zh": "原始基准绝对准确率"},
+        "direction": "context",
+        "category": "diagnostic",
         "unit": "ratio",
     },
     "forget_nll_change": {
@@ -179,9 +192,28 @@ def _candidate_dirs(root: Path) -> list[Path]:
         "*_SUMMARY.json",
         "unlearning_metrics.json",
         "target_nll.json",
+        "edit_results.json",
+        "independent_progress.json",
     )
     for pattern in patterns:
-        directories.update(path.parent for path in saves.rglob(pattern))
+        for path in saves.rglob(pattern):
+            directory = path.parent
+            checkpoint = directory.parent
+            if (
+                directory.name == "evals"
+                and checkpoint.name.startswith("checkpoint-")
+                and checkpoint.name.removeprefix("checkpoint-").isdigit()
+                and any(
+                    (checkpoint.parent / name).is_file()
+                    for name in (
+                        "trainer_state.json",
+                        "run_trace.json",
+                        "resolved_config.yaml",
+                    )
+                )
+            ):
+                directory = checkpoint.parent
+            directories.add(directory)
     return sorted(
         directories,
         key=lambda path: path.stat().st_mtime,
@@ -204,24 +236,269 @@ def _resolved_metadata(run_dir: Path) -> dict[str, Any]:
         or model.get("name")
         or config.get("model_name"),
         "trainer": trainer.get("_target_")
+        or trainer.get("handler")
         or trainer.get("method")
         or trainer.get("name"),
-        "dataset": sorted(data.keys()) if data else None,
+        "dataset": sorted(
+            f"{role}/{name}"
+            for role, datasets in data.items()
+            if isinstance(datasets, dict)
+            for name in datasets
+        )
+        or None,
         "task_name": config.get("task_name") or run_dir.name,
         "seed": (
             trainer.get("args", {}).get("seed")
             if isinstance(trainer.get("args"), dict)
             else None
         ),
+        "comparison": _comparison_metadata(run_dir, config),
     }
+
+
+def _fingerprint(value: Any) -> str | None:
+    if not value:
+        return None
+    encoded = json.dumps(value, sort_keys=True, ensure_ascii=False, default=str)
+    # An unresolved configuration cannot identify the inputs actually used.
+    if "${" in encoded or "???" in encoded:
+        return None
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _configured_files(value: Any) -> list[str]:
+    """Local data inputs explicitly named in a data or evaluator configuration."""
+    if isinstance(value, dict):
+        paths = []
+        for key, item in value.items():
+            if key in {
+                "data_path",
+                "edit_data_path",
+                "eval_data_path",
+                "benchmark_data_path",
+            }:
+                if isinstance(item, str) and item:
+                    paths.append(item)
+            elif key == "data_files":
+                entries = (
+                    item.values()
+                    if isinstance(item, dict)
+                    else item
+                    if isinstance(item, list)
+                    else [item]
+                )
+                paths.extend(
+                    entry for entry in entries if isinstance(entry, str) and entry
+                )
+            else:
+                paths.extend(_configured_files(item))
+        return paths
+    if isinstance(value, list):
+        return [path for item in value for path in _configured_files(item)]
+    return []
+
+
+def _data_identity(
+    manifest: dict[str, Any], data: dict[str, Any], evaluation: Any
+) -> dict[str, Any] | None:
+    """Use recorded input hashes, never the current contents of a mutable source."""
+    files: list[dict[str, Any]] = []
+    for group in ("data_files", "image_files", "evaluation_files"):
+        records = manifest.get(group, []) or []
+        if not isinstance(records, list):
+            return None
+        for item in records:
+            if not isinstance(item, dict):
+                return None
+            files.append(
+                {"role": group, "path": item.get("path"), "sha256": item.get("sha256")}
+            )
+    datasets = manifest.get("datasets", []) or []
+    if not isinstance(datasets, list):
+        return None
+    for dataset in datasets:
+        if not isinstance(dataset, dict):
+            return None
+        role = dataset.get("split") or dataset.get("handler") or dataset.get("dataset")
+        items = dataset.get("files")
+        if items is None:
+            items = [
+                {"path": dataset.get("data_path"), "sha256": dataset.get("sha256")}
+            ]
+        # A source with no recorded hash must not disappear from the check.
+        if not isinstance(items, list) or not items:
+            return None
+        for item in items:
+            if not isinstance(item, dict):
+                return None
+            files.append(
+                {"role": role, "path": item.get("path"), "sha256": item.get("sha256")}
+            )
+    if (
+        not files
+        or not (manifest.get("data_files") or manifest.get("datasets"))
+        or not _fingerprint(data)
+    ):
+        return None
+    for item in files:
+        digest = item["sha256"]
+        if (
+            not item["role"]
+            or not item["path"]
+            or not isinstance(digest, str)
+            or len(digest) != 64
+            or any(character not in "0123456789abcdefABCDEF" for character in digest)
+        ):
+            return None
+        item["sha256"] = digest.lower()
+    recorded_paths = {Path(item["path"]).as_posix() for item in files}
+    for raw in _configured_files(data) + _configured_files(evaluation):
+        path = Path(raw).as_posix()
+        if not any(
+            recorded == path
+            or (not Path(path).is_absolute() and recorded.endswith("/" + path))
+            for recorded in recorded_paths
+        ):
+            return None
+    identity = {
+        "configuration_sha256": _fingerprint(data),
+        "files": sorted(files, key=lambda item: json.dumps(item, sort_keys=True)),
+    }
+    if "request_preview_sha256" in manifest:
+        digest = manifest["request_preview_sha256"]
+        if (
+            not isinstance(digest, str)
+            or len(digest) != 64
+            or any(character not in "0123456789abcdefABCDEF" for character in digest)
+        ):
+            return None
+        identity["request_preview_sha256"] = digest.lower()
+    return identity
+
+
+def _evaluation_settings(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: _evaluation_settings(item)
+            for key, item in value.items()
+            if key not in {"output_dir", "overwrite"}
+        }
+    if isinstance(value, list):
+        return [_evaluation_settings(item) for item in value]
+    return value
+
+
+def _comparison_metadata(run_dir: Path, config: dict[str, Any]) -> dict[str, Any]:
+    """Align with Skill comparison fields, adding data-role, evaluator and budget checks.
+
+    These are checks of recorded conditions, not proof of method fidelity or of
+    benchmark validity. Older runs without these records remain exploratory.
+    """
+    trace = _read_json(run_dir / "run_trace.json")
+    manifest = _read_json(run_dir / "input_manifest.json")
+    environment = _read_json(run_dir / "environment.json")
+    model = config.get("model") if isinstance(config.get("model"), dict) else {}
+    model_args = (
+        model.get("model_args") if isinstance(model.get("model_args"), dict) else {}
+    )
+    trainer = config.get("trainer") if isinstance(config.get("trainer"), dict) else {}
+    args = trainer.get("args") if isinstance(trainer.get("args"), dict) else {}
+    method_args = (
+        trainer.get("method_args")
+        if isinstance(trainer.get("method_args"), dict)
+        else {}
+    )
+    data = config.get("data") or {}
+    budget = trace.get("budget")
+    if not isinstance(budget, dict) or not budget:
+        limits = {
+            key: args[key]
+            for key in ("max_steps", "num_train_epochs")
+            if type(args.get(key)) in (int, float) and args[key] > 0
+        }
+        if (
+            type(method_args.get("num_steps")) in (int, float)
+            and method_args["num_steps"] > 0
+        ):
+            limits["method_num_steps"] = method_args["num_steps"]
+        budget = (
+            {
+                **limits,
+                **{
+                    key: args[key]
+                    for key in (
+                        "per_device_train_batch_size",
+                        "gradient_accumulation_steps",
+                    )
+                    if key in args
+                },
+            }
+            if limits
+            else None
+        )
+    scope = trace.get("scope") or manifest.get("used_samples")
+    count = manifest.get("request_count")
+    if not scope and type(count) is int and count > 0:
+        scope = {"request_count": count}
+    gpu = environment.get("gpu_name") or environment.get("cuda_devices")
+    if not gpu and environment.get("cuda_available") is False:
+        gpu = "cpu"
+    return {
+        "model": trace.get("model_id")
+        or model_args.get("pretrained_model_name_or_path")
+        or model.get("model_path"),
+        "model_revision": trace.get("model_revision")
+        or environment.get("model_revision")
+        or model_args.get("revision"),
+        "dataset": _data_identity(manifest, data, config.get("eval"))
+        if isinstance(data, dict)
+        else None,
+        "scope": scope,
+        "request_count": count if type(count) is int and count > 0 else None,
+        "protocol": trace.get("protocol"),
+        "evaluation": _fingerprint(_evaluation_settings(config.get("eval"))),
+        "budget": budget,
+        "seed": args.get("seed"),
+        "environment": {
+            "device": gpu,
+            "torch": environment.get("torch"),
+            "transformers": environment.get("transformers"),
+        },
+        "complete_benchmark": manifest.get("complete_benchmark"),
+    }
+
+
+def _checkpoint_eval_dir(run_dir: Path) -> Path | None:
+    """Select only evaluations matching the saved final Trainer state.
+
+    Directory names or modification times alone cannot distinguish an interim
+    checkpoint from the model saved at the run root.
+    """
+    step = _read_json(run_dir / "trainer_state.json").get("global_step")
+    if type(step) is not int or step < 0:
+        return None
+    path = run_dir / f"checkpoint-{step}" / "evals"
+    return (
+        path
+        if path.is_dir() and path.resolve().is_relative_to(run_dir.resolve())
+        else None
+    )
+
+
+def _summary_paths(run_dir: Path) -> list[Path]:
+    paths = sorted(run_dir.glob("*_SUMMARY.json"))
+    checkpoint_eval = _checkpoint_eval_dir(run_dir)
+    if checkpoint_eval is not None:
+        paths.extend(sorted(checkpoint_eval.glob("*_SUMMARY.json")))
+    return paths
 
 
 def _scalar_metrics(run_dir: Path) -> list[dict[str, Any]]:
     values: dict[str, tuple[Any, str]] = {}
-    for path in sorted(run_dir.glob("*_SUMMARY.json")):
+    for path in _summary_paths(run_dir):
         for key, value in _read_json(path).items():
-            if isinstance(value, (int, float)) or value is None:
-                values[key] = (value, path.name)
+            if type(value) in (int, float) or value is None:
+                values[key] = (value, path.relative_to(run_dir).as_posix())
     unlearning = _read_json(run_dir / "unlearning_metrics.json")
     for key in (
         "forget_nll_change",
@@ -268,6 +545,8 @@ def _scalar_metrics(run_dir: Path) -> list[dict[str, Any]]:
             )
     rows = []
     for key, (value, source) in values.items():
+        if type(value) not in (int, float) or not math.isfinite(value):
+            value = None
         definition = METRICS.get(
             key,
             {
@@ -290,33 +569,104 @@ def _scalar_metrics(run_dir: Path) -> list[dict[str, Any]]:
     )
 
 
-def _evidence(run_dir: Path, metrics: list[dict[str, Any]]) -> str:
-    unlearning = _read_json(run_dir / "unlearning_metrics.json")
-    explicit = unlearning.get("status")
-    if explicit in {
-        "planned",
-        "configured",
-        "local_validation",
-        "verified_smoke",
-        "verified_result",
-    }:
-        return explicit
-    has_contract = all(
-        (run_dir / name).is_file()
-        for name in ("run_trace.json", "resolved_config.yaml", "input_manifest.json")
+def _has_evaluation(metrics: list[dict[str, Any]]) -> bool:
+    """Runtime, counters, unavailable values and pre-update diagnostics are not evaluation."""
+    counters = {
+        "count",
+        "skipped",
+        "protocol_version",
+        "num_samples",
+        "num_cases",
+        "request_count",
+        "requested_count",
+        "successful_cases",
+        "num_examples",
+        "runtime_seconds",
+        "peak_memory_gib",
+        "total",
+        "correct",
+        "current_total",
+        "current_correct",
+        "base_total",
+        "base_correct",
+        "total_tokens",
+        "target_tokens",
+        "prompt_tokens",
+        "input_tokens",
+        "output_tokens",
+    }
+    post_metrics = {
+        "post_target_nll",
+        "target_nll_delta",
+        "forget_nll_change",
+        "retain_nll_change",
+        "edited_forget_nll",
+        "edited_retain_nll",
+    }
+    return any(
+        type(metric.get("value")) in (int, float)
+        and math.isfinite(metric["value"])
+        and metric["category"] != "efficiency"
+        and metric["id"].rsplit(".", 1)[-1] not in counters
+        and not metric["id"]
+        .rsplit(".", 1)[-1]
+        .startswith(("num_", "base_", "baseline_", "before_", "pre_", "original_"))
+        and not metric["id"]
+        .rsplit(".", 1)[-1]
+        .endswith(("_count", "_tokens", "_total", "_correct"))
+        and (metric["source"].endswith("_SUMMARY.json") or metric["id"] in post_metrics)
+        for metric in metrics
     )
-    if metrics and has_contract and "smoke" in run_dir.name.lower():
-        return "verified_smoke"
-    if metrics and (run_dir / "run_trace.json").is_file():
-        return "local_validation"
-    if metrics:
-        return "local_validation"
-    return "configured"
+
+
+def _run_status(run_dir: Path) -> str:
+    """Explicit failure artifacts override a stale or contradictory success trace."""
+    trace = _read_json(run_dir / "run_trace.json")
+    for name in (
+        "edit_results.json",
+        "independent_results.json",
+        "independent_progress.json",
+        "run_manifest.json",
+    ):
+        artifact = _read_json(run_dir / name)
+        if (
+            artifact.get("success") is False
+            or artifact.get("edit_success") is False
+            or artifact.get("status") in {"failed", "error", "interrupted", "stopped"}
+        ):
+            return "failed"
+    return trace.get("status") or "configured"
+
+
+def run_evidence(run_dir: Path, metrics: list[dict[str, Any]] | None = None) -> str:
+    """Classify saved evidence consistently for job and result views."""
+    trace = _read_json(run_dir / "run_trace.json")
+    metrics = _scalar_metrics(run_dir) if metrics is None else metrics
+    if _run_status(run_dir) not in {"success", "completed"} or not _has_evaluation(
+        metrics
+    ):
+        return "configured"
+    unlearning = _read_json(run_dir / "unlearning_metrics.json")
+    explicit = trace.get("evidence_level") or unlearning.get("status")
+    if explicit in {"verified_smoke", "verified_result"}:
+        # Reuse the Skill runtime's nonempty artifacts, successful edit and
+        # positive sample-count checks. This import does not load models.
+        from scripts.skill_runtime import _has_smoke_evidence
+
+        if _has_smoke_evidence(run_dir):
+            if explicit == "verified_smoke":
+                return explicit
+            if (
+                _read_json(run_dir / "input_manifest.json").get("complete_benchmark")
+                is True
+            ):
+                return explicit
+    return "local_validation"
 
 
 def _timeline(run_dir: Path, metrics: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    trace = _read_json(run_dir / "run_trace.json")
-    execution_success = trace.get("status") == "success"
+    status = _run_status(run_dir)
+    execution_success = status in {"success", "completed"}
     return [
         {
             "id": "input",
@@ -339,13 +689,15 @@ def _timeline(run_dir: Path, metrics: list[dict[str, Any]]) -> list[dict[str, An
             "status": "completed"
             if execution_success
             else "failed"
-            if trace
+            if status in {"failed", "error", "interrupted", "stopped"}
             else "unknown",
         },
         {
             "id": "evaluate",
             "label": {"en": "Evaluation", "zh": "评估"},
-            "status": "completed" if metrics else "missing",
+            "status": "completed"
+            if execution_success and _has_evaluation(metrics)
+            else "missing",
         },
     ]
 
@@ -373,13 +725,20 @@ class ResultStore:
             for path in run_dir.iterdir()
             if path.is_file() and path.suffix in {".json", ".yaml", ".txt", ".log"}
         )
+        checkpoint_eval = _checkpoint_eval_dir(run_dir)
+        if checkpoint_eval is not None:
+            files.extend(
+                path.relative_to(run_dir).as_posix()
+                for path in sorted(checkpoint_eval.glob("*.json"))
+                if path.is_file()
+            )
         return {
             "id": _result_id(relative),
             "name": run_dir.name,
             "path": relative,
             "operation": _operation(relative),
-            "evidence_level": _evidence(run_dir, metrics),
-            "status": trace.get("status") or ("evaluated" if metrics else "configured"),
+            "evidence_level": run_evidence(run_dir, metrics),
+            "status": _run_status(run_dir),
             "updated_at": run_dir.stat().st_mtime,
             "metadata": {
                 **_resolved_metadata(run_dir),
@@ -451,32 +810,75 @@ class ResultStore:
 
     def compare(self, result_ids: list[str]) -> dict[str, Any]:
         results = [self.get(result_id) for result_id in result_ids]
-        fairness_fields = ("operation", "model", "dataset", "scope", "evidence_level")
+        fairness_fields = (
+            "operation",
+            "model",
+            "model_revision",
+            "dataset",
+            "scope",
+            "request_count",
+            "protocol",
+            "evaluation",
+            "budget",
+            "seed",
+            "environment",
+            "complete_benchmark",
+            "evidence_level",
+        )
         fairness = {}
         for field in fairness_fields:
             if field in {"operation", "evidence_level"}:
                 values = [result.get(field) for result in results]
             else:
-                values = [result["metadata"].get(field) for result in results]
+                values = [
+                    result["metadata"]["comparison"].get(field) for result in results
+                ]
             fairness[field] = {
                 "values": values,
-                "known": all(value not in (None, "", []) for value in values),
+                "known": all(_known(value) for value in values),
                 "equal": len({json.dumps(value, sort_keys=True) for value in values})
                 == 1,
             }
-        comparable = all(item["known"] and item["equal"] for item in fairness.values())
         metric_sets = [
             {metric["id"] for metric in result["metrics"]} for result in results
         ]
         common = sorted(set.intersection(*metric_sets)) if metric_sets else []
+        quality_sets = [
+            {metric["id"] for metric in result["metrics"] if _has_evaluation([metric])}
+            for result in results
+        ]
+        common_quality = set.intersection(*quality_sets) if quality_sets else set()
+        comparable = (
+            len(set(result_ids)) >= 2
+            and bool(common_quality)
+            and all(
+                result["status"] in {"success", "completed"}
+                and _has_evaluation(result["metrics"])
+                for result in results
+            )
+            and all(item["known"] and item["equal"] for item in fairness.values())
+        )
         return {
             "comparable": comparable,
             "fairness": fairness,
             "warnings": []
             if comparable
             else [
-                "Exploratory view only: one or more fairness fields are missing or differ."
+                "Exploratory view only: runs lack successful evaluation or shared quality metrics, or recorded comparison fields are missing or differ."
             ],
+            "comparison_basis": "Recorded inputs, model revision, scope, evaluator protocol, budget and environment. Matching metadata does not independently validate methods or benchmarks.",
             "metric_ids": common,
             "results": results,
         }
+
+
+def _known(value: Any) -> bool:
+    if value is None or value == "" or value == [] or value == {}:
+        return False
+    if isinstance(value, dict):
+        return all(_known(item) for item in value.values())
+    if isinstance(value, list):
+        return all(_known(item) for item in value)
+    if isinstance(value, str) and ("${" in value or "???" in value):
+        return False
+    return not isinstance(value, float) or math.isfinite(value)

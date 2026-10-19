@@ -12,6 +12,7 @@ from typing import Dict, Any
 import os
 import torch
 import logging
+from copy import deepcopy
 from model.probe import ProbedLlamaForCausalLM
 
 # 可选：Hugging Face 下载缓存目录。
@@ -69,6 +70,9 @@ def get_model(model_cfg: DictConfig):
     assert model_cfg is not None and model_cfg.model_args is not None, ValueError(
         "Model config not found or model_args absent in configs/model."
     )
+    # Loading must not erase checkpoint/dtype identity from the resolved run
+    # config: evaluation references and saved-state manifests reuse it.
+    model_cfg = deepcopy(model_cfg)
     model_args = model_cfg.model_args
     tokenizer_args = model_cfg.tokenizer_args
     torch_dtype = get_dtype(model_args)

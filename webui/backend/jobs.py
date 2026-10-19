@@ -12,7 +12,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from omegaconf import OmegaConf
+
 from .catalog import ROOT, display_command
+from .results import run_evidence
 
 
 FINAL_STATES = {"succeeded", "failed", "stopped", "interrupted"}
@@ -31,7 +34,7 @@ class JobManager:
     """Manage local surgery processes without exposing arbitrary shell access."""
 
     def __init__(self, root: Path = ROOT):
-        self.root = Path(root)
+        self.root = Path(root).resolve()
         self.state_root = self.root / "artifacts" / "webui" / "runs"
         self.state_root.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
@@ -113,6 +116,41 @@ class JobManager:
             for job in self._jobs.values()
         )
 
+    def _output_dir(
+        self, compose: dict[str, Any], *, operation: str, task_name: str
+    ) -> Path:
+        """Resolve the actual output target without changing the previewed command."""
+        try:
+            config = OmegaConf.create(compose["resolved_config"])
+            if config.get("task_name") != task_name:
+                raise ValueError("The composed task name differs from the request.")
+            if config.get("mode") != MODE_DIR[operation]:
+                raise ValueError("The composed operation differs from the request.")
+            paths = [
+                OmegaConf.select(config, key)
+                for key in ("trainer.args.output_dir", "paths.output_dir")
+            ]
+            paths = [value for value in paths if value is not None]
+            if not paths or any(
+                not isinstance(value, str) or not value for value in paths
+            ):
+                raise ValueError("The composed output directory is missing.")
+            targets = {
+                (self.root / Path(value).expanduser()).resolve() for value in paths
+            }
+            if len(targets) != 1:
+                raise ValueError("Trainer and result output directories differ.")
+            output = targets.pop()
+            if output == self.root / "saves" or not output.is_relative_to(
+                self.root / "saves"
+            ):
+                raise ValueError(
+                    "WebUI outputs must be inside the repository saves directory."
+                )
+            return output
+        except Exception as exc:
+            raise JobError(f"Cannot bind the composed output directory: {exc}") from exc
+
     def start(
         self,
         *,
@@ -126,8 +164,28 @@ class JobManager:
         with self._lock:
             if self._gpu_busy(gpu):
                 raise JobError(f"GPU {gpu} already has an active WebUI job.")
+            output_dir = self._output_dir(
+                compose, operation=operation, task_name=task_name
+            )
+            occupied = any(
+                (self.root / job["output_dir"]).resolve() == output_dir
+                for job in self._jobs.values()
+            )
+            if occupied or output_dir.exists():
+                raise JobError(
+                    "This output directory is already used by an existing run. "
+                    "Choose a new task name and preview again; existing outputs were preserved."
+                )
+            try:
+                # Atomic reservation also prevents two backend instances from
+                # accepting the same output before a child creates its files.
+                output_dir.mkdir(parents=True, exist_ok=False)
+            except FileExistsError as exc:
+                raise JobError(
+                    "This output directory is already in use. "
+                    "Choose a new task name and preview again."
+                ) from exc
             run_id = uuid.uuid4().hex[:16]
-            output_dir = self.root / "saves" / MODE_DIR[operation] / task_name
             record = {
                 "id": run_id,
                 "status": "queued",
@@ -194,12 +252,13 @@ class JobManager:
             with self._lock:
                 self._processes[run_id] = process
             assert process.stdout is not None
-            for line in process.stdout:
-                self._emit(
-                    run_id,
-                    "log",
-                    {"stream": "combined", "message": line.rstrip("\n")},
-                )
+            with process.stdout:
+                for line in process.stdout:
+                    self._emit(
+                        run_id,
+                        "log",
+                        {"stream": "combined", "message": line.rstrip("\n")},
+                    )
             exit_code = process.wait()
             with self._lock:
                 record = self._jobs[run_id]
@@ -240,22 +299,7 @@ class JobManager:
         output = self.root / record["output_dir"]
         if record.get("status") != "succeeded" or not output.is_dir():
             return "configured"
-        required = (
-            output / "command.txt",
-            output / "resolved_config.yaml",
-            output / "input_manifest.json",
-            output / "run_trace.json",
-        )
-        has_metrics = (
-            bool(list(output.glob("*_SUMMARY.json")))
-            or (output / "unlearning_metrics.json").is_file()
-        )
-        if all(path.is_file() for path in required):
-            if record.get("request", {}).get("smoke", True):
-                return "verified_smoke"
-            if has_metrics:
-                return "local_validation"
-        return "local_validation"
+        return run_evidence(output)
 
     def stop(self, run_id: str) -> dict[str, Any]:
         with self._lock:

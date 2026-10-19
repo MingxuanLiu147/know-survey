@@ -101,7 +101,13 @@ def get_datasets(dataset_cfgs: Union[Dict, DictConfig], **kwargs):
     return dataset
 
 
-def get_data(data_cfg: DictConfig, mode="train", **kwargs):
+def get_data(
+    data_cfg: DictConfig,
+    mode="train",
+    max_train_samples=None,
+    max_eval_samples=None,
+    **kwargs,
+):
     """高层数据加载入口。
 
     根据 Hydra 的 data 配置构造完整的数据集字典，支持：
@@ -125,7 +131,11 @@ def get_data(data_cfg: DictConfig, mode="train", **kwargs):
         ):
             dataset_cfgs = dataset_cfgs[split]
         # 对每个 split（forget/retain/eval/...）调用 get_datasets
-        data[split] = get_datasets(dataset_cfgs, **kwargs)
+        split_kwargs = dict(kwargs)
+        limit = max_eval_samples if split in ("eval", "test") else max_train_samples
+        if limit is not None:
+            split_kwargs["max_samples"] = limit
+        data[split] = get_datasets(dataset_cfgs, **split_kwargs)
     if mode in ("train", "finetune", "inject", "edit"):
         # 普通训练类场景：直接按 split 返回
         return data

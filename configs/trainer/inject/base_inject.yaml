@@ -6,8 +6,8 @@ handler: InjectTrainer
 args:
   output_dir: ${paths.output_dir}
   do_train: true
-  # Training-time eval does not receive eval_data/benchmark_data and would
-  # silently write fake 0.0 summaries. Formal inject eval goes through src/eval.py.
+  # Enable only after setting explicit held-out eval_data_path and
+  # benchmark_data_path (plus original_model_path for retention ratios).
   do_eval: false
   seed: 42
   bf16: true

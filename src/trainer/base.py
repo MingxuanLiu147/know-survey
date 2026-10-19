@@ -4,6 +4,7 @@ from typing import Dict, List, Optional, Union
 
 import os
 import logging
+import math
 from transformers import Trainer
 from torch.utils.data import Dataset
 from transformers.trainer_utils import PREFIX_CHECKPOINT_DIR
@@ -21,7 +22,14 @@ class FinetuneTrainer(Trainer):
     2. 结果保存：将自定义评估的结果自动保存到对应的 Checkpoint 目录下。
     """
 
-    def __init__(self, evaluators=None, template_args=None, *args, **kwargs):
+    def __init__(
+        self,
+        evaluators=None,
+        template_args=None,
+        evaluation_runtime=None,
+        *args,
+        **kwargs,
+    ):
         """
         初始化 FinetuneTrainer。
 
@@ -32,6 +40,7 @@ class FinetuneTrainer(Trainer):
         """
         self.evaluators = evaluators
         self.template_args = template_args
+        self.evaluation_runtime = evaluation_runtime
         super().__init__(*args, **kwargs)
 
     def evaluate(
@@ -73,14 +82,35 @@ class FinetuneTrainer(Trainer):
                             "model": self.model,
                             "tokenizer": self.tokenizer,
                         }
-                        eval_metrics.update(evaluator.evaluate(**eval_args))
+                        runtime = getattr(self, "evaluation_runtime", None)
+                        if runtime is not None:
+                            eval_args.update(runtime.resolve(evaluator.eval_cfg))
+                        was_training = self.model.training
+                        try:
+                            result = evaluator.evaluate(**eval_args)
+                        finally:
+                            self.model.train(was_training)
+                        # Detailed predictions and nulls stay in evaluator files.
+                        # Trainer callbacks/loggers consume scalar metrics only.
+                        for key, value in result.items():
+                            if (
+                                isinstance(value, (int, float))
+                                and not isinstance(value, bool)
+                                and math.isfinite(value)
+                            ):
+                                eval_metrics[f"{metric_key_prefix}_{key}"] = value
                     self.log(eval_metrics)
                 else:
                     logger.warning(
                         "Custom evaluator can be run with this Trainer only when a single accelerator process is running."
                     )
                 return eval_metrics
+            # A custom evaluator is not distributed. Other ranks must not
+            # fall through to HF evaluation and enter unmatched collectives.
+            return {}
 
+        if eval_dataset is None:
+            eval_dataset = self.eval_dataset
         if eval_dataset is None:
             return {}
         # Run the default HF Trainer evaluate method when eval dataset is provided

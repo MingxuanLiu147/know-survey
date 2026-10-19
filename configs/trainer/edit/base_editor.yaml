@@ -5,7 +5,7 @@ handler: EditTrainer
 
 # 训练参数（编辑方法通常不需要完整训练循环）
 args:
-  output_dir: saves/${mode}/${task_name}
+  output_dir: ${paths.output_dir}
   do_train: false
   do_eval: true
   seed: 42

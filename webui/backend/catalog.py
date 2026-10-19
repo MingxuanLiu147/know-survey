@@ -21,7 +21,7 @@ DATASET_ROLES = {
     "inject": ("train",),
     "edit": ("edit",),
 }
-OVERRIDE_KEY = re.compile(r"^\+{0,2}[A-Za-z0-9_][A-Za-z0-9_./@+-]*$")
+OVERRIDE_KEY = re.compile(r"^\+{0,2}[A-Za-z0-9_][A-Za-z0-9_.-]*$")
 
 
 class CatalogError(ValueError):
@@ -297,17 +297,61 @@ class RepositoryCatalog:
                 )
             for value in request.datasets.values():
                 self._require(value, datasets, "dataset")
-        self._validate_overrides(request.overrides)
+        self._validate_overrides(request.overrides, smoke=request.smoke)
 
     @staticmethod
-    def _validate_overrides(overrides: dict[str, Any]) -> None:
+    def _validate_overrides(overrides: dict[str, Any], *, smoke: bool = False) -> None:
         if len(overrides) > 64:
             raise CatalogError("Too many Hydra overrides.")
         forbidden = ("hydra.", "+hydra.", "++hydra.")
         interpolation = "$" + "{"
+        owned_fields = {
+            "operation",
+            "modality",
+            "mode",
+            "entrypoint",
+            "defaults",
+            "hydra",
+            "task_name",
+            "model",
+            "model.model_handler",
+            "trainer",
+            "trainer.handler",
+            "trainer._target_",
+            "experiment",
+            "eval",
+            "data",
+            "trainer.args.seed",
+            "paths",
+            "paths.root_dir",
+            "paths.output_dir",
+            "output_dir",
+            "trainer.args.output_dir",
+        }
         for key, value in overrides.items():
             if not OVERRIDE_KEY.fullmatch(key) or key.startswith(forbidden):
                 raise CatalogError(f"Unsafe override key: {key!r}")
+            normalized = key.lstrip("+")
+            if normalized in owned_fields or normalized.endswith(".output_dir"):
+                raise CatalogError(
+                    f"Override {key!r} conflicts with a WebUI task field. "
+                    "Use the corresponding form field; output paths follow task_name."
+                )
+            parts = normalized.split(".")
+            if (
+                normalized == "trainer.args"
+                or (parts[0] == "data" and (len(parts) <= 3 or parts[-1] == "handler"))
+                or (parts[0] == "eval" and len(parts) == 2)
+            ):
+                raise CatalogError(
+                    f"Override {key!r} replaces a typed configuration group. "
+                    "Use individual method parameters or the dataset selection fields."
+                )
+            if smoke and normalized in {"max_edits", "trainer.args.max_steps"}:
+                raise CatalogError(
+                    f"Override {key!r} conflicts with the smoke budget. "
+                    "Disable smoke explicitly to configure a larger run."
+                )
             rendered = (
                 json.dumps(value, ensure_ascii=False)
                 if isinstance(value, (dict, list))

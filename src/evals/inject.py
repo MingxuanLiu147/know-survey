@@ -165,6 +165,9 @@ class InjectEvaluator(Evaluator):
             item.get("scoring") or self.eval_cfg.get("args", {}).get("scoring", "")
         ).lower()
 
+        if scoring == "exact_match":
+            return expected.strip().casefold() == generated.strip().casefold()
+
         if source == "ruletaker":
             labels = re.findall(r"\b(?:not entailment|entailment)\b", generated.lower())
             return bool(labels) and labels[-1] == expected.lower()
@@ -200,7 +203,7 @@ class InjectEvaluator(Evaluator):
             return None
         logs_file = self.get_logs_file_path(target_output_dir)
         cached = self.load_logs_from_file(logs_file)
-        if cached:
+        if cached and cached.get("protocol_version") == "inject-v2":
             logger.info(
                 "Skipping `%s`, loaded cached result from %s", self.name, logs_file
             )
@@ -208,21 +211,42 @@ class InjectEvaluator(Evaluator):
         return None
 
     def _summary_from_result(self, result: Dict[str, Any]) -> Dict[str, Any]:
-        if "task_accuracy" in result:
-            return {"task_accuracy": float(result["task_accuracy"])}
-        if "knowledge_retention" in result:
-            value = result["knowledge_retention"]
-            summary = {"knowledge_retention": None if value is None else float(value)}
-            if "retention_available" in result:
-                summary["retention_available"] = bool(result["retention_available"])
-            if result.get("unavailable_reason") is not None:
-                summary["unavailable_reason"] = str(result["unavailable_reason"])
-            return summary
-        if "perplexity" in result:
-            return {"perplexity": float(result["perplexity"])}
+        for metric in ("task_accuracy", "knowledge_retention", "perplexity"):
+            if metric in result:
+                value = result[metric]
+                summary = {metric: None if value is None else float(value)}
+                if "retention_available" in result:
+                    summary["retention_available"] = bool(result["retention_available"])
+                if result.get("unavailable_reason") is not None:
+                    summary["unavailable_reason"] = str(result["unavailable_reason"])
+                for key in (
+                    "current_score",
+                    "original_score",
+                    "correct",
+                    "total",
+                    "current_correct",
+                    "current_total",
+                    "original_correct",
+                    "original_total",
+                    "total_tokens",
+                    "skipped",
+                    "protocol_version",
+                    "scoring",
+                ):
+                    if key in result:
+                        summary[key] = result[key]
+                return summary
         return {k: float(v) for k, v in result.items() if isinstance(v, (int, float))}
 
     def _persist_result(self, result: Dict[str, Any], output_dir=None):
+        result["protocol_version"] = "inject-v2"
+        if "perplexity" in result:
+            result["scoring"] = "causal-token-nll-v1"
+        else:
+            result["scoring"] = str(
+                self.eval_cfg.get("args", {}).get("scoring")
+                or "dataset-aware-substring-v1"
+            )
         target_output_dir = (
             output_dir if output_dir else self.eval_cfg.get("output_dir")
         )
@@ -268,7 +292,21 @@ class InjectAccuracyEvaluator(InjectEvaluator):
                     + ", ".join(missing)
                     + ". Refusing to write a fake 0.0 summary (strict=true)."
                 )
-            result = {"task_accuracy": 0.0, "correct": 0, "total": 0}
+            reason = "missing_tokenizer" if tokenizer is None else "missing_eval_data"
+            if eval_method == "perplexity":
+                result = {
+                    "perplexity": None,
+                    "avg_loss": None,
+                    "total_tokens": 0,
+                    "unavailable_reason": reason,
+                }
+            else:
+                result = {
+                    "task_accuracy": None,
+                    "correct": 0,
+                    "total": 0,
+                    "unavailable_reason": reason,
+                }
             self._persist_result(result, output_dir=output_dir)
             return result
 
@@ -350,15 +388,23 @@ class InjectAccuracyEvaluator(InjectEvaluator):
             )
             total += 1
 
-        accuracy = correct / total if total > 0 else 0.0
-        logger.info("Inject Task Accuracy: %.4f (%d/%d)", accuracy, correct, total)
-        return {
+        accuracy = correct / total if total > 0 else None
+        if accuracy is None and self._is_strict():
+            raise ValueError(
+                "InjectAccuracyEvaluator found no valid evaluation samples."
+            )
+        logger.info("Inject Task Accuracy: %s (%d/%d)", accuracy, correct, total)
+        result = {
             "task_accuracy": accuracy,
             "correct": correct,
             "total": total,
             "eval_method": "generation",
             "examples": examples,
+            "skipped": len(eval_data) - total,
         }
+        if accuracy is None:
+            result["unavailable_reason"] = "no_valid_eval_samples"
+        return result
 
     def _eval_perplexity(
         self,
@@ -406,7 +452,9 @@ class InjectAccuracyEvaluator(InjectEvaluator):
             if "attention_mask" in inputs:
                 labels = labels.masked_fill(inputs["attention_mask"] == 0, -100)
 
-            num_tokens = int((labels != -100).sum().item())
+            # Causal LM loss predicts token t from t-1; the first label is
+            # never scored, including for text-only evaluation records.
+            num_tokens = int((labels[:, 1:] != -100).sum().item())
             if num_tokens <= 0:
                 continue
 
@@ -416,17 +464,24 @@ class InjectAccuracyEvaluator(InjectEvaluator):
             total_loss += loss.item() * num_tokens
             total_tokens += num_tokens
 
-        avg_loss = total_loss / total_tokens if total_tokens > 0 else 0.0
+        if total_tokens == 0 and self._is_strict():
+            raise ValueError(
+                "InjectAccuracyEvaluator found no evaluable response tokens."
+            )
+        avg_loss = total_loss / total_tokens if total_tokens > 0 else None
         perplexity = (
-            torch.exp(torch.tensor(avg_loss)).item() if total_tokens > 0 else 0.0
+            torch.exp(torch.tensor(avg_loss)).item() if total_tokens > 0 else None
         )
-        logger.info("Inject Perplexity: %.4f", perplexity)
-        return {
+        logger.info("Inject Perplexity: %s", perplexity)
+        result = {
             "perplexity": perplexity,
             "avg_loss": avg_loss,
             "total_tokens": total_tokens,
             "eval_method": "perplexity",
         }
+        if perplexity is None:
+            result["unavailable_reason"] = "no_evaluable_response_tokens"
+        return result
 
 
 class InjectRetentionEvaluator(InjectEvaluator):
@@ -459,10 +514,16 @@ class InjectRetentionEvaluator(InjectEvaluator):
                     + ". Refusing to write a fake 0.0 summary (strict=true)."
                 )
             result = {
-                "knowledge_retention": 0.0,
-                "current_score": 0.0,
+                "knowledge_retention": None,
+                "current_score": None,
                 "current_correct": 0,
                 "current_total": 0,
+                "retention_available": False,
+                "unavailable_reason": (
+                    "missing_tokenizer"
+                    if tokenizer is None
+                    else "missing_benchmark_data"
+                ),
             }
             self._persist_result(result, output_dir=output_dir)
             return result
@@ -479,7 +540,21 @@ class InjectRetentionEvaluator(InjectEvaluator):
             "current_correct": current_correct,
             "current_total": current_total,
             "current_examples": current_examples,
+            "skipped": len(benchmark_data) - current_total,
         }
+
+        if current_total == 0:
+            if self._is_strict():
+                raise ValueError(
+                    "InjectRetentionEvaluator found no valid benchmark samples."
+                )
+            result.update(
+                knowledge_retention=None,
+                retention_available=False,
+                unavailable_reason="no_valid_benchmark_samples",
+            )
+            self._persist_result(result, output_dir=output_dir)
+            return result
 
         if original_model is not None:
             original_model = self.prepare_model(original_model)
@@ -494,14 +569,18 @@ class InjectRetentionEvaluator(InjectEvaluator):
                 benchmark_data,
                 template_args=template_args,
             )
-            if original_score > 0:
+            if original_score is not None and original_score > 0:
                 retention = current_score / original_score
                 retention_available = True
                 unavailable_reason = None
             else:
                 retention = None
                 retention_available = False
-                unavailable_reason = "original_score_non_positive"
+                unavailable_reason = (
+                    "no_valid_reference_samples"
+                    if original_total == 0
+                    else "original_score_non_positive"
+                )
             result.update(
                 {
                     "knowledge_retention": retention,
@@ -514,7 +593,11 @@ class InjectRetentionEvaluator(InjectEvaluator):
                 }
             )
         else:
-            result["knowledge_retention"] = current_score
+            result.update(
+                knowledge_retention=None,
+                retention_available=False,
+                unavailable_reason="missing_original_model",
+            )
 
         if result.get("retention_available", True):
             logger.info("Knowledge Retention: %.4f", result["knowledge_retention"])
@@ -528,7 +611,7 @@ class InjectRetentionEvaluator(InjectEvaluator):
 
     def _compute_scores(
         self, model, tokenizer, data: List[Dict[str, Any]], template_args=None
-    ) -> Tuple[float, int, int, List[Dict[str, Any]]]:
+    ) -> Tuple[Optional[float], int, int, List[Dict[str, Any]]]:
         correct = 0
         total = 0
         examples = []
@@ -583,5 +666,5 @@ class InjectRetentionEvaluator(InjectEvaluator):
             )
             total += 1
 
-        score = correct / total if total > 0 else 0.0
+        score = correct / total if total > 0 else None
         return score, correct, total, examples

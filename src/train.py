@@ -48,6 +48,8 @@ from trainer.edit.pipeline import (
 )
 from trainer.edit.artifacts import save_edit_artifacts as save_edit_runtime_artifacts
 from evals import get_evaluators
+from evals.runtime import EvaluationRuntime
+from model.checkpoint import write_training_artifact
 from trainer.utils import seed_everything
 
 logger = logging.getLogger(__name__)
@@ -145,6 +147,9 @@ def _record_training_scope(output_dir: Path, data) -> None:
         return len(value)
 
     used_samples = {"train": sample_count(dataset)}
+    for split in ("eval", "test"):
+        if data.get(split) is not None:
+            used_samples[split] = sample_count(data[split])
     for split in ("forget", "retain"):
         scoped = getattr(dataset, split, None)
         if scoped is not None:
@@ -387,6 +392,60 @@ def _finish_edit_run_trace(
     trace_name = "run_trace.json" if rank == 0 else f"run_trace.rank{rank}.json"
     (output_dir / trace_name).write_text(
         json.dumps(trace, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+def _record_evaluation_inputs(output_dir: Path, eval_cfgs) -> None:
+    """Record explicit local evaluation files beside the training input hashes."""
+    if int(os.environ.get("RANK", "0")) != 0 or not eval_cfgs:
+        return
+    config = OmegaConf.to_container(eval_cfgs, resolve=True)
+    paths = set()
+
+    def collect(value):
+        if isinstance(value, Mapping):
+            for key, item in value.items():
+                if key in {
+                    "edit_data_path",
+                    "eval_data_path",
+                    "benchmark_data_path",
+                    "data_path",
+                    "data_files",
+                }:
+                    collect_paths(item)
+                else:
+                    collect(item)
+        elif isinstance(value, list):
+            for item in value:
+                collect(item)
+
+    def collect_paths(value):
+        if isinstance(value, str) and value:
+            paths.add(value)
+        elif isinstance(value, Mapping):
+            for item in value.values():
+                collect_paths(item)
+        elif isinstance(value, list):
+            for item in value:
+                collect_paths(item)
+
+    collect(config)
+    manifest_path = output_dir / "input_manifest.json"
+    manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
+    records = []
+    for raw in sorted(paths):
+        path = Path(raw).expanduser().resolve()
+        records.append(
+            {
+                "path": str(path),
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest()
+                if path.is_file()
+                else None,
+            }
+        )
+    manifest["evaluation_files"] = records
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
 
@@ -996,7 +1055,9 @@ def main(cfg: DictConfig):
     #     其中 ForgetRetainDataset 每次返回 {"forget": sample, "retain": sample}
     data_args = {"tokenizer": tokenizer, "template_args": template_args}
     if cfg.get("max_train_samples") is not None:
-        data_args["max_samples"] = cfg.max_train_samples
+        data_args["max_train_samples"] = cfg.max_train_samples
+    if cfg.get("max_eval_samples") is not None:
+        data_args["max_eval_samples"] = cfg.max_eval_samples
     data = get_data(data_cfg, mode=mode, **data_args)
     if mode == "edit":
         method_args = OmegaConf.to_container(
@@ -1012,6 +1073,8 @@ def main(cfg: DictConfig):
     elif mode == "inject" and int(os.environ.get("RANK", "0")) == 0:
         _write_injection_input_manifest(_edit_output_dir(cfg), cfg)
     _record_training_scope(_edit_output_dir(cfg), data)
+    if cfg.trainer.args.get("do_eval", False):
+        _record_evaluation_inputs(_edit_output_dir(cfg), cfg.get("eval"))
 
     # ==================== 步骤4: 加载数据整理器 (Collator) ====================
     # Collator 负责将多个样本整理成一个 batch
@@ -1054,6 +1117,8 @@ def main(cfg: DictConfig):
         template_args=template_args,
     )
     _record_model_placement(_edit_output_dir(cfg), trainer.model)
+    if mode != "edit":
+        trainer.evaluation_runtime = EvaluationRuntime(model_cfg)
 
     if mode == "edit":
         edit_requests = build_edit_requests(
@@ -1174,6 +1239,19 @@ def main(cfg: DictConfig):
         return
 
     # ==================== 步骤8: 执行训练 ====================
+    try:
+        _run_training_and_evaluation(trainer, trainer_args, cfg)
+    except Exception:
+        _finish_edit_run_trace(_edit_output_dir(cfg), run_started_at, status="failed")
+        raise
+    finally:
+        trainer.evaluation_runtime.close()
+
+    _finish_edit_run_trace(_edit_output_dir(cfg), run_started_at, status="success")
+
+
+def _run_training_and_evaluation(trainer, trainer_args, cfg):
+    """Run a training route and save a reloadable inference checkpoint."""
     if trainer_args.do_train:
         # 开始训练循环
         # 训练过程中会：
@@ -1183,19 +1261,20 @@ def main(cfg: DictConfig):
         #   4. 定期评估和保存模型
         trainer.train()
 
-        # 保存训练状态（optimizer、scheduler、随机数生成器状态等）
+        # Save Trainer's progress metadata. Optimizer/scheduler recovery
+        # additionally requires a full Trainer checkpoint.
         trainer.save_state()
 
         # 保存最终模型权重
         trainer.save_model(trainer_args.output_dir)
+        if trainer.is_world_process_zero():
+            write_training_artifact(trainer_args.output_dir, cfg)
 
     # ==================== 步骤9: 执行评估 ====================
     if trainer_args.do_eval:
         # 在评估集上评估模型性能
         # 返回评估指标（如 loss、ROUGE、准确率等）
         trainer.evaluate(metric_key_prefix="eval")
-
-    _finish_edit_run_trace(_edit_output_dir(cfg), run_started_at, status="success")
 
 
 if __name__ == "__main__":

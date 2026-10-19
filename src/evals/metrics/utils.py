@@ -95,7 +95,9 @@ def evaluate_probability(model, batch):
     batch = {k: v.to(model.device) for k, v in batch.items()}
     with torch.no_grad():
         output = model(**batch)
-    logits = output.logits
+    # Trainer/Accelerate may already promote logits to fp32; standalone model
+    # loading does not. Use the same reduction precision in both entrypoints.
+    logits = output.logits.float()
     labels = batch["labels"]
     shifted_labels = labels[..., 1:].contiguous()
     logits = logits[..., :-1, :].contiguous()

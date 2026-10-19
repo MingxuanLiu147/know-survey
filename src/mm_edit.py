@@ -252,7 +252,9 @@ def _save_standard_trace_files(output_path: Path, manifest: Mapping[str, Any]) -
     evaluator_cfg = resolved.get("eval", {}) if isinstance(resolved, Mapping) else {}
     trainer_cfg = resolved.get("trainer", {}) if isinstance(resolved, Mapping) else {}
     evidence_level = (
-        "verified_result"
+        "configured"
+        if edit_count == 0
+        else "verified_result"
         if complete_benchmark
         else "verified_smoke"
         if edit_count <= 2
@@ -721,6 +723,7 @@ def _save_run_manifest(
     cfg: DictConfig,
     device: str,
     output_dir: str,
+    edit_requests,
     edit_summary: Mapping[str, Any],
     eval_results: Mapping[str, Any],
     elapsed_seconds: float,
@@ -728,6 +731,8 @@ def _save_run_manifest(
     """Save the resolved command, environment, timing, and GPU footprint."""
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
+    # Input identity is required even when the optional edit summary is disabled.
+    _write_json_atomic(output_path / "edit_requests_preview.json", edit_requests)
     resolved_config = OmegaConf.to_container(cfg, resolve=True)
     (output_path / "resolved_config.yaml").write_text(
         OmegaConf.to_yaml(cfg, resolve=True), encoding="utf-8"
@@ -798,10 +803,11 @@ def main(cfg: DictConfig):
     if hasattr(trainer, "init_mm"):
         trainer.init_mm(processor)
 
-    edit_requests = build_edit_requests(
-        data.get("edit", None), max_edits=cfg.get("max_edits", None)
-    )
     edit_type = str(cfg.get("edit_type", "single")).lower()
+    max_edits = cfg.get("max_edits", None)
+    if edit_type == "single" and (max_edits is None or max_edits > 1):
+        max_edits = 1
+    edit_requests = build_edit_requests(data.get("edit", None), max_edits=max_edits)
 
     if edit_type == "independent":
         if not trainer_args.do_eval or not cfg.get("eval", None):
@@ -852,18 +858,22 @@ def main(cfg: DictConfig):
             cfg=cfg,
             device=device,
             output_dir=trainer_args.output_dir,
+            edit_requests=edit_requests,
             edit_summary=edit_summary,
             eval_results=_manifest_eval_results(edit_summary["aggregate"]),
             elapsed_seconds=time.perf_counter() - started_at,
         )
         return
 
+    # The single-edit executor applies only the first request. Use that same
+    # scope for probes, persisted previews, and reported target metrics.
+    executed_requests = edit_requests[:1] if edit_type == "single" else edit_requests
     locality_baseline = None
     if trainer_args.do_eval and cfg.get("eval", None):
         locality_baseline = MMEditLocalityEvaluator({}).capture_baseline(
             model=model,
             processor=processor,
-            edit_data=_runtime_edit_data(edit_requests),
+            edit_data=_runtime_edit_data(executed_requests),
         )
         logger.info(
             "Cached %d pre-edit locality predictions.",
@@ -873,20 +883,20 @@ def main(cfg: DictConfig):
     try:
         edit_summary = execute_edit_requests(
             trainer=trainer,
-            requests=edit_requests,
+            requests=executed_requests,
             edit_type=edit_type,
         )
     except Exception as exc:
         save_edit_artifacts(
             trainer_args.output_dir,
-            edit_requests,
+            executed_requests,
             {"success": False, "error": f"{type(exc).__name__}: {exc}"},
         )
         raise
 
     edit_succeeded = bool(edit_summary["success"])
     if cfg.get("save_edit_summary", True) or not edit_succeeded:
-        save_edit_artifacts(trainer_args.output_dir, edit_requests, edit_summary)
+        save_edit_artifacts(trainer_args.output_dir, executed_requests, edit_summary)
 
     if not edit_succeeded:
         raise RuntimeError(
@@ -895,6 +905,8 @@ def main(cfg: DictConfig):
 
     if cfg.get("save_edited_model", True):
         trainer.save_model(trainer_args.output_dir)
+        if callable(getattr(processor, "save_pretrained", None)):
+            processor.save_pretrained(trainer_args.output_dir)
 
     eval_results = {}
     if trainer_args.do_eval:
@@ -902,7 +914,7 @@ def main(cfg: DictConfig):
             eval_cfgs=cfg.get("eval", None),
             model=model,
             processor=processor,
-            edit_requests=edit_requests,
+            edit_requests=executed_requests,
             output_dir=trainer_args.output_dir,
             locality_baseline=locality_baseline,
         )
@@ -911,6 +923,7 @@ def main(cfg: DictConfig):
         cfg=cfg,
         device=device,
         output_dir=trainer_args.output_dir,
+        edit_requests=executed_requests,
         edit_summary=edit_summary,
         eval_results=eval_results,
         elapsed_seconds=time.perf_counter() - started_at,
