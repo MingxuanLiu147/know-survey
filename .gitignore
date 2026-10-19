@@ -151,6 +151,7 @@ celerybeat.pid
 .env.*
 !.env.example
 .venv
+.venv-release-check/
 env/
 venv/
 ENV/
@@ -196,3 +197,5 @@ node_modules/
 test-results/
 playwright-report/
 *.tsbuildinfo
+/webui/frontend/vite.config.js
+/webui/frontend/vite.config.d.ts

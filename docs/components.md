@@ -126,4 +126,4 @@ Structured metadata, sources, timestamps, conditions, steps and probes are retai
 
 A new editing method implements `EditTrainer.edit(requests)` and declares its model mapping, supported modes, required assets and state saving behavior. Keep request conversion in dataset adapters so different methods can use the same input.
 
-Register curated model/data/method pairings in `configs/extensions/recipes.yaml` for discovery by the UI and Agent. The WebUI extension wizard exports configuration/scaffold bundles for review; it does not install uploaded executable code. Multimodal models also require a processor, valid images and method-specific token handling, so a text YAML alone is insufficient.
+Register curated model/data/method pairings in `configs/extensions/recipes.yaml` for discovery by the UI and Agent. Prepare extension manifests and files using the interfaces above, then validate them with `scripts/validate_extension.py`; the workbench does not install uploaded executable code. Multimodal models also require a processor, valid images and method-specific token handling, so a text YAML alone is insufficient.

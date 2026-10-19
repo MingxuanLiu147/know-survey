@@ -1,5 +1,5 @@
 include README.md README.zh-CN.md LICENSE THIRD_PARTY_NOTICES.md
-include requirements.txt requirements-know.lock Makefile Dockerfile .dockerignore
+include requirements.txt requirements-know.in requirements-know.lock Makefile Dockerfile .dockerignore
 recursive-include LICENSES *.txt
 recursive-include assets *.png *.svg
 recursive-include configs *.yaml
@@ -12,7 +12,8 @@ include webui/frontend/package.json webui/frontend/package-lock.json
 include webui/frontend/tsconfig*.json webui/frontend/vite.config.ts webui/frontend/index.html
 recursive-include webui/frontend/src *.ts *.tsx *.js *.css *.json *.svg *.png
 recursive-include webui/frontend/public *.svg *.png
-include webui/frontend/README.md
+recursive-include webui/frontend/public/fonts/inter *.woff2 *.txt *.md
+include webui/README.md
 include scripts/skill_runtime.py
 include scripts/evaluate_unlearning_local.py
 include scripts/train_serac.py
@@ -27,6 +28,9 @@ prune webui/frontend/test-results
 prune webui/frontend/playwright-report
 prune webui/backend/data
 prune tests
+prune validation
+prune .github
+exclude AGENTS.md
 prune artifacts
 prune saves
 prune data

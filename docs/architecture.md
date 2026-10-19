@@ -65,7 +65,7 @@ Weight editors change model parameters. IKE and SERAC additionally use runtime m
 
 ## WebUI and Agent
 
-The FastAPI backend launches the same commands available to CLI users and exposes logs and results. The React interface collects inputs and displays those commands. `webui/app.py` provides a Gradio alternative.
+The FastAPI backend launches the same commands available to CLI users and exposes logs and results. The React interface collects inputs and displays those commands.
 
 The built-in Agent chooses from typed tools and uses their actual responses to decide the next step. External Codex/Claude Code agents can invoke shared Skills. Both use the same model/data/method configurations; neither supplies a separate algorithm backend.
 

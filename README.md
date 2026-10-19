@@ -99,7 +99,7 @@ cd ../..
 python -m webui.backend.app --host 127.0.0.1 --port 17860
 ```
 
-Open [localhost:17860](http://127.0.0.1:17860). Select a recipe or describe a goal, preview inputs and the equivalent command, then run and inspect results. The interface supports English and Chinese. The Gradio alternative is `python webui/app.py`. See the [WebUI guide](webui/README.md).
+Open [localhost:17860](http://127.0.0.1:17860). Select a recipe or describe a goal, preview inputs and the equivalent command, then run and inspect results. The interface supports English and Chinese. See the [WebUI guide](webui/README.md).
 
 ## Agent
 
@@ -118,7 +118,7 @@ Set `DEEPSEEK_API_KEY` or `OPENAI_API_KEY` on the server. Preview is the default
 ```text
 src/           CLI, models, datasets, trainers, evaluation and Agent runtime
 configs/       Model, data, method, evaluation and experiment YAML
-webui/         FastAPI + React workbench and Gradio entrypoint
+webui/         FastAPI + React workbench
 .claude/skills/ Shared Agent workflows
 scripts/       Data preparation, auxiliary training and result helpers
 demos/         Small input and usage examples

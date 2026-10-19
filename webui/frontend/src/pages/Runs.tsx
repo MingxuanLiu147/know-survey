@@ -5,7 +5,7 @@ import {
   RefreshCw,
   TerminalSquare
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { MetricsView, ProcessTimeline } from "../components/MetricsView";
@@ -32,16 +32,18 @@ export function Runs() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [filter, setFilter] = useState("all");
+  const requestedRun = useRef(searchParams.get("selected"));
+  requestedRun.current = searchParams.get("selected");
 
   const loadRuns = async () => {
     try {
       const runPayload = await api.runs();
       setRuns(runPayload.runs);
-      const requested = searchParams.get("selected");
+      const requested = requestedRun.current;
       setSelected(
         (current) =>
           runPayload.runs.find((item) => item.id === requested) ||
-          current ||
+          runPayload.runs.find((item) => item.id === current?.id) ||
           runPayload.runs[0] ||
           null
       );
@@ -69,7 +71,10 @@ export function Runs() {
 
   useEffect(() => {
     load();
-    const timer = window.setInterval(() => void loadRuns(), 5000);
+    const timer = window.setInterval(() => {
+      void loadRuns();
+      void loadResults();
+    }, 5000);
     return () => window.clearInterval(timer);
   }, []);
 
@@ -87,10 +92,19 @@ export function Runs() {
       setDetail(null);
       return;
     }
+    let cancelled = false;
+    setDetail(null);
     void api
       .result(summary.id)
-      .then(setDetail)
-      .catch(() => setDetail(null));
+      .then((value) => {
+        if (!cancelled) setDetail(value);
+      })
+      .catch(() => {
+        if (!cancelled) setDetail(null);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [selected?.id, selected?.status, results]);
 
   const visibleRuns = useMemo(

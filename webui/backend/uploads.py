@@ -11,7 +11,7 @@ from typing import Any
 
 import yaml
 
-from webui.utils.extensions import (
+from .data_import import (
     ExtensionInputError,
     canonicalize_records,
     default_field_mapping,

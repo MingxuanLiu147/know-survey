@@ -530,7 +530,6 @@ def cmd_environment(args: argparse.Namespace) -> int:
         "accelerate",
         "hydra",
         "peft",
-        "gradio",
         "fastapi",
     ):
         try:

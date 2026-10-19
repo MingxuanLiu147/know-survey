@@ -99,7 +99,7 @@ cd ../..
 python -m webui.backend.app --host 127.0.0.1 --port 17860
 ```
 
-打开 [localhost:17860](http://127.0.0.1:17860)，选择配置或描述目标，预览输入与等价命令，然后执行并查看结果。界面支持中英切换。Gradio 入口为 `python webui/app.py`。详见 [WebUI 使用说明](webui/README.md)。
+打开 [localhost:17860](http://127.0.0.1:17860)，选择配置或描述目标，预览输入与等价命令，然后执行并查看结果。界面支持中英切换。详见 [WebUI 使用说明](webui/README.md)。
 
 ## Agent
 
@@ -118,7 +118,7 @@ know-surgery agent --root . --provider deepseek \
 ```text
 src/           CLI、模型、数据集、训练器、评估与 Agent
 configs/       模型、数据、方法、评估与实验 YAML
-webui/         FastAPI + React 工作台与 Gradio 入口
+webui/         FastAPI + React 工作台
 .claude/skills/ 共享 Agent 工作流
 scripts/       数据准备、辅助网络训练与结果处理
 demos/         小型输入和用法示例

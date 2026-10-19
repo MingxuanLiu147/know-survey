@@ -26,3 +26,7 @@ supplies no benchmark data or additional dataset rights.
 
 Datasets, base model weights and auxiliary checkpoints have their own licenses
 and are separate inputs; this source package does not redistribute them.
+
+The WebUI bundles Inter font files (weights 400, 500 and 600) under the
+[SIL Open Font License 1.1](webui/frontend/public/fonts/inter/Inter-LICENSE.txt).
+The font copyright and source information accompany those files.

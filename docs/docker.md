@@ -38,7 +38,6 @@ The [dependency lock](../requirements-know.lock) fixes these main library versio
 | DeepSpeed / bitsandbytes | 0.15.4 / 0.44.1 |
 | sentence-transformers / lm-eval | 5.6.0 / 0.4.8 |
 | FastAPI / Uvicorn | 0.139.0 / 0.51.0 |
-| Gradio | 6.17.3 |
 
 The CUDA toolkit in the base image and the CUDA runtime bundled with PyTorch
 are separate components; check `torch.version.cuda` in the built image when

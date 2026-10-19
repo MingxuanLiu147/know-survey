@@ -4,7 +4,6 @@
 !.dockerignore
 !README.md
 !README.zh-CN.md
-!AGENTS.md
 !assets/
 !assets/**
 !LICENSE

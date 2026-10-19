@@ -1,7 +1,7 @@
 # WebUI
 
-The main interface uses FastAPI and React. The Gradio client remains available
-for compatibility; both use the same surgery commands and configurations.
+The workbench uses FastAPI and React, with the same surgery commands and
+configurations as the CLI and Agent.
 
 ## Start the workbench
 
@@ -22,7 +22,7 @@ Open http://127.0.0.1:17860. Use the language button to switch English/Chinese.
    proposed model, dataset and method. Compose the configuration before running.
 2. **Runs**: inspect logs, stop a running job and open its outputs.
 3. **Compare**: select completed runs and inspect target effects and side effects.
-4. **Extensions**: browse Skills and create model, dataset or algorithm scaffolds.
+4. **Extensions**: browse registered models, datasets, methods and Skills.
 
 The Agent workflow supports deterministic planning and optional OpenAI/DeepSeek
 providers. Configure credentials on the server as described in
@@ -41,7 +41,7 @@ Configuration import/export preserves registry IDs across languages. Copied
 commands can be run from the repository root. Missing results remain empty
 until a real run produces them.
 
-The extension wizard exports a ZIP scaffold for manual review and installation:
+To validate a separately prepared extension bundle before manual installation:
 
 ```bash
 python scripts/validate_extension.py path/to/extension.zip
@@ -51,19 +51,8 @@ python scripts/validate_extension.py --installed my-extension
 An optional `--smoke` checks a configured model workflow and may load weights.
 See [components](../docs/components.md) for installation and interfaces.
 
-## Gradio client
-
-```bash
-python webui/app.py --host 127.0.0.1 --port 7861
-```
-
-Select an operation and recipe, review the equivalent command, then execute and
-inspect outputs. Evaluation uses `src/eval.py`; the three surgery operations
-remain `unlearning`, `inject` and `edit`.
-
 ## Source layout
 
 - `backend/`: API, task persistence, uploads and result access.
 - `frontend/`: React interface.
-- `app.py` and `components/`: Gradio client.
-- `utils/`: shared configuration, execution and extension helpers.
+- `backend/data_import.py`: bounded upload parsing and operation-aware normalization.

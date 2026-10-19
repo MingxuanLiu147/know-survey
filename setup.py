@@ -58,7 +58,7 @@ lm_eval_extra = ["lm-eval==0.4.8"]
 optional_groups = {
     "gpu": {"bitsandbytes", "deepspeed"},
     "reft": {"pyreft"},
-    "webui": {"gradio", "fastapi", "uvicorn", "python-multipart"},
+    "webui": {"fastapi", "uvicorn", "python-multipart"},
 }
 
 

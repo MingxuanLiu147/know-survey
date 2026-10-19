@@ -167,6 +167,7 @@ export function Workbench() {
   >([]);
   const [demos, setDemos] = useState<Demo[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [error, setError] = useState("");
   const [operation, setOperation] = useState<Operation>(initialOperation);
   const [intent, setIntent] = useState(
@@ -187,8 +188,10 @@ export function Workbench() {
   const [seed, setSeed] = useState(42);
   const [smoke, setSmoke] = useState(true);
   const [gpu, setGpu] = useState<number | null>(null);
-  const [composeResult, setComposeResult] =
-    useState<ComposeResult | null>(null);
+  const [composeSnapshot, setComposeSnapshot] = useState<{
+    key: string;
+    result: ComposeResult;
+  } | null>(null);
   const [composing, setComposing] = useState(false);
   const [running, setRunning] = useState(false);
   const [currentRun, setCurrentRun] = useState<RunRecord | null>(null);
@@ -198,9 +201,12 @@ export function Workbench() {
   );
   const [showSkills, setShowSkills] = useState(true);
   const uploadSectionRef = useRef<HTMLElement>(null);
+  const plannedOperation = useRef<Operation | null>(null);
 
   useEffect(() => {
     let cancelled = false;
+    setLoading(true);
+    setError("");
     const load = async () => {
       try {
         const [
@@ -237,7 +243,7 @@ export function Workbench() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [loadAttempt]);
 
   useEffect(() => {
     const requestedOperation = parseOperation(searchParams.get("operation"));
@@ -264,6 +270,11 @@ export function Workbench() {
 
   useEffect(() => {
     if (!catalog) return;
+    // An explicit plan already supplied the recipe for this operation change.
+    if (plannedOperation.current === operation) {
+      plannedOperation.current = null;
+      return;
+    }
     const firstRecipe = defaultRecipe(catalog, operation);
     setRecipeId(firstRecipe?.id || "");
     setExperiment("");
@@ -303,7 +314,7 @@ export function Workbench() {
       });
     }
     setTaskName(defaultTaskName(operation));
-    setComposeResult(null);
+    setComposeSnapshot(null);
     setCurrentRun(null);
   }, [operation, catalog]);
 
@@ -376,16 +387,28 @@ export function Workbench() {
     evaluation
   ]);
 
+  const payloadKey = JSON.stringify(payload);
+  const composeResult =
+    composeSnapshot?.key === payloadKey ? composeSnapshot.result : null;
+
+  useEffect(() => {
+    setComposeSnapshot(null);
+    setCurrentRun(null);
+  }, [payloadKey]);
+
   const generatePlan = async () => {
     setPlanning(true);
     setError("");
     try {
       const value = await api.plan({ intent, provider, language });
       setPlan(value);
-      setOperation(value.operation);
       const exactExperiment = Object.values(value.experiments).find(
         (item): item is string => Boolean(item)
       );
+      if (exactExperiment && value.operation !== operation) {
+        plannedOperation.current = value.operation;
+      }
+      setOperation(value.operation);
       if (exactExperiment) {
         setRecipeId("");
         setExperiment(exactExperiment);
@@ -397,7 +420,7 @@ export function Workbench() {
           value.methods.join("_").toLowerCase() +
           "_quick_run"
       );
-      setComposeResult(null);
+      setComposeSnapshot(null);
     } catch (caught) {
       setError(uiErrorMessage(caught, language));
     } finally {
@@ -407,9 +430,11 @@ export function Workbench() {
 
   const compose = async () => {
     setComposing(true);
+    setComposeSnapshot(null);
     setError("");
     try {
-      setComposeResult(await api.compose(payload));
+      const result = await api.compose(payload);
+      setComposeSnapshot({ key: payloadKey, result });
       setCodeTab("command");
     } catch (caught) {
       setError(uiErrorMessage(caught, language));
@@ -419,6 +444,7 @@ export function Workbench() {
   };
 
   const run = async () => {
+    if (!composeResult?.valid || composing || planning) return;
     setRunning(true);
     setError("");
     try {
@@ -431,8 +457,20 @@ export function Workbench() {
     }
   };
 
-  if (loading || !catalog) {
-    return <LoadingBlock label={t("loading")} />;
+  if (loading) return <LoadingBlock label={t("loading")} />;
+  if (!catalog) {
+    return (
+      <div className="page workbench-page">
+        {error ? <InlineError message={error} /> : null}
+        <Button
+          variant="secondary"
+          icon={RefreshCw}
+          onClick={() => setLoadAttempt((attempt) => attempt + 1)}
+        >
+          {t("refresh")}
+        </Button>
+      </div>
+    );
   }
 
   const providerLabels: Record<string, string> = {
@@ -592,7 +630,7 @@ export function Workbench() {
                   setOperation("inject");
                   setIntent(longTextIntents[language].inject);
                   setPlan(null);
-                  setComposeResult(null);
+                  setComposeSnapshot(null);
                 }}
               >
                 <Syringe size={14} />
@@ -604,7 +642,7 @@ export function Workbench() {
                   setOperation("edit");
                   setIntent(longTextIntents[language].edit);
                   setPlan(null);
-                  setComposeResult(null);
+                  setComposeSnapshot(null);
                 }}
               >
                 <PencilLine size={14} />
@@ -717,12 +755,16 @@ export function Workbench() {
                           }
                           key={method}
                           onClick={() => {
+                            if (plan.operation !== operation) {
+                              plannedOperation.current = plan.operation;
+                              setOperation(plan.operation);
+                            }
                             setRecipeId("");
                             setExperiment(experimentId);
                             setTaskName(
                               `agent_${plan.operation}_${method.toLowerCase()}_quick_run`
                             );
-                            setComposeResult(null);
+                            setComposeSnapshot(null);
                           }}
                         >
                           <strong>{method}</strong>
@@ -778,7 +820,7 @@ export function Workbench() {
                 <Button
                   variant="ghost"
                   icon={RefreshCw}
-                  onClick={() => setComposeResult(null)}
+                  onClick={() => setComposeSnapshot(null)}
                 >
                   {t("refresh")}
                 </Button>
@@ -797,7 +839,7 @@ export function Workbench() {
                         ? ""
                         : value
                     );
-                    setComposeResult(null);
+                    setComposeSnapshot(null);
                   }}
                 >
                   {experiment ? (
@@ -931,7 +973,7 @@ export function Workbench() {
                   <option value="">{t("auto")}</option>
                   {health?.gpus.map((item) => (
                     <option key={item.index} value={item.index}>
-                      GPU {item.index} · {(item.memory_free_mib / 1024).toFixed(1)} GiB {t(item.available ? "free" : "busy")}
+                      GPU {item.index} · {(item.memory_free_mib / 1024).toFixed(1)} GiB {t("free")}
                     </option>
                   ))}
                 </select>
@@ -948,7 +990,7 @@ export function Workbench() {
                 <Button
                   icon={Play}
                   loading={running}
-                  disabled={!composeResult?.valid}
+                  disabled={!composeResult?.valid || composing || planning}
                   onClick={run}
                 >
                   {t("runNow")}
@@ -1075,7 +1117,7 @@ export function Workbench() {
                     setTaskName(value.task_name);
                     setSeed(value.seed);
                     setSmoke(value.smoke);
-                    setComposeResult(null);
+                    setComposeSnapshot(null);
                   }}
                 />
               ) : (
@@ -1121,7 +1163,7 @@ export function Workbench() {
                       <span style={{ width: used + "%" }} />
                     </div>
                     <small>
-                      {(item.memory_free_mib / 1024).toFixed(1)} GiB {t(item.available ? "free" : "busy")}
+                      {(item.memory_free_mib / 1024).toFixed(1)} GiB {t("free")}
                     </small>
                   </button>
                 );

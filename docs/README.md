@@ -7,6 +7,7 @@ Start with installation in the README, then choose the guide for your task. / �
 | Guide / 文档 | Purpose / 用途 |
 |---|---|
 | [Architecture / 系统架构](architecture.md) | Entrypoints, directories and execution flow / 入口、目录与执行流程 |
+| [Repository tour / 仓库导读](repository-tour.zh-CN.md) | Detailed Chinese guide to modules and one experiment / 按职责理解各模块和一次实验 |
 | [Experiment configuration / 实验配置](experiments.md) | Choose an operation, combine YAML and override parameters / 选择操作、组合配置与覆盖参数 |
 | [Models and data / 模型与数据接入](components.md) | Use local models, custom datasets and new handlers / 本地模型、自定义数据与新组件 |
 | [Editing methods / 编辑方法](editing.md) | ROME, MEMIT, AlphaEdit, AnyEdit, IKE, WISE and auxiliary training / 编辑配置、前置资源与辅助训练 |

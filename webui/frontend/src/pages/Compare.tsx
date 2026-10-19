@@ -310,7 +310,7 @@ export function Compare() {
                           interval={0}
                           tick={{
                             fill: "var(--text-muted)",
-                            fontSize: 10
+                            fontSize: 11
                           }}
                           axisLine={false}
                           tickLine={false}
