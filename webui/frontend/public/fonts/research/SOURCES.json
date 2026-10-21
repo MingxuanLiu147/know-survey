@@ -1,0 +1,85 @@
+{
+  "license": "SIL Open Font License 1.1",
+  "distribution": "Google Fonts official fonts.gstatic.com",
+  "assets": [
+    {
+      "file": "IBMPlexSans-Variable-Latin.woff2",
+      "source_url": "https://fonts.gstatic.com/s/ibmplexsans/v23/zYXzKVElMYYaJe8bpLHnCwDKr932-G7dytD-Dmu1syxeKYY.woff2",
+      "source_sha256": "e2291e842cf5af167122a22881a740c7f2dda7716f1e8cd76680264f4a859470",
+      "modifications": [],
+      "sha256": "e2291e842cf5af167122a22881a740c7f2dda7716f1e8cd76680264f4a859470"
+    },
+    {
+      "file": "IBMPlexMono-400.woff2",
+      "source_url": "https://fonts.gstatic.com/s/ibmplexmono/v20/-F63fjptAgt5VM-kVkqdyU8n1i8q1w.woff2",
+      "source_sha256": "08949f728dc52d528e69b1667d15c89a5686a4ee9a296ff90983985f99c380f7",
+      "modifications": [],
+      "sha256": "08949f728dc52d528e69b1667d15c89a5686a4ee9a296ff90983985f99c380f7"
+    },
+    {
+      "file": "IBMPlexMono-500.woff2",
+      "source_url": "https://fonts.gstatic.com/s/ibmplexmono/v20/-F6qfjptAgt5VM-kVkqdyU8n3twJwlBFgg.woff2",
+      "source_sha256": "01d285447409c8a588692162439a038b8cbd7871309ee20267b0d2d91c6e8e22",
+      "modifications": [],
+      "sha256": "01d285447409c8a588692162439a038b8cbd7871309ee20267b0d2d91c6e8e22"
+    },
+    {
+      "file": "KnowSurgerySC-400.woff2",
+      "source_url": "https://fonts.gstatic.com/s/notosanssc/v41/k3kCo84MPvpLmixcA63oeAL7Iqp5IZJF9bmaG9_FnYw.ttf",
+      "source_sha256": "450625c8d46ab3df97b7904ded955ec2746d17ec76740cb1e91d1ba63a0f89af",
+      "sha256": "1efd014ea064fa0d9e5f387c0f6c162e85b6dfbac35a3f25a2767db72051723e",
+      "modifications": [
+        "Unicode subset: GB2312, current UI CJK, available punctuation, arrows and math",
+        "Family renamed to identify the derivative",
+        "WOFF2 compression; original glyph outlines and weight retained"
+      ],
+      "codepoints": 7799
+    },
+    {
+      "file": "KnowSurgerySC-500.woff2",
+      "source_url": "https://fonts.gstatic.com/s/notosanssc/v41/k3kCo84MPvpLmixcA63oeAL7Iqp5IZJF9bmaG-3FnYw.ttf",
+      "source_sha256": "09f17deea660cdd9cc2ba1e8b90adad18eabeca73b62b3c5f76b7ec3b61b33e0",
+      "sha256": "40ab8e8195cf107c6741b55c67ea8a87a442c041da6f35455603af960f3728cd",
+      "modifications": [
+        "Unicode subset: GB2312, current UI CJK, available punctuation, arrows and math",
+        "Family renamed to identify the derivative",
+        "WOFF2 compression; original glyph outlines and weight retained"
+      ],
+      "codepoints": 7799
+    },
+    {
+      "file": "KnowSurgerySC-600.woff2",
+      "source_url": "https://fonts.gstatic.com/s/notosanssc/v41/k3kCo84MPvpLmixcA63oeAL7Iqp5IZJF9bmaGwHCnYw.ttf",
+      "source_sha256": "7c941d13e1f99a7c78fc89ef734b9322404804573a936085f7a910b47b8bb984",
+      "sha256": "c90d8b378b0590ea9fb2e5d6fb9adb04db47d07718e041d68f1bc1229fdaa784",
+      "modifications": [
+        "Unicode subset: GB2312, current UI CJK, available punctuation, arrows and math",
+        "Family renamed to identify the derivative",
+        "WOFF2 compression; original glyph outlines and weight retained"
+      ],
+      "codepoints": 7799
+    }
+  ],
+  "licenses": [
+    {
+      "family": "IBM Plex",
+      "file": "IBM-Plex-OFL.txt",
+      "source": "https://api.github.com/repos/IBM/plex/git/blobs/c35c4c618fab33da8695177b3a6cefe0810b7b28",
+      "sha256": "d741e57d5f865e294df801f96b7b5161a88b211df65887e4358d271c9fc5fb4f",
+      "source_sha256": "7e6b2818edbd8f6a01ae80641cc8f16a51080d08fb4e532be3a0b6f74adb07da",
+      "modifications": [
+        "Normalized line endings and trailing whitespace; license text unchanged."
+      ]
+    },
+    {
+      "family": "Noto Sans SC",
+      "file": "Noto-Sans-SC-OFL.txt",
+      "source": "https://api.github.com/repos/google/fonts/git/blobs/1c9f43281b8f216c5461fe9ac729afbade7724e4",
+      "sha256": "babcfe66c8a098b2fa279bc724a3a342f8124f77ce18941fbcc1bbb39823cded",
+      "source_sha256": "1c05c68c34f9708415aada51f17e1b0092d2cea709bf4a94cd38114f9e73d7d9",
+      "modifications": [
+        "Normalized line endings and trailing whitespace; license text unchanged."
+      ]
+    }
+  ]
+}

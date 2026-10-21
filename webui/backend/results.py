@@ -864,9 +864,9 @@ class ResultStore:
             "warnings": []
             if comparable
             else [
-                "Exploratory view only: runs lack successful evaluation or shared quality metrics, or recorded comparison fields are missing or differ."
+                "Check that both runs have completed evaluation, share quality metrics, and use matching comparison settings."
             ],
-            "comparison_basis": "Recorded inputs, model revision, scope, evaluator protocol, budget and environment. Matching metadata does not independently validate methods or benchmarks.",
+            "comparison_basis": "Compares recorded inputs, model revision, record counts, evaluation settings, run limits and environment.",
             "metric_ids": common,
             "results": results,
         }

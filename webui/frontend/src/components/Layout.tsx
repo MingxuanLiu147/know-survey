@@ -62,11 +62,10 @@ export function Layout() {
     <>
       <div className="brand">
         <div className="brand-symbol" aria-hidden="true">
-          <img src="/know-surgery-mark.png" alt="" width={32} height={32} />
+          <img src="/know-surgery-workbench.png" alt="" width={64} height={64} />
         </div>
         <div className="brand-copy">
           <strong>Know-Surgery</strong>
-          <span>EMNLP 2026 Demo</span>
         </div>
       </div>
       <nav className="primary-nav" aria-label={t("primaryNavigation")}>
@@ -187,7 +186,6 @@ export function Layout() {
             <span>{t("agentFirst")}</span>
           </div>
           <div className="top-context-actions">
-            <span className="context-evidence">{t("evidenceAware")}</span>
             <button
               className="language-toggle"
               aria-label={t("switchLanguage")}

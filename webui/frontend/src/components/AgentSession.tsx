@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { displayTechnicalText } from "../i18n";
 
 type Trace = {
   session_id: string;
@@ -54,7 +55,7 @@ export function AgentSession({ intent, provider, language }: {
       "The model chooses each next Skill from actual observations. Preview by default; at most 12 calls, 2 cases and 10 minutes."}</p>
     <label><input type="checkbox" checked={execute} disabled={active}
       onChange={event => setExecute(event.target.checked)} />
-      {zh ? "允许执行 GPU smoke 与小样本任务" : "Allow GPU smoke and bounded execution"}</label>
+      {zh ? "允许执行 GPU 任务" : "Allow GPU execution"}</label>
     {execute && <label>{zh ? "GPU 编号" : "GPU indices"}
       <input value={cuda} disabled={active} onChange={event => setCuda(event.target.value)}
         pattern="[0-9]+(,[0-9]+)*" aria-label={zh ? "GPU 编号" : "GPU indices"} /></label>}
@@ -71,7 +72,7 @@ export function AgentSession({ intent, provider, language }: {
     {trace && <div aria-live="polite">
       <p>{trace.status}</p>
       <ol>{trace.calls.map((item, index) => <li key={index}>
-        <strong>{item.skill}</strong> · {item.status}
+        <strong>{displayTechnicalText(item.skill)}</strong> · {item.status}
         {item.command && <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{item.command}</pre>}
         {item.error && <p>{item.error}</p>}
         {item.output && <code>{item.output}</code>}

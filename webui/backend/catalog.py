@@ -349,8 +349,8 @@ class RepositoryCatalog:
                 )
             if smoke and normalized in {"max_edits", "trainer.args.max_steps"}:
                 raise CatalogError(
-                    f"Override {key!r} conflicts with the smoke budget. "
-                    "Disable smoke explicitly to configure a larger run."
+                    f"Override {key!r} conflicts with the selected run limits. "
+                    "Change the run limits before setting a larger value."
                 )
             rendered = (
                 json.dumps(value, ensure_ascii=False)

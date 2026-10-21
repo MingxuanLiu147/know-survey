@@ -27,6 +27,9 @@ supplies no benchmark data or additional dataset rights.
 Datasets, base model weights and auxiliary checkpoints have their own licenses
 and are separate inputs; this source package does not redistribute them.
 
-The WebUI bundles Inter font files (weights 400, 500 and 600) under the
-[SIL Open Font License 1.1](webui/frontend/public/fonts/inter/Inter-LICENSE.txt).
-The font copyright and source information accompany those files.
+The WebUI bundles IBM Plex Sans and IBM Plex Mono under the
+[SIL Open Font License 1.1](webui/frontend/public/fonts/research/IBM-Plex-OFL.txt),
+and a Noto Sans SC subset, renamed Know Surgery SC, under the
+[same license](webui/frontend/public/fonts/research/Noto-Sans-SC-OFL.txt).
+Font sources, modifications, and copyright notices accompany the assets in
+[fonts/research](webui/frontend/public/fonts/research/README.md).

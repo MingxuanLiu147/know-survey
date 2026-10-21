@@ -12,7 +12,7 @@ include webui/frontend/package.json webui/frontend/package-lock.json
 include webui/frontend/tsconfig*.json webui/frontend/vite.config.ts webui/frontend/index.html
 recursive-include webui/frontend/src *.ts *.tsx *.js *.css *.json *.svg *.png
 recursive-include webui/frontend/public *.svg *.png
-recursive-include webui/frontend/public/fonts/inter *.woff2 *.txt *.md
+recursive-include webui/frontend/public/fonts *.woff2 *.css *.txt *.md *.json
 include webui/README.md
 include scripts/skill_runtime.py
 include scripts/evaluate_unlearning_local.py

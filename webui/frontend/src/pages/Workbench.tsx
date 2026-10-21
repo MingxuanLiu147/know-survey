@@ -493,12 +493,6 @@ export function Workbench() {
     stopped: t("stopped"),
     interrupted: t("interrupted")
   };
-  const evidenceDescriptions: Record<string, string> = {
-    configured: t("hydraComposition"),
-    local_validation: t("boundedTrace"),
-    verified_smoke: t("realModelArtifacts"),
-    verified_result: t("completeProtocol")
-  };
 
   return (
     <div className="page workbench-page">
@@ -953,7 +947,7 @@ export function Workbench() {
                   onChange={(event) => setSmoke(event.target.checked)}
                 />
                 <span className="toggle-track" aria-hidden="true" />
-                <span>{t("smoke")}</span>
+                <span>{t(operation === "edit" ? "limitEdits" : "limitSteps")}</span>
               </label>
             </div>
 
@@ -1050,10 +1044,8 @@ export function Workbench() {
                 <pre>
                   <code>
                     {codeTab === "command"
-                      ? displayTechnicalText(composeResult.command)
-                      : displayTechnicalText(
-                          composeResult.resolved_config || composeResult.stderr
-                        )}
+                      ? composeResult.command
+                      : composeResult.resolved_config || composeResult.stderr}
                   </code>
                 </pre>
               </div>
@@ -1171,27 +1163,7 @@ export function Workbench() {
             </div>
           </section>
 
-          <section className="rail-section evidence-contract">
-            <div className="rail-title">
-              <FileCode2 size={17} />
-              <h2>{t("evidence")}</h2>
-            </div>
-            {[
-              "configured",
-              "local_validation",
-              "verified_smoke",
-              "verified_result"
-            ].map((level) => (
-              <div className="evidence-row" key={level}>
-                <StatusBadge level={level} compact />
-                <span>
-                  {evidenceDescriptions[level]}
-                </span>
-              </div>
-            ))}
-          </section>
-
-          <section className="rail-section demo-section">
+          {demos.length > 0 && <section className="rail-section demo-section">
             <div className="rail-title">
               <FlaskConical size={17} />
               <h2>{t("realDemos")}</h2>
@@ -1212,7 +1184,7 @@ export function Workbench() {
                 </article>
               ))}
             </div>
-          </section>
+          </section>}
         </aside>
       </div>
     </div>

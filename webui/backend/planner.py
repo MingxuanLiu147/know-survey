@@ -102,19 +102,28 @@ def _local_plan(request: PlanRequest) -> dict[str, Any]:
     plan["reasoning"] = _local_reasoning(plan, request.language)
     if request.language == "zh":
         for step in plan.get("steps", []):
-            step["reason"] = "类型化目标与注册表驱动的工作流"
-        plan["warnings"] = [
-            _localize_warning(warning) for warning in plan.get("warnings", [])
-        ]
+            step["reason"] = "根据目标选择对应步骤。"
+    plan["warnings"] = [
+        _localize_warning(warning, request.language)
+        for warning in plan.get("warnings", [])
+    ]
     return plan
 
 
-def _localize_warning(warning: str) -> str:
-    if (
-        warning
-        == "No model was explicit; selected the local GPT-2 quick-start baseline."
-    ):
-        return "未明确指定模型，已选择本地 GPT-2 快速起步基线。"
+def _localize_warning(warning: str, language: str = "zh") -> str:
+    if language == "en":
+        if warning.startswith(
+            (
+                "The selected Qwen2.5-7B route is configured",
+                "Check the local Qwen2.5-7B model path",
+            )
+        ):
+            return "Check the local Qwen2.5-7B model path and available GPU memory before running."
+        if warning.startswith("LoReFT requires pyreft"):
+            return "LoReFT requires pyreft and the ReFT data collator."
+        return warning
+    if warning.startswith("No model was explicit;"):
+        return "未明确指定模型，已选择 GPT-2。"
     match = re.match(
         r"(.+) has no curated exact recipe for this model/dataset; "
         r"manual compose is required\.",
@@ -127,23 +136,19 @@ def _localize_warning(warning: str) -> str:
             "请求只明确了 7B 规模；由于已注册的长文本配方以 "
             "Qwen2.5-7B-Instruct 为目标，规划器选择了该模型。"
         )
-    if warning.startswith("The selected Qwen2.5-7B route is configured"):
-        return (
-            "所选 Qwen2.5-7B 路线目前为已配置，尚未完成基准验证；"
-            "请检查本地模型路径和 GPU 显存，并先运行快速验证。"
+    if warning.startswith(
+        (
+            "The selected Qwen2.5-7B route is configured",
+            "Check the local Qwen2.5-7B model path",
         )
+    ):
+        return "运行前请检查本地 Qwen2.5-7B 模型路径和可用 GPU 显存。"
     if warning.startswith("LoReFT requires pyreft"):
-        return (
-            "LoReFT 需要 pyreft 与 ReFT 数据整理器；已注册配方可完成配置组合，"
-            "但仍需真实模型验证。"
-        )
+        return "LoReFT 需要 pyreft 与 ReFT 数据整理器。"
     if warning.startswith("UNKE requires preservation data"):
-        return "UNKE 需要保留数据；其研究实现因来源授权尚未厘清，不包含在公开发行中。"
+        return "UNKE 需要保留数据，公开包未提供此方法。"
     if warning.startswith("AnyEdit MEMIT/AlphaEdit backends require"):
-        return (
-            "AnyEdit 的 MEMIT/AlphaEdit 后端在启用统计校正时需要相应统计量；"
-            "UnKE_ARE 是单独的研究后端。"
-        )
+        return "AnyEdit 的 MEMIT/AlphaEdit 后端在启用统计校正时需要相应统计量。"
     return "规划器发现需要人工检查的兼容性问题。"
 
 
@@ -171,7 +176,7 @@ def _local_reasoning(
             model_reason = (
                 "采用请求中明确指定的模型。"
                 if model_was_explicit
-                else "请求未明确指定模型，因此采用小型本地快速起步基线。"
+                else "请求未明确指定模型，因此采用 GPT-2。"
             )
         method_reason = "方法仅限已注册的训练器或编辑器标识。"
         evaluation_reason = "同时评估目标效果和副作用。"
@@ -190,7 +195,7 @@ def _local_reasoning(
             model_reason = (
                 "Uses the explicit model request."
                 if model_was_explicit
-                else "Uses a small local quick-start baseline because no model was explicit."
+                else "Uses GPT-2 because no model was specified."
             )
         method_reason = (
             "Methods are limited to registered trainer or editor identifiers."

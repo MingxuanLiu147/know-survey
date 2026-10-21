@@ -18,7 +18,6 @@ const messages = {
     extensions: "Extensions",
     ready: "System ready",
     agentFirst: "Agent-first knowledge surgery",
-    evidenceAware: "Evidence-aware",
     planIntent: "Describe the knowledge change",
     intentPlaceholder:
       "Example: Edit 2 CounterFact facts on Qwen2.5-1.5B with ROME, then evaluate locality.",
@@ -31,7 +30,8 @@ const messages = {
     dataset: "Dataset",
     evaluation: "Evaluation",
     taskName: "Task name",
-    smoke: "Quick validation",
+    limitEdits: "Limit to 1 edit",
+    limitSteps: "Limit to 1 training step",
     seed: "Seed",
     preview: "Compose",
     runNow: "Run on GPU",
@@ -66,17 +66,17 @@ const messages = {
     liveLogs: "Live process log",
     stop: "Stop",
     results: "Results",
-    realDemos: "Real local demo artifacts",
+    realDemos: "Example results",
     metrics: "Metrics",
     process: "Process trace",
     selectResults: "Select 2-12 results",
     compareSelected: "Compare selected",
     comparable: "Comparable protocol",
-    exploratory: "Exploratory only",
+    exploratory: "Different run settings",
     skills: "Agent Skills",
     catalog: "Capability catalog",
     configured: "Configured",
-    local_validation: "Local validation",
+    local_validation: "Local run",
     verified_smoke: "Verified run",
     verified_result: "Verified result",
     planned: "Planned",
@@ -114,22 +114,18 @@ const messages = {
     notConfigured: "not configured",
     manualComposition: "Manual composition",
     manualCompatibilityHint:
-      "Composition validates Hydra wiring only. Model mappings, method checkpoints or statistics, local data, and optional packages must also be available.",
+      "Choose a model, method, dataset, and evaluation. Required model mappings, checkpoints, statistics, and dependencies follow the selected method.",
     agentRecipe: "Agent",
     hide: "Hide",
     valid: "Valid",
     invalid: "Invalid",
-    hydraComposition: "Hydra composition",
-    boundedTrace: "Bounded local trace",
-    realModelArtifacts: "Real model and artifacts",
-    completeProtocol: "Complete protocol",
-    responseComparison: "AUDITED RESPONSE PROBE",
+    responseComparison: "MODEL RESPONSES",
     beforeAfterResponse: "Before / after model response",
     probeQuestion: "Probe question",
     expectedAnswer: "Expected answer",
     beforeUpdate: "Before update",
     afterUpdate: "After update",
-    auditedArtifacts: "Audited source artifacts",
+    auditedArtifacts: "Result sources",
     missingArtifacts: "Source artifacts unavailable",
     customDataHint:
       "Convert text knowledge to JSON, JSONL, or CSV, review it, then compose.",
@@ -138,7 +134,7 @@ const messages = {
     customEditingDataHint:
       "Map prompt, subject, target_new, and optional probes, then register a runnable editing recipe.",
     customUnlearningDataHint:
-      "Upload separate forget and retain files, review both roles, then register a bounded unlearning recipe.",
+      "Upload separate forget and retain files, review both datasets, then register an unlearning recipe.",
     intentPresets: "Intent presets",
     longTextInjectionPreset: "Long-text injection · 7B · LoReFT",
     longTextEditingPreset: "Long-text editing · 7B · AnyEdit",
@@ -155,7 +151,7 @@ const messages = {
     runsEyebrow: "EXECUTION / TRACE",
     runsDescription:
       "Every WebUI action retains the exact argv, compose result, process events, and output location.",
-    auditTrace: "Audit trace",
+    auditTrace: "Execution record",
     output: "Output",
     exitCode: "Exit code",
     started: "Started",
@@ -175,12 +171,12 @@ const messages = {
     eventProcessStarted: "Local process started.",
     eventInterruptRequested: "Interrupt requested.",
     eventKilled: "Grace period expired; process killed.",
-    compareEyebrow: "ANALYSIS / FAIRNESS GATE",
+    compareEyebrow: "ANALYSIS / COMPARISON",
     compareDescription:
       "Ranking is enabled only when operation, model, dataset scope, protocol, and evidence level match.",
     fairnessMatch: "Fairness fields match; leaderboard ranking is permitted.",
     fairnessMismatch:
-      "Exploratory view only: one or more fairness fields are missing or differ.",
+      "Ranking is unavailable because one or more comparison fields are missing or differ.",
     match: "Match",
     differs: "Differs",
     metric: "Metric",
@@ -196,7 +192,7 @@ const messages = {
     fairnessEvidence: "Evidence level",
     extensionsEyebrow: "REGISTRIES / CONTRACTS",
     extensionsDescription:
-      "Capabilities are loaded from Hydra configs and Agent Skill contracts. Configured does not mean benchmark-verified.",
+      "Browse registered models, datasets, methods, and Agent Skills with their configuration details.",
     filterRegistry: "Filter registry",
     executableWrapper: "Executable wrapper",
     contractOnly: "Contract only",
@@ -219,11 +215,11 @@ const messages = {
     customExtensionContract: "CUSTOM EXTENSION CONTRACT",
     registryFirstIntegration: "Registry-first integration",
     extensionDescription:
-      "Add a config, adapter or trainer, public fixture, compose test, and one bounded real validation run before upgrading compatibility evidence.",
+      "Add a configuration and adapter or trainer, compose the configuration, then run the method and record its results.",
     configStep: "Config",
     adapterStep: "Adapter",
     composeStep: "Compose",
-    smokeStep: "Quick validation",
+    smokeStep: "Run",
     evidenceStep: "Evidence",
     categoryFoundation: "Foundation",
     categoryExtension: "Extension",
@@ -262,7 +258,6 @@ const messages = {
     extensions: "扩展",
     ready: "系统就绪",
     agentFirst: "智能体优先的知识手术",
-    evidenceAware: "证据感知",
     planIntent: "描述你的知识更新目标",
     intentPlaceholder:
       "示例：使用 ROME 在 Qwen2.5-1.5B 上编辑 2 条 CounterFact 事实，并评估局部性。",
@@ -275,7 +270,8 @@ const messages = {
     dataset: "数据集",
     evaluation: "评估",
     taskName: "任务名",
-    smoke: "快速验证",
+    limitEdits: "限制为 1 条编辑",
+    limitSteps: "限制为 1 个训练步",
     seed: "随机种子",
     preview: "组合配置",
     runNow: "在 GPU 上运行",
@@ -310,17 +306,17 @@ const messages = {
     liveLogs: "实时进程日志",
     stop: "停止",
     results: "结果",
-    realDemos: "真实本地演示产物",
+    realDemos: "示例结果",
     metrics: "指标",
     process: "过程轨迹",
     selectResults: "选择 2-12 个结果",
     compareSelected: "对比所选结果",
     comparable: "协议可比",
-    exploratory: "仅探索展示",
+    exploratory: "运行设置不同",
     skills: "智能体技能",
     catalog: "能力目录",
     configured: "已配置",
-    local_validation: "本地验证",
+    local_validation: "本地运行",
     verified_smoke: "已验证运行",
     verified_result: "已验证结果",
     planned: "规划中",
@@ -358,22 +354,18 @@ const messages = {
     notConfigured: "未配置",
     manualComposition: "手工组合",
     manualCompatibilityHint:
-      "配置组合只校验 Hydra 接线；模型层映射、方法 checkpoint 或统计量、本地数据和可选依赖也必须可用。",
+      "选择模型、方法、数据集和评估配置。模型映射、checkpoint、统计量和依赖按所选方法准备。",
     agentRecipe: "智能体",
     hide: "收起",
     valid: "有效",
     invalid: "无效",
-    hydraComposition: "Hydra 配置组合",
-    boundedTrace: "有界本地轨迹",
-    realModelArtifacts: "真实模型与产物",
-    completeProtocol: "完整协议",
-    responseComparison: "可审计回答探针",
+    responseComparison: "模型回答",
     beforeAfterResponse: "模型更新前后回答",
     probeQuestion: "探针问题",
     expectedAnswer: "期望答案",
     beforeUpdate: "更新前",
     afterUpdate: "更新后",
-    auditedArtifacts: "可审计来源产物",
+    auditedArtifacts: "结果来源",
     missingArtifacts: "来源产物不可用",
     customDataHint:
       "请先将文本知识转换为 JSON、JSONL 或 CSV，审核后再组合配置。",
@@ -382,7 +374,7 @@ const messages = {
     customEditingDataHint:
       "映射 prompt、subject、target_new 与可选探针后，注册可运行的编辑配方。",
     customUnlearningDataHint:
-      "分别上传遗忘集与保留集，审核两种角色后，注册有界遗忘配方。",
+      "分别上传遗忘集与保留集，确认两份数据后，注册遗忘配方。",
     intentPresets: "目标模板",
     longTextInjectionPreset: "长文本注入 · 7B · LoReFT",
     longTextEditingPreset: "长文本编辑 · 7B · AnyEdit",
@@ -399,7 +391,7 @@ const messages = {
     runsEyebrow: "执行 / 轨迹",
     runsDescription:
       "每次界面操作都会保留完整参数、配置组合结果、进程事件和输出位置。",
-    auditTrace: "审计轨迹",
+    auditTrace: "执行记录",
     output: "输出位置",
     exitCode: "退出码",
     started: "开始时间",
@@ -419,11 +411,11 @@ const messages = {
     eventProcessStarted: "本地进程已启动。",
     eventInterruptRequested: "已请求中断。",
     eventKilled: "等待超时，进程已终止。",
-    compareEyebrow: "分析 / 公平性门禁",
+    compareEyebrow: "分析 / 结果对比",
     compareDescription:
       "只有操作、模型、数据范围、评估协议和证据等级一致时才允许排序。",
     fairnessMatch: "公平性字段一致，可以进行排行榜排序。",
-    fairnessMismatch: "仅供探索：一个或多个公平性字段缺失或不一致。",
+    fairnessMismatch: "一个或多个对比字段缺失或不同，无法排序。",
     match: "一致",
     differs: "不同",
     metric: "指标",
@@ -437,7 +429,7 @@ const messages = {
     fairnessEvidence: "证据等级",
     extensionsEyebrow: "注册表 / 接口契约",
     extensionsDescription:
-      "能力来自 Hydra 配置和智能体技能契约。已配置不等于已经完成基准验证。",
+      "浏览已注册的模型、数据集、方法和智能体技能，查看各项配置。",
     filterRegistry: "筛选注册项",
     executableWrapper: "可执行封装",
     contractOnly: "仅接口契约",
@@ -460,11 +452,11 @@ const messages = {
     customExtensionContract: "自定义扩展契约",
     registryFirstIntegration: "注册表优先的集成方式",
     extensionDescription:
-      "先添加配置、适配器或训练器、公开测试样例、组合测试和一次有界真实验证，再升级兼容性证据。",
+      "添加配置与适配器或训练器，组合配置后执行方法并记录结果。",
     configStep: "配置",
     adapterStep: "适配器",
     composeStep: "组合",
-    smokeStep: "快速验证",
+    smokeStep: "运行",
     evidenceStep: "证据",
     categoryFoundation: "基础",
     categoryExtension: "扩展",
@@ -501,7 +493,7 @@ const skillDescriptionsZh: Record<string, string> = {
   "add-dataset":
     "按照规范知识数据契约添加或校验数据集，并保留来源和许可证信息。",
   "add-model":
-    "通过统一 Hydra 与适配器契约添加或校验模型；模型可加载不代表算法兼容。",
+    "添加模型配置与适配器，并检查所选方法需要的层映射和接口。",
   "add-multimodal-case":
     "校验并注册图文知识用例及其探针，缺失或不可读的图像会直接报错。",
   "aggregate-results":
@@ -517,13 +509,13 @@ const skillDescriptionsZh: Record<string, string> = {
   "generate-report":
     "根据已校验计划、轨迹和聚合结果生成 Markdown 与 JSON 报告。",
   "inspect-repo":
-    "审计仓库入口、注册配置、运行配方、技能和能力证据。",
+    "查看仓库入口、注册配置、运行配方和技能。",
   "normalize-knowledge":
     "校验 TXT、JSON、JSONL 或 CSV，并转换为规范知识记录格式。",
   "plan-surgery":
-    "将自然语言知识更新请求转换为类型明确、证据感知的手术计划。",
+    "将自然语言知识更新请求转换为包含模型、方法、数据和评估设置的执行计划。",
   "release-checklist":
-    "审计代码、测试、许可证、数据格式、论文声明、演示链接和视频状态。",
+    "检查代码入口、依赖、许可证、数据格式和发布资料。",
   "reproduce-run":
     "从运行产物重建完整命令、解析后配置和环境引用。",
   "run-edit":
@@ -535,17 +527,17 @@ const skillDescriptionsZh: Record<string, string> = {
   "setup-env":
     "检查并记录 Python、CUDA、GPU、软件包和本地模型缓存环境。",
   "smoke-test":
-    "执行有界 Hydra 组合和可选真实模型快速验证，不将验证指标作为基准结果。"
+    "组合运行配置，并按计划使用所选模型处理最多两条记录。"
 };
 
 export function displayTechnicalText(value: string): string {
   return value
-    .replace(/smoke-test/gi, "quick-validation")
+    .replace(/smoke[-_]test/gi, "run-check")
     .replace(/verified_smoke/gi, "verified_run")
-    .replace(/smokes/gi, "validations")
-    .replace(/smoke/gi, "validation")
-    .replaceAll("冒烟测试", "快速验证")
-    .replaceAll("冒烟", "验证");
+    .replace(/smokes/gi, "runs")
+    .replace(/smoke/gi, "run")
+    .replaceAll("冒烟测试", "运行检查")
+    .replaceAll("冒烟", "运行检查");
 }
 
 export function localizedSkillDescription(
@@ -554,7 +546,11 @@ export function localizedSkillDescription(
   fallback: string
 ): string {
   return displayTechnicalText(
-    language === "zh" ? skillDescriptionsZh[id] || fallback : fallback
+    language === "zh"
+      ? skillDescriptionsZh[id] || fallback
+      : id === "smoke-test"
+        ? "Compose the configuration and use the selected model to process up to two records."
+        : fallback
   );
 }
 

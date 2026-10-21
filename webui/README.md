@@ -51,6 +51,14 @@ python scripts/validate_extension.py --installed my-extension
 An optional `--smoke` checks a configured model workflow and may load weights.
 See [components](../docs/components.md) for installation and interfaces.
 
+## Interface appearance
+
+The workbench uses a violet palette with light and dark themes. English text uses
+IBM Plex Sans, Chinese text uses a Noto Sans SC subset, and commands use IBM Plex
+Mono. Fonts are bundled locally; no external font service is required. The
+operating-table alpaca appears in the sidebar, with a compact mark for the browser
+tab and mobile header.
+
 ## Source layout
 
 - `backend/`: API, task persistence, uploads and result access.

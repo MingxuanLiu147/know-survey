@@ -395,9 +395,7 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
     }[operation]
     warnings = []
     if args.model_id is None and model == "gpt2" and "gpt" not in args.intent.lower():
-        warnings.append(
-            "No model was explicit; selected the local GPT-2 quick-start baseline."
-        )
+        warnings.append("No model was explicit; selected GPT-2.")
     lowered_intent = args.intent.lower()
     if (
         model == "Qwen2.5-7B-Instruct"
@@ -436,19 +434,17 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
             )
     if model == "Qwen2.5-7B-Instruct":
         warnings.append(
-            "The selected Qwen2.5-7B route is configured, not benchmark-verified; verify the local model path and GPU memory, then run a bounded validation first."
+            "Check the local Qwen2.5-7B model path and available GPU memory before running."
         )
     if operation == "inject" and "LoReFT" in methods:
-        warnings.append(
-            "LoReFT requires pyreft and the ReFT data collator; the registered recipe composes these dependencies but still needs a real-model validation run."
-        )
+        warnings.append("LoReFT requires pyreft and the ReFT data collator.")
     if operation == "edit" and "UNKE" in methods:
         warnings.append(
-            "UNKE requires preservation data; this research-only implementation is excluded from public releases pending source permission."
+            "UNKE requires preservation data and is unavailable in the public package."
         )
     if operation == "edit" and "AnyEdit" in methods:
         warnings.append(
-            "AnyEdit MEMIT/AlphaEdit backends require method-specific statistics when enabled; UnKE_ARE is a separate research-only backend."
+            "AnyEdit MEMIT/AlphaEdit backends require method-specific statistics when enabled."
         )
     sequence = ["plan-surgery", "inspect-repo"]
     if re.search(
@@ -480,7 +476,7 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
             {
                 "skill": name,
                 "status": "completed" if name == "plan-surgery" else "ready",
-                "reason": "typed intent and registry-driven workflow",
+                "reason": "Workflow steps selected for the requested operation.",
             }
             for name in sequence
         ],
@@ -629,7 +625,7 @@ def cmd_inspect(args: argparse.Namespace) -> int:
             }.items()
         },
         "evidence_level": "configured",
-        "limitations": ["Counts and config presence are not benchmark evidence."],
+        "limitations": ["Inventory lists configurations and registered components."],
     }
     output = _write_json(_path(args.output), inventory)
     print(output)
@@ -1059,7 +1055,7 @@ def _evaluate_unlearning_smoke(
         datasets = cfg["data"][role]
         if len(datasets) != 1:
             raise ValueError(
-                "Bounded smoke evaluation needs one explicit dataset per forget/retain role."
+                "Evaluation requires one explicit dataset for each forget/retain role."
             )
         dataset_args = next(iter(datasets.values()))["args"]
         files = dataset_args.get("hf_args", {}).get("data_files")
