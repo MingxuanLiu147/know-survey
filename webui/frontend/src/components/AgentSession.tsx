@@ -1,24 +1,22 @@
-import { useEffect, useState } from "react";
-import { displayTechnicalText } from "../i18n";
+import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
+import type { ComposePayload, Modality } from "../types";
+import { displayTechnicalText, uiErrorMessage } from "../i18n";
+import { useDraftField } from "../state/TaskDraft";
+import { Button, InlineError } from "./ui";
 
-type Trace = {
-  session_id: string;
-  status: string;
-  response?: string;
-  error?: string;
-  calls: { skill: string; status: string; command?: string; error?: string; output?: string }[];
-};
-
-export function AgentSession({ intent, provider, language }: {
-  intent: string; provider: string; language: string;
+export function AgentSession({ intent, provider, language, modality, configuration, previewHash, previewValid }: {
+  intent: string; provider: string; language: "en" | "zh"; modality?: Modality;
+  configuration: ComposePayload; previewHash?: string; previewValid: boolean;
 }) {
   const zh = language === "zh";
   const [execute, setExecute] = useState(false);
-  const [cuda, setCuda] = useState("0");
-  const [trace, setTrace] = useState<Trace | null>(null);
+  const [trace, setTrace] = useDraftField("agentTrace");
   const [error, setError] = useState("");
   const [starting, setStarting] = useState(false);
+  const startLock = useRef(false);
   const active = !!trace && ["pending", "running", "cancelling"].includes(trace.status);
+  const configurationKey = JSON.stringify(configuration);
 
   async function call(path: string, payload?: object) {
     const response = await fetch("/api/v1/agent/sessions" + path, payload ? {
@@ -29,57 +27,75 @@ export function AgentSession({ intent, provider, language }: {
     return value;
   }
 
+  useEffect(() => { setExecute(false); }, [configurationKey]);
   useEffect(() => {
     if (!active || !trace) return;
     let disposed = false;
-    const timer = window.setInterval(() => {
-      call("/" + trace.session_id).then(value => { if (!disposed) setTrace(value); })
-        .catch(err => { if (!disposed) setError(String(err)); });
-    }, 1500);
-    return () => { disposed = true; window.clearInterval(timer); };
+    let timer: number;
+    const poll = async () => {
+      try {
+        const value = await call("/" + trace.session_id);
+        if (!disposed) { setTrace(value); setError(""); }
+      } catch (err) {
+        if (!disposed) setError(uiErrorMessage(err, language));
+      } finally {
+        if (!disposed) timer = window.setTimeout(poll, 1500);
+      }
+    };
+    void poll();
+    return () => { disposed = true; window.clearTimeout(timer); };
   }, [active, trace?.session_id]);
 
   async function start() {
+    if (startLock.current || active || (execute && !previewValid)) return;
+    startLock.current = true;
     setStarting(true); setError("");
     try {
-      const result = await call("", { intent, provider, execute, cuda: execute ? cuda : null,
-        max_steps: 12, max_cases: 2, timeout: 600 });
+      const result = await call("", { intent, provider, modality, configuration,
+        preview_hash: previewHash, execute, max_steps: 12, timeout: 600 });
       setTrace({ ...result, calls: [] });
-    } catch (err) { setError(String(err)); }
-    finally { setStarting(false); }
+    } catch (err) { setError(uiErrorMessage(err, language)); }
+    finally { startLock.current = false; setStarting(false); }
   }
 
-  return <details className="agent-plan">
-    <summary>{zh ? "模型自主选择 Skills" : "Let the model choose Skills"}</summary>
-    <p>{zh ? "模型根据每步结果继续选择技能。默认只预览，最多 12 次调用、2 条样本、10 分钟。" :
-      "The model chooses each next Skill from actual observations. Preview by default; at most 12 calls, 2 cases and 10 minutes."}</p>
-    <label><input type="checkbox" checked={execute} disabled={active}
+  const statusLabels: Record<string, string> = zh ? {
+    pending: "等待开始", running: "执行中", cancelling: "正在停止", cancelled: "已停止",
+    completed: "已完成", succeeded: "已完成", failed: "失败", stopped: "已停止"
+  } : { pending: "Pending", running: "Running", cancelling: "Stopping", cancelled: "Stopped",
+    completed: "Completed", succeeded: "Completed", failed: "Failed", stopped: "Stopped" };
+
+  return <details className="agent-plan autonomous-agent">
+    <summary>{zh ? "使用 Agent 执行当前任务" : "Use Agent for this task"}</summary>
+    <p>{zh ? "Agent 使用当前任务的配置，按运行结果选择下一步技能。" :
+      "The Agent uses this task’s configuration and chooses the next Skill from observed results."}</p>
+    <label className="agent-execute-option"><input type="checkbox" checked={execute} disabled={active || !previewValid}
       onChange={event => setExecute(event.target.checked)} />
-      {zh ? "允许执行 GPU 任务" : "Allow GPU execution"}</label>
-    {execute && <label>{zh ? "GPU 编号" : "GPU indices"}
-      <input value={cuda} disabled={active} onChange={event => setCuda(event.target.value)}
-        pattern="[0-9]+(,[0-9]+)*" aria-label={zh ? "GPU 编号" : "GPU indices"} /></label>}
+      {zh ? "执行已预览的配置" : "Execute the previewed configuration"}</label>
+    {!previewValid && <p className="muted">{zh ? "预览通过后可启用执行。" : "Preview the configuration to enable execution."}</p>}
     <div className="agent-actions">
-      <button type="button" disabled={active || starting || provider === "local" || intent.trim().length < 3}
-        onClick={start}>{zh ? "启动自主工作流" : "Start autonomous workflow"}</button>
-      {active && <button type="button" onClick={() => {
+      <Button variant="secondary" disabled={active || provider === "local" || intent.trim().length < 3}
+        loading={starting} onClick={start}>{execute ? (zh ? "启动 Agent" : "Start Agent") : (zh ? "Agent 预览" : "Agent preview")}</Button>
+      {active && <Button variant="secondary" onClick={() => {
         call("/" + trace!.session_id + "/stop", {}).then(() => setTrace(old => old && ({ ...old, status: "cancelling" })))
-          .catch(err => setError(String(err)));
-      }}>{zh ? "停止" : "Stop"}</button>}
+          .catch(err => setError(uiErrorMessage(err, language)));
+      }}>{zh ? "停止" : "Stop"}</Button>}
     </div>
-    {provider === "local" && <p>{zh ? "请选择已在服务端配置的 OpenAI 或 DeepSeek。" : "Select a server-configured OpenAI or DeepSeek provider."}</p>}
-    {error && <p role="alert">{error}</p>}
-    {trace && <div aria-live="polite">
-      <p>{trace.status}</p>
+    {provider === "local" && <p>{zh ? "选择已在服务端配置的 OpenAI 或 DeepSeek。" : "Select a server-configured OpenAI or DeepSeek provider."}</p>}
+    {error && <InlineError message={error} />}
+    {trace && <div className="agent-trace" aria-live="polite">
+      <p>{statusLabels[trace.status] || trace.status}</p>
       <ol>{trace.calls.map((item, index) => <li key={index}>
-        <strong>{displayTechnicalText(item.skill)}</strong> · {item.status}
-        {item.command && <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{item.command}</pre>}
+        <strong>{displayTechnicalText(item.skill)}</strong> · {statusLabels[item.status] || item.status}
+        {item.command && <pre>{item.command}</pre>}
         {item.error && <p>{item.error}</p>}
         {item.output && <code>{item.output}</code>}
       </li>)}</ol>
       {(trace.response || trace.error) && <p>{trace.response || trace.error}</p>}
-      <a href={"/api/v1/agent/sessions/" + trace.session_id} target="_blank" rel="noreferrer">
-        {zh ? "打开完整 JSON 记录" : "Open full JSON trace"}</a>
+      <div className="agent-actions">
+        {trace.run_id && <Link to={"/runs?selected=" + encodeURIComponent(trace.run_id)}>{zh ? "查看运行与结果" : "View run and results"}</Link>}
+        <a href={"/api/v1/agent/sessions/" + trace.session_id} target="_blank" rel="noreferrer">
+          {zh ? "打开执行记录" : "Open execution trace"}</a>
+      </div>
     </div>}
   </details>;
 }

@@ -10,7 +10,6 @@ import {
   Eraser,
   FileCode2,
   FlaskConical,
-  Gauge,
   GitBranch,
   MessageSquareText,
   PencilLine,
@@ -20,8 +19,9 @@ import {
   Syringe
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useOutletContext, useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../api";
+import { useDraftField } from "../state/TaskDraft";
 import { DataUpload } from "../components/DataUpload";
 import { AgentSession } from "../components/AgentSession";
 import { MetricsView } from "../components/MetricsView";
@@ -43,13 +43,10 @@ import {
 import type {
   Catalog,
   ComposePayload,
-  ComposeResult,
   Demo,
-  Health,
+  Modality,
   Operation,
-  Plan,
   ResponseExample,
-  RunRecord,
   Skill
 } from "../types";
 
@@ -78,15 +75,28 @@ const STARTER_RECIPE_ID = "builtin-tofu-grad-ascent-gpt2";
 const defaultIntents = {
   en: {
     unlearning:
-      "Unlearn 1 TOFU record on GPT-2 with GradAscent and check retention.",
+      "Unlearn TOFU on GPT-2 with GradAscent for 1 training step and check retention.",
     inject:
-      "Inject 1 RuleTaker rule into GPT-2 with LoRA and check retention.",
+      "Inject RuleTaker into GPT-2 with LoRA for 1 training step and check retention.",
     edit: "Edit 1 CounterFact fact on GPT-2 with ROME and evaluate locality."
   },
   zh: {
-    unlearning: "使用 GradAscent 在 GPT-2 上遗忘 1 条 TOFU 记录，并检查保留能力。",
-    inject: "使用 LoRA 向 GPT-2 注入 1 条 RuleTaker 规则，并检查保留能力。",
+    unlearning: "使用 GradAscent 在 GPT-2 上对 TOFU 执行 1 个遗忘训练步，并检查保留能力。",
+    inject: "使用 LoRA 在 GPT-2 上对 RuleTaker 执行 1 个注入训练步，并检查保留能力。",
     edit: "使用 ROME 在 GPT-2 上编辑 1 条 CounterFact 事实，并评估局部性。"
+  }
+};
+
+const multimodalIntents = {
+  en: {
+    unlearning: "Unlearn image-text knowledge on Qwen2.5-VL-3B with GradAscent for 1 training step and review retention.",
+    inject: "Inject image-text knowledge into Qwen2.5-VL-3B with LoRA for 1 training step and review retention probes.",
+    edit: "Edit 1 image-text fact on Qwen2.5-VL-3B with LoRA and evaluate locality."
+  },
+  zh: {
+    unlearning: "使用 GradAscent 在 Qwen2.5-VL-3B 上执行 1 个图文遗忘训练步，并检查保留能力。",
+    inject: "使用 LoRA 在 Qwen2.5-VL-3B 上执行 1 个图文注入训练步，并检查保留探针。",
+    edit: "使用 LoRA 在 Qwen2.5-VL-3B 上编辑 1 条图文知识，并评估局部性。"
   }
 };
 
@@ -116,7 +126,7 @@ function isUploadOperation(value: Operation): boolean {
 }
 
 function isDefaultIntent(value: string): boolean {
-  return Object.values(defaultIntents).some((byOperation) =>
+  return [...Object.values(defaultIntents), ...Object.values(multimodalIntents)].some((byOperation) =>
     Object.values(byOperation).includes(value)
   );
 }
@@ -127,24 +137,16 @@ function defaultTaskName(operation: Operation): string {
   return `starter_tofu_gpt2_${timestamp}`;
 }
 
-function defaultRecipe(catalog: Catalog, operation: Operation) {
-  if (operation === DEFAULT_OPERATION) {
+function defaultRecipe(catalog: Catalog, operation: Operation, modality: Modality = "text") {
+  if (operation === DEFAULT_OPERATION && modality === "text") {
     const starter = catalog.recipes.find(
       (item) => item.id === STARTER_RECIPE_ID && item.default_runnable
     );
     if (starter) return starter;
   }
   return catalog.recipes.find(
-    (item) => item.operation === operation && item.default_runnable
+    (item) => item.operation === operation && (item.modality || "text") === modality && item.default_runnable
   );
-}
-
-function preferredGpu(health: Health | null): number | null {
-  if (!health?.gpus.length) return null;
-  const available = health.gpus
-    .filter((item) => item.available)
-    .sort((left, right) => right.memory_free_mib - left.memory_free_mib);
-  return available[0]?.index ?? health.gpus[0].index;
 }
 
 const operationMetricKeys = {
@@ -155,7 +157,6 @@ const operationMetricKeys = {
 
 export function Workbench() {
   const { language, t } = useI18n();
-  const { health } = useOutletContext<{ health: Health | null }>();
   const [searchParams] = useSearchParams();
   const initialOperation =
     parseOperation(searchParams.get("operation")) || DEFAULT_OPERATION;
@@ -169,39 +170,42 @@ export function Workbench() {
   const [loading, setLoading] = useState(true);
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [error, setError] = useState("");
-  const [operation, setOperation] = useState<Operation>(initialOperation);
-  const [intent, setIntent] = useState(
-    defaultIntents[language][initialOperation]
-  );
-  const [provider, setProvider] = useState("local");
-  const [plan, setPlan] = useState<Plan | null>(null);
+  const [initialized, setInitialized] = useDraftField("initialized");
+  const [operation, setOperation] = useDraftField("operation");
+  const [modality, setModality] = useDraftField("modality");
+  const [intent, setIntent] = useDraftField("intent");
+  const [provider, setProvider] = useDraftField("provider");
+  const [plan, setPlan] = useDraftField("plan");
+  const [recipeId, setRecipeId] = useDraftField("recipeId");
+  const [experiment, setExperiment] = useDraftField("experiment");
+  const [model, setModel] = useDraftField("model");
+  const [trainer, setTrainer] = useDraftField("trainer");
+  const [datasets, setDatasets] = useDraftField("datasets");
+  const [evaluation, setEvaluation] = useDraftField("evaluation");
+  const [taskName, setTaskName] = useDraftField("taskName");
+  const [seed, setSeed] = useDraftField("seed");
+  const [smoke, setSmoke] = useDraftField("smoke");
+  const [baseSelections, setBaseSelections] = useDraftField("baseSelections");
+  const [overrides, setOverrides] = useDraftField("overrides");
+  const [composeSnapshot, setComposeSnapshot] = useDraftField("composeSnapshot");
+  const [currentRun, setCurrentRun] = useDraftField("currentRun");
   const [planning, setPlanning] = useState(false);
-  const [recipeId, setRecipeId] = useState("");
-  const [experiment, setExperiment] = useState("");
-  const [model, setModel] = useState("");
-  const [trainer, setTrainer] = useState("");
-  const [datasets, setDatasets] = useState<Record<string, string>>({});
-  const [evaluation, setEvaluation] = useState("");
-  const [taskName, setTaskName] = useState(() =>
-    defaultTaskName(initialOperation)
-  );
-  const [seed, setSeed] = useState(42);
-  const [smoke, setSmoke] = useState(true);
-  const [gpu, setGpu] = useState<number | null>(null);
-  const [composeSnapshot, setComposeSnapshot] = useState<{
-    key: string;
-    result: ComposeResult;
-  } | null>(null);
   const [composing, setComposing] = useState(false);
   const [running, setRunning] = useState(false);
-  const [currentRun, setCurrentRun] = useState<RunRecord | null>(null);
   const [codeTab, setCodeTab] = useState<"command" | "resolved">("command");
   const [showUpload, setShowUpload] = useState(
     searchParams.get("upload") === "1" && isUploadOperation(initialOperation)
   );
-  const [showSkills, setShowSkills] = useState(true);
+  const [showSkills, setShowSkills] = useState(false);
   const uploadSectionRef = useRef<HTMLElement>(null);
-  const plannedOperation = useRef<Operation | null>(null);
+  const plannedOperation = useRef<string | null>(null);
+  const configuredScope = useRef(initialized ? `${operation}:${modality}` : null);
+  const mounted = useRef(true);
+  const planSequence = useRef(0);
+  const composeSequence = useRef(0);
+  const runLock = useRef(false);
+  const runRequest = useRef({ key: "", id: "" });
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -228,9 +232,6 @@ export function Workbench() {
         setDemos(demoValue.demos);
         setSkills(skillValue.skills);
         setResponseExamples(responseExampleValue.examples);
-        const firstRecipe = defaultRecipe(catalogValue, initialOperation);
-        setRecipeId(firstRecipe?.id || "");
-        setGpu(preferredGpu(health));
       } catch (caught) {
         if (!cancelled) {
           setError(uiErrorMessage(caught, language));
@@ -270,22 +271,29 @@ export function Workbench() {
 
   useEffect(() => {
     if (!catalog) return;
-    // An explicit plan already supplied the recipe for this operation change.
-    if (plannedOperation.current === operation) {
+    const scope = `${operation}:${modality}`;
+    if (configuredScope.current === scope) return;
+    configuredScope.current = scope;
+    setInitialized(true);
+    // An explicit plan already supplied the configuration for this change.
+    if (plannedOperation.current === `${operation}:${modality}`) {
       plannedOperation.current = null;
       return;
     }
-    const firstRecipe = defaultRecipe(catalog, operation);
+    setOverrides({});
+    setBaseSelections({});
+    setPlan(null);
+    const firstRecipe = defaultRecipe(catalog, operation, modality);
     setRecipeId(firstRecipe?.id || "");
-    setExperiment("");
+    setExperiment(modality === "multimodal" && operation === "unlearning" ? catalog.experiments.find((item) => item.id === "unlearn/multimodal/smoke_qwen25vl3b_mllmu")?.id || "" : "");
     const firstModel =
       catalog.models.find(
-        (item) => item.modality === "text" && item.id === "gpt2"
-      ) || catalog.models.find((item) => item.modality === "text");
+        (item) => item.modality === modality && item.id === (modality === "text" ? "gpt2" : "Qwen2.5-VL-3B")
+      ) || catalog.models.find((item) => item.modality === modality);
     setModel(firstModel?.id || "");
-    setTrainer(catalog.trainers[operation][0]?.id || "");
+    setTrainer(catalog.trainers[operation].find((item) => item.modality === modality)?.id || "");
     setEvaluation(
-      catalog.evaluations.includes(
+      modality === "multimodal" ? (operation === "edit" ? "mm_edit" : "") : catalog.evaluations.includes(
         operation === "unlearning" ? "tofu" : operation
       )
         ? operation === "unlearning"
@@ -294,7 +302,7 @@ export function Workbench() {
         : catalog.evaluations[0] || ""
     );
     const operationDatasets = catalog.datasets.filter((item) =>
-      item.operations.includes(operation)
+      item.operations.includes(operation) && item.modality === modality
     );
     if (operation === "unlearning") {
       setDatasets({
@@ -316,27 +324,22 @@ export function Workbench() {
     setTaskName(defaultTaskName(operation));
     setComposeSnapshot(null);
     setCurrentRun(null);
-  }, [operation, catalog]);
-
-  useEffect(() => {
-    if (gpu !== null || !health?.gpus.length) return;
-    setGpu(preferredGpu(health));
-  }, [health, gpu]);
+  }, [operation, modality, catalog]);
 
   useEffect(() => {
     setIntent((current) =>
-      isDefaultIntent(current)
-        ? defaultIntents[language][operation]
+      !current || isDefaultIntent(current)
+        ? (modality === "multimodal" ? multimodalIntents : defaultIntents)[language][operation]
         : current
     );
-  }, [language, operation]);
+  }, [language, operation, modality]);
 
   const recipes = useMemo(
     () =>
       catalog?.recipes.filter(
-        (item) => item.operation === operation && item.default_runnable
+        (item) => item.operation === operation && (item.modality || "text") === modality && item.default_runnable
       ) || [],
-    [catalog, operation]
+    [catalog, operation, modality]
   );
 
   const selectedSkillIds = useMemo(
@@ -353,29 +356,31 @@ export function Workbench() {
   );
 
   const responseExample = useMemo(
-    () => responseExamples.find((item) => item.operation === operation),
-    [operation, responseExamples]
+    () => modality === "text" ? responseExamples.find((item) => item.operation === operation) : undefined,
+    [operation, responseExamples, modality]
   );
 
   const payload = useMemo<ComposePayload>(() => {
     const base: ComposePayload = {
       operation,
+      modality,
       task_name: taskName,
       seed,
       smoke,
-      overrides: {}
+      overrides
     };
-    if (recipeId) return { ...base, recipe_id: recipeId };
-    if (experiment) return { ...base, experiment };
+    if (recipeId) return { ...base, ...baseSelections, recipe_id: recipeId };
+    if (experiment) return { ...base, ...baseSelections, experiment };
     return {
       ...base,
       model,
       trainer,
       datasets,
-      evaluation
+      evaluation: evaluation || null
     };
   }, [
     operation,
+    modality,
     taskName,
     seed,
     smoke,
@@ -384,76 +389,92 @@ export function Workbench() {
     model,
     trainer,
     datasets,
-    evaluation
+    evaluation,
+    overrides,
+    baseSelections
   ]);
 
   const payloadKey = JSON.stringify(payload);
   const composeResult =
     composeSnapshot?.key === payloadKey ? composeSnapshot.result : null;
 
+  const latest = useRef({ payloadKey, intent, provider, language });
+  latest.current = { payloadKey, intent, provider, language };
+  const previousPayload = useRef(payloadKey);
   useEffect(() => {
-    setComposeSnapshot(null);
-    setCurrentRun(null);
+    if (previousPayload.current !== payloadKey) {
+      setComposeSnapshot(null);
+      setCurrentRun(null);
+      previousPayload.current = payloadKey;
+    }
   }, [payloadKey]);
 
+  const applyConfiguration = (value: ComposePayload) => {
+    const nextModality = value.modality || "text";
+    if (operation !== value.operation || modality !== nextModality) {
+      plannedOperation.current = `${value.operation}:${nextModality}`;
+    }
+    setOperation(value.operation); setModality(nextModality);
+    setRecipeId(value.recipe_id || ""); setExperiment(value.experiment || "");
+    setModel(value.model || ""); setTrainer(value.trainer || "");
+    setDatasets(value.datasets || {}); setEvaluation(value.evaluation || "");
+    setTaskName(value.task_name); setSeed(value.seed); setSmoke(value.smoke);
+    setOverrides(value.overrides || {});
+    setBaseSelections({ model: value.model, trainer: value.trainer, datasets: value.datasets, evaluation: value.evaluation });
+    setComposeSnapshot(null); setCurrentRun(null);
+  };
+
   const generatePlan = async () => {
+    const sequence = ++planSequence.current;
+    const context = JSON.stringify(latest.current);
     setPlanning(true);
     setError("");
     try {
-      const value = await api.plan({ intent, provider, language });
+      const value = await api.plan({ intent, provider, language, modality });
+      if (!mounted.current || sequence !== planSequence.current || JSON.stringify(latest.current) !== context) return;
       setPlan(value);
-      const exactExperiment = Object.values(value.experiments).find(
-        (item): item is string => Boolean(item)
-      );
-      if (exactExperiment && value.operation !== operation) {
-        plannedOperation.current = value.operation;
-      }
-      setOperation(value.operation);
-      if (exactExperiment) {
-        setRecipeId("");
-        setExperiment(exactExperiment);
-      }
-      setTaskName(
-        "agent_" +
-          value.operation +
-          "_" +
-          value.methods.join("_").toLowerCase() +
-          "_quick_run"
-      );
-      setComposeSnapshot(null);
+      if (value.configuration) applyConfiguration(value.configuration);
+      else setError(Object.values(value.configuration_errors || {}).join("\n") || (language === "zh" ? "该计划还需要补全配置。" : "Complete the configuration for this plan."));
     } catch (caught) {
-      setError(uiErrorMessage(caught, language));
+      if (mounted.current && JSON.stringify(latest.current) === context) setError(uiErrorMessage(caught, language));
     } finally {
-      setPlanning(false);
+      if (mounted.current && sequence === planSequence.current) setPlanning(false);
     }
   };
 
   const compose = async () => {
+    const sequence = ++composeSequence.current;
     setComposing(true);
     setComposeSnapshot(null);
     setError("");
     try {
       const result = await api.compose(payload);
+      if (!mounted.current || sequence !== composeSequence.current || latest.current.payloadKey !== payloadKey) return;
       setComposeSnapshot({ key: payloadKey, result });
       setCodeTab("command");
     } catch (caught) {
-      setError(uiErrorMessage(caught, language));
+      if (mounted.current && latest.current.payloadKey === payloadKey) setError(uiErrorMessage(caught, language));
     } finally {
-      setComposing(false);
+      if (mounted.current && sequence === composeSequence.current) setComposing(false);
     }
   };
 
   const run = async () => {
-    if (!composeResult?.valid || composing || planning) return;
+    if (!composeResult?.valid || composing || planning || runLock.current) return;
+    runLock.current = true;
+    if (runRequest.current.key !== payloadKey) {
+      runRequest.current = { key: payloadKey, id: Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, "0")).join("") };
+    }
     setRunning(true);
     setError("");
     try {
-      const value = await api.startRun({ ...payload, gpu });
-      setCurrentRun(value);
+      const value = await api.startRun({ ...payload, request_id: runRequest.current.id, preview_hash: composeResult.preview_hash });
+      if (latest.current.payloadKey === payloadKey) setCurrentRun(value);
     } catch (caught) {
       setError(uiErrorMessage(caught, language));
     } finally {
-      setRunning(false);
+      runLock.current = false;
+      if (mounted.current) setRunning(false);
     }
   };
 
@@ -498,28 +519,8 @@ export function Workbench() {
     <div className="page workbench-page">
       <section className="workbench-heading">
         <div>
-          <div className="eyebrow">{t("controlSurface")}</div>
           <h1>{t("workbench")}</h1>
           <p>{operationHelp[language][operation]}</p>
-        </div>
-        <div className="heading-stats">
-          <div>
-            <strong>{catalog.models.length}</strong>
-            <span>{t("model")}</span>
-          </div>
-          <div>
-            <strong>
-              {Object.values(catalog.trainers).reduce(
-                (sum, items) => sum + items.length,
-                0
-              )}
-            </strong>
-            <span>{t("method")}</span>
-          </div>
-          <div>
-            <strong>{catalog.recipes.filter((item) => item.default_runnable).length}</strong>
-            <span>{t("recipe")}</span>
-          </div>
         </div>
       </section>
 
@@ -551,10 +552,11 @@ export function Workbench() {
       </div>
 
       {responseExample ? (
+        <details className="reference-example">
+          <summary>{t("beforeAfterResponse")} · {responseExample.model} · {responseExample.method}</summary>
         <section className={"response-comparison response-" + operation}>
           <div className="response-comparison-head">
             <div>
-              <div className="eyebrow">{t("responseComparison")}</div>
               <h2>{t("beforeAfterResponse")}</h2>
             </div>
             <div className="response-example-meta">
@@ -600,28 +602,28 @@ export function Workbench() {
             </span>
           </div>
         </section>
+        </details>
       ) : null}
 
       <div className="workbench-grid">
         <div className="workbench-main">
           <section className="panel agent-panel">
             <SectionHeader
-              eyebrow={t("agentSection")}
               title={t("planIntent")}
-              action={<StatusBadge level="configured" compact />}
             />
             <textarea
               className="intent-input"
               value={intent}
               rows={4}
               placeholder={t("intentPlaceholder")}
-              onChange={(event) => setIntent(event.target.value)}
+              onChange={(event) => { setIntent(event.target.value); setPlan(null); }}
             />
             <div className="intent-presets" aria-label={t("intentPresets")}>
               <button
                 type="button"
                 onClick={() => {
                   setOperation("inject");
+                  setModality("text");
                   setIntent(longTextIntents[language].inject);
                   setPlan(null);
                   setComposeSnapshot(null);
@@ -634,6 +636,7 @@ export function Workbench() {
                 type="button"
                 onClick={() => {
                   setOperation("edit");
+                  setModality("text");
                   setIntent(longTextIntents[language].edit);
                   setPlan(null);
                   setComposeSnapshot(null);
@@ -672,7 +675,9 @@ export function Workbench() {
               </Button>
             </div>
 
-            <AgentSession intent={intent} provider={provider} language={language} />
+            <AgentSession intent={intent} provider={provider} language={language} modality={modality}
+              configuration={payload} previewHash={composeResult?.valid ? composeResult.preview_hash : undefined}
+              previewValid={!!composeResult?.valid} />
             <div className="planner-skills">
               <div className="planner-skills-header">
                 <button
@@ -732,7 +737,11 @@ export function Workbench() {
                   <div>
                     <OperationBadge operation={plan.operation} />
                     <span className="case-count">
-                      {plan.num_cases} {t("cases")}
+                      {plan.configuration_limits?.max_samples != null
+                        ? `${plan.configuration_limits.max_samples} ${t("cases")}`
+                        : plan.configuration_limits?.max_steps != null
+                          ? `${plan.configuration_limits.max_steps} ${language === "zh" ? "训练步" : "training steps"}`
+                          : (language === "zh" ? "按配置执行" : "Configured scope")}
                     </span>
                   </div>
                 </div>
@@ -748,17 +757,10 @@ export function Workbench() {
                             experiment === experimentId ? "is-selected" : ""
                           }
                           key={method}
+                          disabled={!plan.configurations?.[method]}
                           onClick={() => {
-                            if (plan.operation !== operation) {
-                              plannedOperation.current = plan.operation;
-                              setOperation(plan.operation);
-                            }
-                            setRecipeId("");
-                            setExperiment(experimentId);
-                            setTaskName(
-                              `agent_${plan.operation}_${method.toLowerCase()}_quick_run`
-                            );
-                            setComposeSnapshot(null);
+                            const configuration = plan.configurations?.[method];
+                            if (configuration) applyConfiguration(configuration);
                           }}
                         >
                           <strong>{method}</strong>
@@ -808,7 +810,6 @@ export function Workbench() {
 
           <section className="panel recipe-panel">
             <SectionHeader
-              eyebrow={t("recipeSection")}
               title={t("recipe")}
               action={
                 <Button
@@ -822,17 +823,29 @@ export function Workbench() {
             />
             <div className="form-grid">
               <label className="field field-wide">
+                <span>{t("modality")}</span>
+                <select value={modality} onChange={(event) => {setModality(event.target.value as Modality); setPlan(null);}}>
+                  <option value="text">{language === "zh" ? "文本" : "Text"}</option>
+                  <option value="multimodal">{language === "zh" ? "图文" : "Image + text"}</option>
+                </select>
+              </label>
+              <label className="field field-wide">
                 <span>{t("recipe")}</span>
                 <select
                   value={experiment ? "__agent__" : recipeId || "__manual__"}
                   onChange={(event) => {
                     const value = event.target.value;
-                    setExperiment("");
-                    setRecipeId(
-                      value === "__manual__" || value === "__agent__"
-                        ? ""
-                        : value
-                    );
+                    setExperiment(value.startsWith("experiment:") ? value.slice(11) : "");
+                    setRecipeId(value.startsWith("experiment:") || value === "__manual__" || value === "__agent__" ? "" : value);
+                    setOverrides({});
+                    setBaseSelections({});
+                    if (value === "__manual__" && recipeId) {
+                      const selected = catalog.recipes.find(item => item.id === recipeId);
+                      if (selected) {
+                        setModel(selected.model); setTrainer(selected.trainer);
+                        setDatasets(selected.datasets); setEvaluation(selected.evaluation || "");
+                      }
+                    }
                     setComposeSnapshot(null);
                   }}
                 >
@@ -846,6 +859,9 @@ export function Workbench() {
                       {recipe.model} · {recipe.trainer?.split("/").at(-1)}
                     </option>
                   ))}
+                  {modality === "multimodal" ? catalog.experiments.filter((item) => item.operation === operation && item.modality === modality).map((item) => (
+                    <option key={item.id} value={`experiment:${item.id}`}>{displayTechnicalText(item.id)}</option>
+                  )) : null}
                   <option value="__manual__">{t("manualComposition")}</option>
                 </select>
               </label>
@@ -858,7 +874,7 @@ export function Workbench() {
                       onChange={(event) => setModel(event.target.value)}
                     >
                       {catalog.models
-                        .filter((item) => item.modality === "text")
+                        .filter((item) => item.modality === modality)
                         .map((item) => (
                           <option value={item.id} key={item.id}>
                             {item.id}
@@ -872,7 +888,7 @@ export function Workbench() {
                       value={trainer}
                       onChange={(event) => setTrainer(event.target.value)}
                     >
-                      {catalog.trainers[operation].map((item) => (
+                      {catalog.trainers[operation].filter((item) => item.modality === modality).map((item) => (
                         <option value={item.id} key={item.id}>
                           {item.id.split("/").at(-1)}
                         </option>
@@ -895,7 +911,7 @@ export function Workbench() {
                       >
                         {catalog.datasets
                           .filter((item) =>
-                            item.operations.includes(operation)
+                            item.operations.includes(operation) && item.modality === modality
                           )
                           .map((item) => (
                             <option value={item.id} key={item.id}>
@@ -911,7 +927,8 @@ export function Workbench() {
                       value={evaluation}
                       onChange={(event) => setEvaluation(event.target.value)}
                     >
-                      {catalog.evaluations.map((item) => (
+                      {modality === "multimodal" && operation !== "edit" ? <option value="">{language === "zh" ? "使用该多模态路线的探针" : "Use multimodal route probes"}</option> : null}
+                      {catalog.evaluations.filter((item) => modality === "text" ? !item.startsWith("mm_") : operation === "edit" && item.startsWith("mm_edit")).map((item) => (
                         <option value={item} key={item}>
                           {item}
                         </option>
@@ -952,26 +969,6 @@ export function Workbench() {
             </div>
 
             <div className="execute-bar">
-              <label className="compact-field gpu-select">
-                <span>GPU</span>
-                <select
-                  value={gpu ?? ""}
-                  onChange={(event) =>
-                    setGpu(
-                      event.target.value === ""
-                        ? null
-                        : Number(event.target.value)
-                    )
-                  }
-                >
-                  <option value="">{t("auto")}</option>
-                  {health?.gpus.map((item) => (
-                    <option key={item.index} value={item.index}>
-                      GPU {item.index} · {(item.memory_free_mib / 1024).toFixed(1)} GiB {t("free")}
-                    </option>
-                  ))}
-                </select>
-              </label>
               <div className="execute-actions">
                 <Button
                   variant="secondary"
@@ -984,7 +981,7 @@ export function Workbench() {
                 <Button
                   icon={Play}
                   loading={running}
-                  disabled={!composeResult?.valid || composing || planning}
+                  disabled={!composeResult?.valid || composing || planning || !!currentRun}
                   onClick={run}
                 >
                   {t("runNow")}
@@ -1068,13 +1065,12 @@ export function Workbench() {
             ) : null}
           </section>
 
-          {isUploadOperation(operation) ? (
+          {isUploadOperation(operation) && (modality === "text" || operation === "inject") ? (
             <section
               className="panel custom-data-panel"
               ref={uploadSectionRef}
             >
               <SectionHeader
-                eyebrow={t("dataSection")}
                 title={
                   operation === "unlearning"
                     ? t("customUnlearningData")
@@ -1094,9 +1090,11 @@ export function Workbench() {
               />
               {showUpload ? (
                 <DataUpload
-                  key={operation}
+                  key={`${operation}:${modality}`}
                   catalog={catalog}
+                  seed={seed}
                   operation={operation}
+                  modality={modality}
                   recommendedModel={
                     plan?.operation === operation ? plan.model_id : undefined
                   }
@@ -1104,12 +1102,8 @@ export function Workbench() {
                     plan?.operation === operation ? plan.methods[0] : undefined
                   }
                   onRegistered={(value) => {
-                    setRecipeId("");
-                    setExperiment(value.experiment || "");
-                    setTaskName(value.task_name);
-                    setSeed(value.seed);
-                    setSmoke(value.smoke);
-                    setComposeSnapshot(null);
+                    applyConfiguration(value);
+                    setPlan(null);
                   }}
                 />
               ) : (
@@ -1126,41 +1120,27 @@ export function Workbench() {
         </div>
 
         <aside className="workbench-rail">
-          <section className="rail-section">
-            <div className="rail-title">
-              <Gauge size={17} />
-              <h2>{t("gpuStatus")}</h2>
-            </div>
-            <div className="gpu-list">
-              {health?.gpus.slice(0, 10).map((item) => {
-                const used =
-                  (item.memory_used_mib / item.memory_total_mib) * 100;
-                return (
-                  <button
-                    type="button"
-                    aria-pressed={gpu === item.index}
-                    className={
-                      "gpu-row " + (gpu === item.index ? "selected" : "")
-                    }
-                    key={item.index}
-                    onClick={() => setGpu(item.index)}
-                  >
-                    <div>
-                      <strong>GPU {item.index}</strong>
-                      <span>
-                        {item.utilization_percent}% {t("utilization")}
-                      </span>
-                    </div>
-                    <div className="gpu-meter">
-                      <span style={{ width: used + "%" }} />
-                    </div>
-                    <small>
-                      {(item.memory_free_mib / 1024).toFixed(1)} GiB {t("free")}
-                    </small>
-                  </button>
-                );
-              })}
-            </div>
+          <section className="rail-section task-summary" aria-live="polite">
+            <h2>{language === "zh" ? "当前任务" : "Current task"}</h2>
+            <OperationBadge operation={operation} />
+            <dl>
+              <div><dt>{t("modality")}</dt><dd>{modality === "text" ? (language === "zh" ? "文本" : "Text") : (language === "zh" ? "图文" : "Image + text")}</dd></div>
+              <div><dt>{t("recipe")}</dt><dd>{displayTechnicalText(experiment || recipes.find(item => item.id === recipeId)?.experiment || (language === "zh" ? "自定义配置" : "Custom configuration"))}</dd></div>
+              {(!experiment || baseSelections.model) && <>
+                <div><dt>{t("model")}</dt><dd>{baseSelections.model || recipes.find(item => item.id === recipeId)?.model || model}</dd></div>
+                <div><dt>{t("method")}</dt><dd>{baseSelections.trainer?.split("/").at(-1) || recipes.find(item => item.id === recipeId)?.trainer?.split("/").at(-1) || trainer.split("/").at(-1)}</dd></div>
+              </>}
+              {Object.keys(baseSelections.datasets || {}).length > 0 && <div><dt>{t("dataset")}</dt><dd>{Object.values(baseSelections.datasets || {}).map(displayTechnicalText).join(", ")}</dd></div>}
+              <div><dt>{t("seed")}</dt><dd>{seed}</dd></div>
+              <div><dt>{language === "zh" ? "执行范围" : "Run scope"}</dt><dd>{smoke ? t(operation === "edit" ? "limitEdits" : "limitSteps") : (language === "zh" ? `样本 ${overrides.max_edits ?? overrides["++max_train_samples"] ?? overrides["data.max_samples"] ?? "按配置"}；步数 ${overrides["++trainer.args.max_steps"] ?? overrides["trainer.args.max_steps"] ?? "按配置"}` : `Cases: ${overrides.max_edits ?? overrides["++max_train_samples"] ?? overrides["data.max_samples"] ?? "configured"}; steps: ${overrides["++trainer.args.max_steps"] ?? overrides["trainer.args.max_steps"] ?? "configured"}`)}</dd></div>
+            </dl>
+            <ol className="task-progress">
+              <li className="is-complete">{language === "zh" ? "设置任务" : "Configure task"}</li>
+              <li className={composeResult?.valid ? "is-complete" : ""}>{t("preview")}</li>
+              <li className={currentRun ? "is-complete" : ""}>{t("runNow")}</li>
+              <li>{language === "zh" ? "查看效果与副作用" : "Review effects and side effects"}</li>
+            </ol>
+            {currentRun && <Link to={"/runs?selected=" + currentRun.id}>{t("runs")} <ChevronRight size={14} /></Link>}
           </section>
 
           {demos.length > 0 && <section className="rail-section demo-section">

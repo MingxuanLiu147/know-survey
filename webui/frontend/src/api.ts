@@ -8,6 +8,7 @@ import type {
   Plan,
   ResponseExample,
   ResultDetail,
+  ResultResponse,
   ResultSummary,
   RunEvent,
   RunRecord,
@@ -78,6 +79,7 @@ export const api = {
     provider: string;
     language: "en" | "zh";
     operation?: string;
+    modality?: "text" | "multimodal";
   }) =>
     request<Plan>("/plans", {
       method: "POST",
@@ -88,7 +90,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload)
     }),
-  startRun: (payload: ComposePayload & { gpu: number | null }) =>
+  startRun: (payload: ComposePayload & { gpu?: number | null; request_id?: string; preview_hash?: string }) =>
     request<RunRecord>("/runs", {
       method: "POST",
       body: JSON.stringify(payload)
@@ -106,11 +108,12 @@ export const api = {
   results: () =>
     request<{ results: ResultSummary[] }>("/results"),
   result: (id: string) =>
-    request<ResultDetail>("/results/" + id),
+    request<ResultResponse>("/results/" + id),
   demos: () => request<{ demos: Demo[] }>("/demos"),
   compare: (ids: string[]) =>
     request<{
       comparable: boolean;
+      comparison_basis?: string;
       fairness: Record<
         string,
         { values: unknown[]; known: boolean; equal: boolean }
@@ -140,7 +143,8 @@ export const api = {
     dataset_id: string;
     model: string;
     trainer: string;
-    evaluation: string;
+    evaluation: string | null;
+    modality?: "text" | "multimodal";
     seed: number;
     }
   ) =>

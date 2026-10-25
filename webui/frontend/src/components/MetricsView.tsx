@@ -54,6 +54,7 @@ function Direction({ metric }: { metric: Metric }) {
 export function formatMetric(metric: Metric): string {
   if (metric.value === null || metric.value === undefined) return "N/A";
   const value = metric.value;
+  if (metric.unit === "multiplier") return value.toFixed(2) + "×";
   if (metric.unit === "ratio") {
     return (value * 100).toFixed(1) + "%";
   }
@@ -90,13 +91,14 @@ export function MetricsView({
       (metric) =>
         metric.value !== null &&
         Number.isFinite(metric.value) &&
-        metric.category !== "diagnostic"
+        metric.category !== "diagnostic" &&
+        metric.unit === "ratio" && metric.value >= 0 && metric.value <= 1
     )
     .slice(0, 10)
     .map((metric) => ({
       id: metric.id,
       name: metric.label[language],
-      value: metric.value,
+      value: metric.value! * 100,
       category: metric.category,
       formatted: formatMetric(metric)
     }));
@@ -104,7 +106,7 @@ export function MetricsView({
     <div className={compact ? "metrics-view compact" : "metrics-view"}>
       <div className="metric-grid">
         {metrics.slice(0, compact ? 4 : 12).map((metric) => (
-          <article className="metric-card" key={metric.id}>
+          <article className="metric-card" key={metric.id} title={[metric.evaluator, metric.phase, metric.protocol_version, metric.measurement_kind, metric.unavailable_reason].filter(Boolean).join(" · ")}>
             <div className="metric-card-top">
               <span>{metric.label[language]}</span>
               <Gauge size={15} aria-hidden="true" />
@@ -133,6 +135,8 @@ export function MetricsView({
               />
               <XAxis
                 type="number"
+                domain={[0, 100]}
+                tickFormatter={(value: number) => `${value}%`}
                 tick={{ fill: "var(--text-muted)", fontSize: 11 }}
                 axisLine={false}
                 tickLine={false}

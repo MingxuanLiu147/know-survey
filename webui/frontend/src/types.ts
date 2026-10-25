@@ -1,3 +1,4 @@
+export type Modality = "text" | "multimodal";
 export type Operation = "unlearning" | "inject" | "edit";
 export type EvidenceLevel =
   | "planned"
@@ -26,10 +27,11 @@ export interface Catalog {
     local: boolean;
     status: EvidenceLevel;
   }>;
-  trainers: Record<Operation, Array<{ id: string; status: EvidenceLevel }>>;
+  trainers: Record<Operation, Array<{ id: string; status: EvidenceLevel; modality: Modality }>>;
   datasets: Array<{
     id: string;
     handlers: string[];
+    modality: Modality;
     operations: Operation[];
     status: EvidenceLevel;
   }>;
@@ -37,6 +39,7 @@ export interface Catalog {
   experiments: Array<{
     id: string;
     operation: Operation;
+    modality: Modality;
     status: EvidenceLevel;
   }>;
   recipes: Recipe[];
@@ -45,6 +48,7 @@ export interface Catalog {
 export interface Recipe {
   id: string;
   operation: Operation;
+  modality?: Modality;
   experiment: string;
   model: string;
   trainer: string;
@@ -58,9 +62,14 @@ export interface Recipe {
 
 export interface Plan {
   plan_id: string;
+  configuration?: ComposePayload | null;
+  configuration_limits?: { max_samples: number | null; max_steps: number | null };
+  configurations?: Record<string, ComposePayload>;
+  configuration_errors?: Record<string, string>;
   schema_version: string;
   intent: string;
   operation: Operation;
+  modality?: Modality;
   knowledge_type: string;
   model_id: string;
   dataset_id: string;
@@ -81,12 +90,13 @@ export interface Plan {
 
 export interface ComposePayload {
   operation: Operation;
+  modality?: Modality;
   recipe_id?: string;
   experiment?: string;
   model?: string;
   trainer?: string;
   datasets?: Record<string, string>;
-  evaluation?: string;
+  evaluation?: string | null;
   task_name: string;
   seed: number;
   smoke: boolean;
@@ -94,6 +104,7 @@ export interface ComposePayload {
 }
 
 export interface ComposeResult {
+  preview_hash?: string;
   valid: boolean;
   returncode: number;
   command: string;
@@ -129,6 +140,7 @@ export interface Health {
 
 export interface RunRecord {
   id: string;
+  result_id?: string | null;
   status:
     | "queued"
     | "running"
@@ -138,6 +150,7 @@ export interface RunRecord {
     | "stopped"
     | "interrupted";
   operation: Operation;
+  modality?: Modality;
   task_name: string;
   gpu: number | null;
   created_at: string;
@@ -164,6 +177,15 @@ export interface RunEvent {
 
 export interface Metric {
   id: string;
+  metric_name?: string | null;
+  evaluator?: string | null;
+  phase?: string | null;
+  protocol_version?: string | null;
+  scoring?: string | null;
+  measurement_kind?: string | null;
+  numerator?: number | null;
+  denominator?: number | null;
+  unavailable_reason?: string | null;
   value: number | null;
   source: string;
   label: LocalizedText;
@@ -194,6 +216,10 @@ export interface ResultDetail extends ResultSummary {
   command?: string | null;
 }
 
+export type ResultResponse = ResultDetail |
+  { kind: "pending"; result_id: string; run_id: string; retry_after_seconds?: number } |
+  { kind: "unavailable"; result_id: string; run_id: string; run_status?: string; reason?: string };
+
 export interface Demo {
   slug: string;
   path: string;
@@ -213,6 +239,7 @@ export interface Skill {
 export interface ResponseExample {
   id: string;
   operation: Operation;
+  modality?: Modality;
   evidence_level: EvidenceLevel;
   model: string;
   method: string;

@@ -22,7 +22,12 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import (
+    FileResponse,
+    JSONResponse,
+    PlainTextResponse,
+    StreamingResponse,
+)
 from fastapi.staticfiles import StaticFiles
 
 from .catalog import (
@@ -32,6 +37,7 @@ from .catalog import (
     display_command,
 )
 from .jobs import FINAL_STATES, JobError, JobManager
+from .execution import composition_identity
 from .planner import PlannerError, create_plan, provider_status
 from .results import ResultStore
 from .schemas import (
@@ -85,14 +91,72 @@ async def start_agent(request: AgentRequest) -> dict[str, Any]:
         raise HTTPException(
             409, "An autonomous session is already running. / 已有自主任务正在运行。"
         )
+    configuration = request.configuration
+    composed = None
+    if configuration is not None:
+        composed = await asyncio.to_thread(
+            _checked_compose, configuration, request.preview_hash
+        )
+        if any(not task.done() for task in _agent_tasks.values()):
+            raise HTTPException(
+                409,
+                "An autonomous session is already running. / 已有自主任务正在运行。",
+            )
+
+    def execute_configuration(session):
+        # Parameters are captured from the caller's configuration, never from
+        # a model-generated tool argument or a newly inferred plan.
+        run_request = RunRequest.model_validate(
+            {
+                **configuration.model_dump(),
+                "request_id": f"agent-{session.id}",
+                "preview_hash": composed["preview_hash"],
+            }
+        )
+        if session.cancelled.is_set() or time.monotonic() >= session.deadline:
+            raise TimeoutError("Session cancelled or time budget exhausted.")
+        record = _start_configuration(
+            run_request,
+            abort=lambda: session.cancelled.is_set()
+            or time.monotonic() >= session.deadline,
+        )
+        session.record_configuration_run(record)
+        stopping = False
+        while record["status"] not in FINAL_STATES:
+            if not stopping and (
+                session.cancelled.is_set() or time.monotonic() >= session.deadline
+            ):
+                try:
+                    jobs.stop(record["id"])
+                except JobError:
+                    pass  # The process may have finished between the two checks.
+                stopping = True
+            time.sleep(0.2)
+            record = jobs.get(record["id"])
+        session.record_configuration_run(record)
+        return {
+            "status": "passed" if record["status"] == "succeeded" else "failed",
+            "returncode": record["exit_code"],
+            "run_id": record["id"],
+            "result_id": record["result_id"],
+            "command": record["command"],
+            "observation": record,
+        }
+
     session = AgentSession(
         ROOT,
         provider=request.provider,
+        modality=request.modality,
         allow_execute=request.execute,
         cuda=request.cuda,
         max_steps=request.max_steps,
         max_cases=request.max_cases,
         timeout=request.timeout,
+        configuration=configuration.model_dump() if configuration is not None else None,
+        configuration_preview=composed,
+        configuration_runner=execute_configuration
+        if configuration is not None
+        else None,
     )
     _agent_sessions[session.id] = session
     task = asyncio.create_task(asyncio.to_thread(session.run, request.intent))
@@ -295,7 +359,7 @@ def _compose(request: ComposeRequest) -> dict[str, Any]:
             status_code=504,
             detail="Hydra composition timed out.",
         ) from exc
-    return {
+    result = {
         "valid": process.returncode == 0,
         "returncode": process.returncode,
         "command": command,
@@ -304,6 +368,59 @@ def _compose(request: ComposeRequest) -> dict[str, Any]:
         "stderr": process.stderr[-30_000:],
         "request": request.model_dump(),
     }
+    if result["valid"]:
+        try:
+            result.update(composition_identity(result["resolved_config"], ROOT))
+        except (OSError, ValueError, TypeError) as exc:
+            raise HTTPException(
+                422, f"Cannot inspect the composed configuration: {exc}"
+            ) from exc
+    return result
+
+
+def _checked_compose(
+    request: ComposeRequest, preview_hash: str | None = None
+) -> dict[str, Any]:
+    result = _compose(request)
+    if not result["valid"]:
+        raise HTTPException(
+            409,
+            {
+                "message": "Hydra composition failed; run was not started.",
+                "stderr": result["stderr"],
+            },
+        )
+    if preview_hash is not None and result["preview_hash"] != preview_hash:
+        raise HTTPException(
+            409,
+            "preview_stale: configuration or checked local inputs changed; preview again.",
+        )
+    return result
+
+
+def _start_configuration(request: RunRequest, *, abort=None) -> dict[str, Any]:
+    """Start GUI and configured Agent jobs through the same validated path."""
+    payload = request.model_dump()
+    try:
+        existing = jobs.existing_request(payload)
+        if existing is not None:
+            return existing
+        compose_request = ComposeRequest.model_validate(
+            request.model_dump(exclude={"gpu", "request_id", "preview_hash"})
+        )
+        composed = _checked_compose(compose_request, request.preview_hash)
+        if abort is not None and abort():
+            raise TimeoutError("Session cancelled or time budget exhausted.")
+        return jobs.start(
+            argv=catalog.build_argv(compose_request),
+            operation=request.operation,
+            task_name=request.task_name,
+            gpu=request.gpu,
+            compose=composed,
+            request=payload,
+        )
+    except JobError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @app.get(f"{API_PREFIX}/health")
@@ -367,28 +484,7 @@ def list_runs(limit: int = Query(default=100, ge=1, le=500)) -> dict[str, Any]:
 
 @app.post(f"{API_PREFIX}/runs", status_code=202)
 async def start_run(request: RunRequest) -> dict[str, Any]:
-    compose_request = ComposeRequest.model_validate(request.model_dump(exclude={"gpu"}))
-    composed = await asyncio.to_thread(_compose, compose_request)
-    if not composed["valid"]:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "message": "Hydra composition failed; run was not started.",
-                "stderr": composed["stderr"],
-            },
-        )
-    argv = catalog.build_argv(compose_request)
-    try:
-        return jobs.start(
-            argv=argv,
-            operation=request.operation,
-            task_name=request.task_name,
-            gpu=request.gpu,
-            compose=composed,
-            request=request.model_dump(),
-        )
-    except JobError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return await asyncio.to_thread(_start_configuration, request)
 
 
 @app.get(f"{API_PREFIX}/runs/{{run_id}}")
@@ -469,11 +565,54 @@ def list_results(limit: int = Query(default=200, ge=1, le=500)) -> dict[str, Any
 
 
 @app.get(f"{API_PREFIX}/results/{{result_id}}")
-def get_result(result_id: str) -> dict[str, Any]:
+def get_result(result_id: str) -> Any:
     try:
         return results.get(result_id)
     except KeyError as exc:
+        run = jobs.for_result(result_id)
+        if run is not None:
+            if run["status"] not in FINAL_STATES:
+                return JSONResponse(
+                    status_code=202,
+                    content={
+                        "kind": "pending",
+                        "result_id": result_id,
+                        "run_id": run["id"],
+                        "retry_after_seconds": 2,
+                    },
+                )
+            return {
+                "kind": "unavailable",
+                "result_id": result_id,
+                "run_id": run["id"],
+                "run_status": run["status"],
+                "reason": run.get("error")
+                or "No result artifacts were produced. / 本次运行未产生结果文件。",
+            }
         raise HTTPException(status_code=404, detail="Result not found.") from exc
+
+
+@app.get(f"{API_PREFIX}/results/{{result_id}}/cases")
+def get_result_cases(
+    result_id: str,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=100),
+    metric_id: str | None = None,
+) -> dict[str, Any]:
+    try:
+        return results.cases(result_id, offset=offset, limit=limit, metric_id=metric_id)
+    except KeyError as exc:
+        raise HTTPException(404, "Result not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.get(f"{API_PREFIX}/results/{{result_id}}/metadata")
+def get_result_metadata(result_id: str) -> dict[str, Any]:
+    try:
+        return results.metadata(result_id)
+    except KeyError as exc:
+        raise HTTPException(404, "Result not found.") from exc
 
 
 @app.post(f"{API_PREFIX}/results/compare")
@@ -545,6 +684,7 @@ async def preview_upload(
     mapping: str | None = Form(default=None),
     knowledge_type: str = Form(default="fact"),
     format_type: str = Form(default="custom"),
+    modality: str = Form(default="text"),
 ) -> dict[str, Any]:
     if operation not in {"unlearning", "inject", "edit"}:
         raise HTTPException(
@@ -560,6 +700,7 @@ async def preview_upload(
             mapping=mapping,
             knowledge_type=knowledge_type,
             format_type=format_type,
+            modality=modality,
             operation=operation,
             retain_data=retain_data,
             retain_filename=retain_file.filename if retain_file else None,

@@ -10,6 +10,7 @@ import { useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { MetricsView, ProcessTimeline } from "../components/MetricsView";
 import { RunLog } from "../components/RunLog";
+import { CaseInspector } from "../components/CaseInspector";
 import {
   Button,
   EmptyState,
@@ -20,25 +21,35 @@ import {
   StatusBadge
 } from "../components/ui";
 import { displayTechnicalText, uiErrorMessage, useI18n } from "../i18n";
-import type { ResultDetail, ResultSummary, RunRecord } from "../types";
+import type { ResultDetail, RunRecord } from "../types";
 
 export function Runs() {
   const { language, t } = useI18n();
   const [searchParams, setSearchParams] = useSearchParams();
   const [runs, setRuns] = useState<RunRecord[]>([]);
-  const [results, setResults] = useState<ResultSummary[]>([]);
   const [selected, setSelected] = useState<RunRecord | null>(null);
   const [detail, setDetail] = useState<ResultDetail | null>(null);
+  const [resultState, setResultState] = useState<"loading" | "pending" | "unavailable" | "ready" | "error">("loading");
+  const [resultError, setResultError] = useState("");
+  const [resultAttempt, setResultAttempt] = useState(0);
+  const selectedIdRef = useRef<string | undefined>(undefined);
+  selectedIdRef.current = selected?.id;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [filter, setFilter] = useState("all");
   const requestedRun = useRef(searchParams.get("selected"));
   requestedRun.current = searchParams.get("selected");
+  const loadVersion = useRef(0);
+  const languageRef = useRef(language);
+  languageRef.current = language;
 
   const loadRuns = async () => {
+    const version = ++loadVersion.current;
     try {
       const runPayload = await api.runs();
+      if (version !== loadVersion.current) return;
       setRuns(runPayload.runs);
+      setError("");
       const requested = requestedRun.current;
       setSelected(
         (current) =>
@@ -48,64 +59,67 @@ export function Runs() {
           null
       );
     } catch (caught) {
-      setError(uiErrorMessage(caught, language));
+      if (version === loadVersion.current) setError(uiErrorMessage(caught, languageRef.current));
     } finally {
-      setLoading(false);
-    }
-  };
-
-  const loadResults = async () => {
-    try {
-      const resultPayload = await api.results();
-      setResults(resultPayload.results);
-    } catch (caught) {
-      setError(uiErrorMessage(caught, language));
+      if (version === loadVersion.current) setLoading(false);
     }
   };
 
   const load = () => {
     setError("");
     void loadRuns();
-    void loadResults();
+    setResultAttempt((value) => value + 1);
   };
 
   useEffect(() => {
-    load();
-    const timer = window.setInterval(() => {
-      void loadRuns();
-      void loadResults();
-    }, 5000);
-    return () => window.clearInterval(timer);
+    void loadRuns();
+    const timer = window.setInterval(() => { void loadRuns(); }, 5000);
+    return () => { loadVersion.current += 1; window.clearInterval(timer); };
   }, []);
 
   useEffect(() => {
-    if (!selected) {
-      setDetail(null);
-      return;
-    }
-    const summary = results.find(
-      (item) =>
-        item.path === selected.output_dir ||
-        item.path.endsWith("/" + selected.task_name)
-    );
-    if (!summary) {
-      setDetail(null);
+    setDetail(null);
+    setResultError("");
+    if (!selected?.result_id) {
+      setResultState("unavailable");
       return;
     }
     let cancelled = false;
-    setDetail(null);
-    void api
-      .result(summary.id)
-      .then((value) => {
-        if (!cancelled) setDetail(value);
-      })
-      .catch(() => {
-        if (!cancelled) setDetail(null);
-      });
-    return () => {
-      cancelled = true;
+    let timer: number | undefined;
+    const resultId = selected.result_id;
+    const terminal = ["succeeded", "failed", "stopped", "interrupted"].includes(selected.status);
+    setResultState("loading");
+    const pollResult = async () => {
+      let again = !terminal;
+      let delay = 2500;
+      try {
+        const value = await api.result(resultId);
+        if (cancelled) return;
+        setResultError("");
+        if ("kind" in value && value.kind === "pending") {
+          setDetail(null);
+          setResultState("pending");
+          again = true;
+          delay = Math.max(1000, Math.min(10000, (value.retry_after_seconds || 2) * 1000));
+        } else if ("kind" in value && value.kind === "unavailable") {
+          setDetail(null);
+          setResultState("unavailable");
+          again = false;
+        } else {
+          setDetail(value as ResultDetail);
+          setResultState("ready");
+        }
+      } catch (caught) {
+        if (cancelled) return;
+        setResultState("error");
+        setResultError(uiErrorMessage(caught, language));
+      } finally {
+        if (!cancelled && again) timer = window.setTimeout(pollResult, delay);
+      }
     };
-  }, [selected?.id, selected?.status, results]);
+    void pollResult();
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [selected?.id, selected?.status, selected?.result_id, resultAttempt, language]);
 
   const visibleRuns = useMemo(
     () =>
@@ -114,6 +128,7 @@ export function Runs() {
         : runs.filter((item) => item.status === filter),
     [runs, filter]
   );
+  const activeDetail = detail?.id === selected?.result_id ? detail : null;
 
   if (loading) return <LoadingBlock label={t("loading")} />;
 
@@ -173,7 +188,6 @@ export function Runs() {
                     <span className={"run-state state-" + run.status} />
                     <div>
                       <strong>{displayTechnicalText(run.task_name)}</strong>
-                      <span className="mono">{run.id}</span>
                     </div>
                   </div>
                   <div className="run-row-meta">
@@ -182,7 +196,6 @@ export function Runs() {
                       <Clock3 size={13} />
                       {new Date(run.created_at).toLocaleString(locale)}
                     </span>
-                    <span>GPU {run.gpu ?? t("auto")}</span>
                   </div>
                 </button>
               ))}
@@ -196,6 +209,7 @@ export function Runs() {
           <RunLog
             run={selected}
             onChange={(value) => {
+              if (selectedIdRef.current !== value.id) return;
               setSelected(value);
               setRuns((current) =>
                 current.map((item) =>
@@ -240,20 +254,29 @@ export function Runs() {
               </dl>
             </section>
           ) : null}
-          {detail ? (
+          {selected && !activeDetail ? <section className="run-result" aria-live="polite">
+            <h3>{t("results")}</h3>
+            {resultState === "loading" ? <LoadingBlock label={language === "zh" ? "正在读取结果" : "Loading results"} />
+              : resultState === "pending" ? <p className="section-description">{language === "zh" ? "任务已启动，结果生成后会自动显示。" : "The task has started. Results will appear when available."}</p>
+              : resultState === "error" ? <InlineError message={resultError} />
+              : <p className="section-description">{language === "zh" ? "此运行没有可读取的结果，请查看日志了解运行情况。" : "No readable results are available for this run. Check its logs for details."}</p>}
+            {["error", "unavailable"].includes(resultState) ? <Button variant="secondary" icon={RefreshCw} onClick={() => setResultAttempt((value) => value + 1)}>{language === "zh" ? "重新读取结果" : "Retry results"}</Button> : null}
+          </section> : null}
+          {activeDetail ? (
             <section className="run-result">
               <div className="subsection-title">
                 <h3>{t("results")}</h3>
                 <a
                   className="button button-secondary"
-                  href={"/api/v1/results/" + detail.id + "/report"}
+                  href={"/api/v1/results/" + activeDetail.id + "/report"}
                 >
                   <FileOutput size={16} />
                   {t("downloadReport")}
                 </a>
               </div>
-              <MetricsView metrics={detail.metrics} />
-              <ProcessTimeline result={detail} />
+              <MetricsView metrics={activeDetail.metrics} />
+              <ProcessTimeline result={activeDetail} />
+              <CaseInspector key={activeDetail.id} results={[activeDetail]} />
             </section>
           ) : null}
         </div>

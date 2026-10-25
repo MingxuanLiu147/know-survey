@@ -7,7 +7,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import { displayTechnicalText, uiErrorMessage, useI18n } from "../i18n";
-import type { Catalog, ComposePayload, Operation } from "../types";
+import type { Catalog, ComposePayload, Modality, Operation } from "../types";
 import { Button, InlineError } from "./ui";
 
 type UploadOperation = Operation;
@@ -50,12 +50,16 @@ function recommendedTrainerId(
 export function DataUpload({
   catalog,
   operation,
+  modality = "text",
+  seed = 42,
   recommendedModel,
   recommendedMethod,
   onRegistered
 }: {
   catalog: Catalog;
   operation: UploadOperation;
+  modality?: Modality;
+  seed?: number;
   recommendedModel?: string;
   recommendedMethod?: string;
   onRegistered: (payload: ComposePayload) => void;
@@ -63,10 +67,17 @@ export function DataUpload({
   const { language, t } = useI18n();
   const fileInput = useRef<HTMLInputElement>(null);
   const retainFileInput = useRef<HTMLInputElement>(null);
+  const mounted = useRef(false);
+  const previewGeneration = useRef(0);
+  const registerGeneration = useRef(0);
+  const previewInFlight = useRef(false);
+  const registerInFlight = useRef(false);
+  const onRegisteredRef = useRef(onRegistered);
+  onRegisteredRef.current = onRegistered;
   const [file, setFile] = useState<File | null>(null);
   const [retainFile, setRetainFile] = useState<File | null>(null);
-  const [mapping, setMapping] = useState(defaultMappings[operation]);
-  const [knowledgeType, setKnowledgeType] = useState("fact");
+  const [mapping, setMapping] = useState(modality === "multimodal" ? JSON.stringify({id: "id", prompt: "prompt", target_new: "target_new", images: "images"}, null, 2) : defaultMappings[operation]);
+  const [knowledgeType, setKnowledgeType] = useState(modality === "multimodal" ? "multimodal" : "fact");
   const [previewing, setPreviewing] = useState(false);
   const [registering, setRegistering] = useState(false);
   const [error, setError] = useState("");
@@ -85,15 +96,15 @@ export function DataUpload({
         : "my_edit"
   );
   const [model, setModel] = useState(
-    catalog.models.find((item) => item.id === recommendedModel)?.id ||
-    catalog.models.find((item) => item.id === "gpt2")?.id ||
-      catalog.models.find((item) => item.modality === "text")?.id ||
+    catalog.models.find((item) => item.id === recommendedModel && item.modality === modality)?.id ||
+    catalog.models.find((item) => item.id === (modality === "text" ? "gpt2" : "Qwen2.5-VL-3B"))?.id ||
+      catalog.models.find((item) => item.modality === modality)?.id ||
       ""
   );
   const [trainer, setTrainer] = useState(
     catalog.trainers[operation].find(
       (item) =>
-        item.id === recommendedTrainerId(operation, recommendedMethod)
+        item.id === recommendedTrainerId(operation, recommendedMethod) && item.modality === modality
     )?.id ||
       catalog.trainers[operation].find(
         (item) =>
@@ -101,10 +112,10 @@ export function DataUpload({
           (operation === "unlearning"
             ? "GradAscent"
             : operation === "inject"
-              ? "inject/LoRA"
+              ? (modality === "text" ? "inject/LoRA" : "inject/MM_LoRA")
               : "edit/FT")
       )?.id ||
-      catalog.trainers[operation][0]?.id ||
+      catalog.trainers[operation].find((item) => item.modality === modality)?.id ||
       ""
   );
   const [registered, setRegistered] = useState<{
@@ -112,6 +123,40 @@ export function DataUpload({
     experiment: string;
     command: string;
   } | null>(null);
+  const previewInputs = useMemo(() => ({ file, retainFile, mapping, knowledgeType, operation, modality }), [file, retainFile, mapping, knowledgeType, operation, modality]);
+  const previewInputsRef = useRef(previewInputs);
+  previewInputsRef.current = previewInputs;
+  const registrationInputs = useMemo(() => ({ preview, datasetId, model, trainer, seed, operation, modality }), [preview, datasetId, model, trainer, seed, operation, modality]);
+  const registrationInputsRef = useRef(registrationInputs);
+  registrationInputsRef.current = registrationInputs;
+
+  const invalidateRegistration = () => {
+    registerGeneration.current += 1;
+    registerInFlight.current = false;
+    setRegistering(false);
+    setRegistered(null);
+  };
+  const invalidatePreview = () => {
+    previewGeneration.current += 1;
+    previewInFlight.current = false;
+    setPreviewing(false);
+    setPreview(null);
+    invalidateRegistration();
+    setError("");
+  };
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      previewGeneration.current += 1;
+      registerGeneration.current += 1;
+      previewInFlight.current = false;
+      registerInFlight.current = false;
+    };
+  }, []);
+  useEffect(() => { invalidatePreview(); }, [operation, modality]);
+  useEffect(() => { invalidateRegistration(); }, [registrationInputs]);
 
   const columns = useMemo(() => {
     if (!preview?.preview.length) return [];
@@ -125,35 +170,39 @@ export function DataUpload({
     procedural: t("procedural"),
     rule: t("rule"),
     free_text: t("freeText"),
-    concept: t("concept")
+    concept: t("concept"),
+    multimodal: language === "zh" ? "图文知识" : "Image-text knowledge"
   };
 
   useEffect(() => {
     if (
       recommendedModel &&
-      catalog.models.some((item) => item.id === recommendedModel)
+      catalog.models.some((item) => item.id === recommendedModel && item.modality === modality)
     ) {
       setModel(recommendedModel);
     }
     const trainerId = recommendedTrainerId(operation, recommendedMethod);
     if (
       trainerId &&
-      catalog.trainers[operation].some((item) => item.id === trainerId)
+      catalog.trainers[operation].some((item) => item.id === trainerId && item.modality === modality)
     ) {
       setTrainer(trainerId);
     }
-  }, [catalog, operation, recommendedMethod, recommendedModel]);
+  }, [catalog, operation, modality, recommendedMethod, recommendedModel]);
 
   const chooseFile = (value: File | null, role: "primary" | "retain") => {
+    invalidatePreview();
     if (role === "retain") setRetainFile(value);
     else setFile(value);
-    setPreview(null);
-    setRegistered(null);
-    setError("");
   };
 
   const runPreview = async () => {
-    if (!file || (operation === "unlearning" && !retainFile)) return;
+    if (previewInFlight.current || !file || (operation === "unlearning" && !retainFile)) return;
+    invalidatePreview();
+    const generation = ++previewGeneration.current;
+    const inputs = previewInputs;
+    const isCurrent = () => mounted.current && generation === previewGeneration.current && previewInputsRef.current === inputs;
+    previewInFlight.current = true;
     setPreviewing(true);
     setError("");
     try {
@@ -164,33 +213,47 @@ export function DataUpload({
       form.append("mapping", mapping);
       form.append("knowledge_type", knowledgeType);
       form.append("format_type", "custom");
-      setPreview(await api.previewUpload(operation, form));
+      form.append("modality", modality);
+      const value = await api.previewUpload(operation, form);
+      if (isCurrent()) setPreview(value);
     } catch (caught) {
-      setError(uiErrorMessage(caught, language));
+      if (isCurrent()) setError(uiErrorMessage(caught, language));
     } finally {
-      setPreviewing(false);
+      if (isCurrent()) {
+        previewInFlight.current = false;
+        setPreviewing(false);
+      }
     }
   };
 
   const register = async () => {
-    if (!preview) return;
+    if (registerInFlight.current || !preview || !datasetId || !model || !trainer) return;
+    const generation = ++registerGeneration.current;
+    const inputs = registrationInputs;
+    const isCurrent = () => mounted.current && generation === registerGeneration.current && registrationInputsRef.current === inputs;
+    registerInFlight.current = true;
     setRegistering(true);
     setError("");
     try {
       const value = await api.registerUpload(operation, {
         upload_id: preview.upload_id,
+        modality,
         dataset_id: datasetId,
         model,
         trainer,
-        evaluation: operation === "unlearning" ? "tofu" : operation,
-        seed: 42
+        evaluation: modality === "multimodal" ? null : operation === "unlearning" ? "tofu" : operation,
+        seed
       });
+      if (!isCurrent()) return;
       setRegistered(value);
-      onRegistered(value.compose_request);
+      onRegisteredRef.current(value.compose_request);
     } catch (caught) {
-      setError(uiErrorMessage(caught, language));
+      if (isCurrent()) setError(uiErrorMessage(caught, language));
     } finally {
-      setRegistering(false);
+      if (isCurrent()) {
+        registerInFlight.current = false;
+        setRegistering(false);
+      }
     }
   };
 
@@ -286,13 +349,13 @@ export function DataUpload({
               value={mapping}
               rows={8}
               onChange={(event) => {
+                invalidatePreview();
                 setMapping(event.target.value);
-                setPreview(null);
               }}
               spellCheck={false}
             />
             <small className="field-hint">
-              {operation === "inject"
+              {modality === "multimodal" ? (language === "zh" ? "图文 JSON/JSONL 需要 prompt、target_new 和 images。图片须已存在于服务器，使用绝对路径或相对仓库路径。" : "Image-text records need prompt, target_new, and images. Images must exist on the server; use absolute or repository-relative paths.") : operation === "inject"
                 ? t("injectionRequiredFields")
                 : operation === "edit"
                   ? t("editingRequiredFields")
@@ -303,9 +366,9 @@ export function DataUpload({
             <span>{t("knowledgeType")}</span>
             <select
               value={knowledgeType}
-              onChange={(event) => setKnowledgeType(event.target.value)}
+              onChange={(event) => { invalidatePreview(); setKnowledgeType(event.target.value); }}
             >
-              {["fact", "event", "procedural", "rule", "free_text", "concept"].map(
+              {(modality === "multimodal" ? ["multimodal"] : ["fact", "event", "procedural", "rule", "free_text", "concept"]).map(
                 (value) => (
                   <option value={value} key={value}>
                     {knowledgeTypeLabels[value]}
@@ -369,7 +432,7 @@ export function DataUpload({
                   <span>{t("datasetId")}</span>
                   <input
                     value={datasetId}
-                    onChange={(event) => setDatasetId(event.target.value)}
+                    onChange={(event) => { invalidateRegistration(); setDatasetId(event.target.value); }}
                     pattern="[a-z][a-z0-9_-]*"
                   />
                 </label>
@@ -377,10 +440,10 @@ export function DataUpload({
                   <span>{t("model")}</span>
                   <select
                     value={model}
-                    onChange={(event) => setModel(event.target.value)}
+                    onChange={(event) => { invalidateRegistration(); setModel(event.target.value); }}
                   >
                     {catalog.models
-                      .filter((item) => item.modality === "text")
+                      .filter((item) => item.modality === modality)
                       .map((item) => (
                         <option key={item.id} value={item.id}>
                           {item.id}
@@ -392,9 +455,9 @@ export function DataUpload({
                   <span>{t("method")}</span>
                   <select
                     value={trainer}
-                    onChange={(event) => setTrainer(event.target.value)}
+                    onChange={(event) => { invalidateRegistration(); setTrainer(event.target.value); }}
                   >
-                    {catalog.trainers[operation].map((item) => (
+                    {catalog.trainers[operation].filter((item) => item.modality === modality).map((item) => (
                       <option key={item.id} value={item.id}>
                         {operation === "unlearning"
                           ? item.id
@@ -407,7 +470,7 @@ export function DataUpload({
               <Button
                 icon={Database}
                 loading={registering}
-                disabled={!datasetId || !model || !trainer}
+                disabled={previewing || !datasetId || !model || !trainer || Boolean(registered)}
                 onClick={register}
               >
                 {t("registerData")}

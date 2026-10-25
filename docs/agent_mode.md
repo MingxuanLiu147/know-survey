@@ -24,6 +24,20 @@ A useful request names the operation, model, data, method, size and desired eval
 
 Sessions are saved under `artifacts/agent/<session-id>/`. The trace contains tool decisions, observations and commands. Model and evaluation outputs remain in the task's `saves/` directory.
 
+## Use the WebUI configuration
+
+The WebUI has a configuration-bound Agent flow. Compose the task first, then enable
+execution in the Agent panel. The session receives the same model, method, data,
+seed, evaluation and limits as the Run button. Its execution tool takes no replacement
+configuration from the provider. A run appears in the shared Runs page and retains
+its own command, output directory and result ID.
+
+These sessions use the server's device environment. Their default is preview only;
+the CLI `--max-cases` default does not replace the WebUI configuration's budget.
+If a local input file changes after preview, compose it again before execution.
+The CLI's independent planning flow above remains available for requests that do
+not start from a WebUI configuration.
+
 ## External coding agents
 
 Open the repository in Codex or Claude Code. Shared workflows live in `.claude/skills/`; `.agents/skills` points to the same directory. Typical workflows are:

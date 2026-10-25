@@ -138,6 +138,12 @@ METRICS: dict[str, dict[str, Any]] = {
 
 CURATED_DEMOS: list[dict[str, Any]] = []
 
+COMPARISON_BASIS = (
+    "Compares recorded inputs, model revision, record counts, evaluation settings, "
+    "run limits, environment, metric protocols and scoring semantics. "
+    "Unmatched results remain side by side without a ranking."
+)
+
 
 def _read_json(path: Path) -> dict[str, Any]:
     try:
@@ -490,15 +496,161 @@ def _summary_paths(run_dir: Path) -> list[Path]:
     checkpoint_eval = _checkpoint_eval_dir(run_dir)
     if checkpoint_eval is not None:
         paths.extend(sorted(checkpoint_eval.glob("*_SUMMARY.json")))
-    return paths
+    return [path for path in paths if path.resolve().is_relative_to(run_dir.resolve())]
+
+
+METRIC_CONTEXT_FIELDS = (
+    "protocol_version",
+    "scoring",
+    "measurement_kind",
+    "denominator",
+    "numerator",
+    "unavailable_reason",
+)
+
+
+def _metric_identity(source: str, key: str, context: dict[str, Any]) -> dict[str, str]:
+    path = Path(source)
+    evaluator = path.stem.removesuffix("_SUMMARY").removesuffix("_EVAL")
+    location = path.parent.as_posix() if path.parent != Path(".") else "run"
+    phase = context.get("phase")
+    if not isinstance(phase, str) or not phase:
+        phase = location
+    identity_phase = phase if phase == location else f"{location}/{phase}"
+    return {
+        "id": f"{evaluator}:{identity_phase}:{key}",
+        "metric_name": key,
+        "evaluator": evaluator,
+        "phase": phase,
+    }
+
+
+def _metric_context(
+    key: str, summary: dict[str, Any], detailed: dict[str, Any]
+) -> dict[str, Any]:
+    """Recover metadata from the matching evaluator, never another summary file."""
+    context = {**detailed, **summary}
+    leaf = detailed.get(key)
+    if not isinstance(leaf, dict):
+        group = "comprehensive" if key == "overall_score" else "long_form"
+        candidate = detailed.get(group)
+        leaf = candidate if isinstance(candidate, dict) and key in candidate else {}
+    context.update(leaf)
+    structured = summary.get(key)
+    if isinstance(structured, dict):
+        context.update(structured)
+    result = {field: context.get(field) for field in METRIC_CONTEXT_FIELDS}
+    result["phase"] = context.get("phase")
+    reason = context.get(f"{key}_unavailable_reason")
+    if reason is None and key == "overall_score":
+        reason = context.get("overall_unavailable_reason")
+    if reason is not None:
+        result["unavailable_reason"] = reason
+    elif detailed.get("protocol_version") == "inject-v2" and key not in {
+        "knowledge_retention",
+        "task_accuracy",
+        "perplexity",
+    }:
+        result["unavailable_reason"] = None
+    examples = context.get("per_example", context.get("examples", []))
+    first = (
+        next((entry for entry in examples if isinstance(entry, dict)), {})
+        if isinstance(examples, list)
+        else {}
+    )
+    if result["measurement_kind"] is None:
+        if "prediction_text" in first or "post_prediction_text" in first:
+            result["measurement_kind"] = "teacher_forced_token_prediction"
+        elif "generated" in first or "prediction" in first:
+            result["measurement_kind"] = "generation"
+        elif "value_by_index" in context:
+            result["measurement_kind"] = "per_example_score"
+    if result["protocol_version"] == "inject-v2":
+        counts = {
+            "task_accuracy": ("correct", "total"),
+            "current_score": ("current_correct", "current_total"),
+            "original_score": ("original_correct", "original_total"),
+            "knowledge_retention": ("current_score", "original_score"),
+        }
+        if key in counts:
+            numerator, denominator = counts[key]
+            if result["numerator"] is None:
+                result["numerator"] = context.get(numerator)
+            if result["denominator"] is None:
+                result["denominator"] = context.get(denominator)
+            if result["measurement_kind"] is None:
+                result["measurement_kind"] = (
+                    "score_ratio"
+                    if key == "knowledge_retention"
+                    else "generation_accuracy"
+                )
+    return {
+        field: None if isinstance(value, float) and not math.isfinite(value) else value
+        for field, value in result.items()
+    }
 
 
 def _scalar_metrics(run_dir: Path) -> list[dict[str, Any]]:
-    values: dict[str, tuple[Any, str]] = {}
+    rows = []
+
+    def append(key, value, source, context=None):
+        context = context or {}
+        if type(value) not in (int, float) or not math.isfinite(value):
+            value = None
+        definition = dict(
+            METRICS.get(
+                key,
+                {
+                    "label": {"en": key.replace("_", " ").title(), "zh": key},
+                    "direction": "context",
+                    "category": "diagnostic",
+                    "unit": "value",
+                },
+            )
+        )
+        if (
+            key == "knowledge_retention"
+            and context.get("protocol_version") == "inject-v2"
+        ):
+            definition["unit"] = "multiplier"
+        rows.append(
+            {
+                **_metric_identity(source, key, context),
+                "value": value,
+                "source": source,
+                **definition,
+                **{field: context.get(field) for field in METRIC_CONTEXT_FIELDS},
+            }
+        )
+
     for path in _summary_paths(run_dir):
-        for key, value in _read_json(path).items():
+        summary = _read_json(path)
+        detail_path = path.with_name(path.name.replace("_SUMMARY.json", "_EVAL.json"))
+        detailed = (
+            _read_json(detail_path)
+            if detail_path.resolve().is_relative_to(run_dir.resolve())
+            else {}
+        )
+        for key, item in summary.items():
+            if (
+                key in METRIC_CONTEXT_FIELDS
+                or key in {"phase", "evaluator"}
+                or key.endswith("_unavailable_reason")
+            ):
+                continue
+            if isinstance(item, dict):
+                if "value" not in item and "agg_value" not in item:
+                    continue
+                value = item.get("value", item.get("agg_value"))
+            else:
+                value = item
             if type(value) in (int, float) or value is None:
-                values[key] = (value, path.relative_to(run_dir).as_posix())
+                append(
+                    key,
+                    value,
+                    path.relative_to(run_dir).as_posix(),
+                    _metric_context(key, summary, detailed),
+                )
     unlearning = _read_json(run_dir / "unlearning_metrics.json")
     for key in (
         "forget_nll_change",
@@ -509,64 +661,47 @@ def _scalar_metrics(run_dir: Path) -> list[dict[str, Any]]:
         "edited_retain_nll",
     ):
         if key in unlearning:
-            values[key] = (unlearning.get(key), "unlearning_metrics.json")
+            append(
+                key,
+                unlearning[key],
+                "unlearning_metrics.json",
+                {**unlearning, "measurement_kind": "target_token_nll"},
+            )
     target_nll = _read_json(run_dir / "target_nll.json")
     if target_nll:
-        values["base_target_nll"] = (
-            target_nll.get("base", {}).get("weighted_target_token_nll"),
-            "target_nll.json",
-        )
-        values["post_target_nll"] = (
-            target_nll.get("post", {}).get("weighted_target_token_nll"),
-            "target_nll.json",
-        )
-        values["target_nll_delta"] = (
-            target_nll.get("delta_post_minus_base"),
-            "target_nll.json",
-        )
+        for key, value in (
+            (
+                "base_target_nll",
+                target_nll.get("base", {}).get("weighted_target_token_nll"),
+            ),
+            (
+                "post_target_nll",
+                target_nll.get("post", {}).get("weighted_target_token_nll"),
+            ),
+            ("target_nll_delta", target_nll.get("delta_post_minus_base")),
+        ):
+            append(
+                key,
+                value,
+                "target_nll.json",
+                {**target_nll, "measurement_kind": "target_token_nll"},
+            )
     trace = _read_json(run_dir / "run_trace.json")
     if trace.get("runtime_seconds") is not None:
-        values["runtime_seconds"] = (
-            trace["runtime_seconds"],
-            "run_trace.json",
-        )
+        append("runtime_seconds", trace["runtime_seconds"], "run_trace.json")
     peak = trace.get("peak_cuda_memory")
     if isinstance(peak, dict):
         allocated = [
             value.get("max_memory_allocated_bytes")
             for value in peak.values()
             if isinstance(value, dict)
-            and isinstance(value.get("max_memory_allocated_bytes"), (int, float))
+            and type(value.get("max_memory_allocated_bytes")) in (int, float)
+            and math.isfinite(value["max_memory_allocated_bytes"])
         ]
         if allocated:
-            values["peak_memory_gib"] = (
-                max(allocated) / (1024**3),
-                "run_trace.json",
-            )
-    rows = []
-    for key, (value, source) in values.items():
-        if type(value) not in (int, float) or not math.isfinite(value):
-            value = None
-        definition = METRICS.get(
-            key,
-            {
-                "label": {"en": key.replace("_", " ").title(), "zh": key},
-                "direction": "context",
-                "category": "diagnostic",
-                "unit": "value",
-            },
-        )
-        rows.append({"id": key, "value": value, "source": source, **definition})
-    category_order = {
-        "efficacy": 0,
-        "side_effect": 1,
-        "efficiency": 2,
-        "diagnostic": 3,
-    }
-    return sorted(
-        rows,
-        key=lambda row: (category_order.get(row["category"], 9), row["id"]),
-    )
+            append("peak_memory_gib", max(allocated) / (1024**3), "run_trace.json")
+    order = {"efficacy": 0, "side_effect": 1, "efficiency": 2, "diagnostic": 3}
+    return sorted(rows, key=lambda row: (order.get(row["category"], 9), row["id"]))
 
 
 def _has_evaluation(metrics: list[dict[str, Any]]) -> bool:
@@ -607,14 +742,17 @@ def _has_evaluation(metrics: list[dict[str, Any]]) -> bool:
         type(metric.get("value")) in (int, float)
         and math.isfinite(metric["value"])
         and metric["category"] != "efficiency"
-        and metric["id"].rsplit(".", 1)[-1] not in counters
-        and not metric["id"]
+        and metric.get("metric_name", metric["id"]).rsplit(".", 1)[-1] not in counters
+        and not metric.get("metric_name", metric["id"])
         .rsplit(".", 1)[-1]
         .startswith(("num_", "base_", "baseline_", "before_", "pre_", "original_"))
-        and not metric["id"]
+        and not metric.get("metric_name", metric["id"])
         .rsplit(".", 1)[-1]
         .endswith(("_count", "_tokens", "_total", "_correct"))
-        and (metric["source"].endswith("_SUMMARY.json") or metric["id"] in post_metrics)
+        and (
+            metric["source"].endswith("_SUMMARY.json")
+            or metric.get("metric_name", metric["id"]) in post_metrics
+        )
         for metric in metrics
     )
 
@@ -732,6 +870,14 @@ class ResultStore:
                 for path in sorted(checkpoint_eval.glob("*.json"))
                 if path.is_file()
             )
+        warnings = []
+        if not _has_evaluation(metrics):
+            warnings.append("This run has no completed evaluation metrics.")
+        if any(
+            _has_evaluation([metric]) and not metric.get("protocol_version")
+            for metric in metrics
+        ):
+            warnings.append("Some metrics do not record protocol or scoring metadata.")
         return {
             "id": _result_id(relative),
             "name": run_dir.name,
@@ -746,6 +892,8 @@ class ResultStore:
                 "finished_at": trace.get("finished_at_utc"),
             },
             "metrics": metrics,
+            "comparison_basis": COMPARISON_BASIS,
+            "warnings": warnings,
             "timeline": _timeline(run_dir, metrics),
             "files": files,
             "command": (
@@ -772,6 +920,8 @@ class ResultStore:
                         "updated_at",
                         "metadata",
                         "metrics",
+                        "comparison_basis",
+                        "warnings",
                     )
                 }
             )
@@ -788,6 +938,63 @@ class ResultStore:
         if run_dir is None:
             raise KeyError(result_id)
         return run_dir
+
+    def metadata(self, result_id: str) -> dict[str, Any]:
+        """Return recorded result and metric context without loading example text."""
+        result = self.get(result_id)
+        return {
+            "result_id": result_id,
+            **{
+                key: result[key]
+                for key in (
+                    "operation",
+                    "status",
+                    "evidence_level",
+                    "metadata",
+                    "metrics",
+                    "comparison_basis",
+                    "warnings",
+                )
+            },
+        }
+
+    def cases(
+        self,
+        result_id: str,
+        *,
+        offset: int = 0,
+        limit: int = 50,
+        metric_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Page through saved evaluator examples; never use targets as responses."""
+        if (
+            type(offset) is not int
+            or offset < 0
+            or type(limit) is not int
+            or not 1 <= limit <= 100
+        ):
+            raise ValueError(
+                "offset must be nonnegative and limit must be between 1 and 100"
+            )
+        from .cases import read_cases
+
+        run_dir = self.path(result_id)
+        rows, warnings = read_cases(
+            run_dir,
+            _scalar_metrics(run_dir),
+            checkpoint_eval=_checkpoint_eval_dir(run_dir),
+        )
+        if metric_id is not None:
+            rows = [row for row in rows if row["metric_id"] == metric_id]
+        return {
+            "result_id": result_id,
+            "offset": offset,
+            "limit": limit,
+            "total": len(rows),
+            "has_more": offset + limit < len(rows),
+            "cases": rows[offset : offset + limit],
+            "warnings": warnings,
+        }
 
     def demos(self) -> list[dict[str, Any]]:
         rows = []
@@ -848,6 +1055,30 @@ class ResultStore:
             for result in results
         ]
         common_quality = set.intersection(*quality_sets) if quality_sets else set()
+        metric_alignment = {}
+        for metric_id in sorted(common_quality):
+            contexts = [
+                {
+                    field: metric.get(field)
+                    for field in (
+                        "protocol_version",
+                        "scoring",
+                        "measurement_kind",
+                        "unit",
+                    )
+                }
+                for result in results
+                for metric in result["metrics"]
+                if metric["id"] == metric_id
+            ]
+            metric_alignment[metric_id] = {
+                "values": contexts,
+                "known": all(_known(context) for context in contexts),
+                "equal": len(
+                    {json.dumps(context, sort_keys=True) for context in contexts}
+                )
+                == 1,
+            }
         comparable = (
             len(set(result_ids)) >= 2
             and bool(common_quality)
@@ -857,17 +1088,30 @@ class ResultStore:
                 for result in results
             )
             and all(item["known"] and item["equal"] for item in fairness.values())
+            and all(
+                item["known"] and item["equal"] for item in metric_alignment.values()
+            )
         )
         return {
             "comparable": comparable,
             "fairness": fairness,
+            "metric_alignment": metric_alignment,
             "warnings": []
             if comparable
             else [
-                "Check that both runs have completed evaluation, share quality metrics, and use matching comparison settings."
+                "Check that both runs have completed evaluation, share quality metrics, and use matching comparison settings.",
+                *(
+                    ["Metric protocols or scoring semantics are missing or different."]
+                    if any(
+                        not item["known"] or not item["equal"]
+                        for item in metric_alignment.values()
+                    )
+                    else []
+                ),
             ],
-            "comparison_basis": "Compares recorded inputs, model revision, record counts, evaluation settings, run limits and environment.",
-            "metric_ids": common,
+            "comparison_basis": COMPARISON_BASIS,
+            "metric_ids": sorted(set.union(*metric_sets)) if metric_sets else [],
+            "common_metric_ids": common,
             "results": results,
         }
 

@@ -1,4 +1,4 @@
-import { PauseCircle, TerminalSquare } from "lucide-react";
+import { PauseCircle, RefreshCw, TerminalSquare } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { displayTechnicalText, uiErrorMessage, useI18n } from "../i18n";
@@ -7,8 +7,7 @@ import {
   Button,
   EmptyState,
   InlineError,
-  OperationBadge,
-  StatusBadge
+  OperationBadge
 } from "./ui";
 
 const finalStates = new Set([
@@ -29,40 +28,59 @@ export function RunLog({
   const [events, setEvents] = useState<RunEvent[]>([]);
   const [error, setError] = useState("");
   const [stopping, setStopping] = useState(false);
+  const [retry, setRetry] = useState(0);
   const viewport = useRef<HTMLDivElement>(null);
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+  const languageRef = useRef(language);
+  languageRef.current = language;
+  const runIdRef = useRef(run?.id);
+  runIdRef.current = run?.id;
 
   useEffect(() => {
     setEvents([]);
     setError("");
+    setStopping(false);
     if (!run) return;
     let cancelled = false;
     let cursor = -1;
+    let timer: number | undefined;
     const poll = async () => {
+      let continuePolling = true;
+      let delay = 850;
       try {
         const [eventPayload, record] = await Promise.all([
           api.runEvents(run.id, cursor),
           api.run(run.id)
         ]);
-        if (cancelled) return;
+        if (cancelled || runIdRef.current !== run.id) return;
+        setError("");
         if (eventPayload.events.length) {
-          cursor = eventPayload.events.at(-1)?.index ?? cursor;
-          setEvents((current) => [...current, ...eventPayload.events]);
+          const fresh = eventPayload.events.filter((event) => event.index > cursor).sort((a, b) => a.index - b.index);
+          cursor = fresh.at(-1)?.index ?? cursor;
+          setEvents((current) => {
+            const byIndex = new Map(current.map((event) => [event.index, event]));
+            for (const event of fresh) byIndex.set(event.index, event);
+            return [...byIndex.values()].sort((a, b) => a.index - b.index);
+          });
         }
-        onChange?.(record);
-        if (!finalStates.has(record.status)) {
-          window.setTimeout(poll, 850);
-        }
+        onChangeRef.current?.(record);
+        continuePolling = !finalStates.has(record.status) || cursor < record.event_count - 1;
       } catch (caught) {
-        if (!cancelled) {
-          setError(uiErrorMessage(caught, language));
+        if (!cancelled && runIdRef.current === run.id) {
+          setError(uiErrorMessage(caught, languageRef.current));
         }
+        delay = 2500;
+      } finally {
+        if (!cancelled && runIdRef.current === run.id && continuePolling) timer = window.setTimeout(poll, delay);
       }
     };
     void poll();
     return () => {
       cancelled = true;
+      window.clearTimeout(timer);
     };
-  }, [run?.id]);
+  }, [run?.id, retry]);
 
   useEffect(() => {
     viewport.current?.scrollTo({
@@ -103,11 +121,10 @@ export function RunLog({
             <OperationBadge operation={run.operation} />
           </div>
           <span className="mono muted">
-            {run.id} · GPU {run.gpu ?? t("auto")}
+            {eventMessages[run.status] || run.status}
           </span>
         </div>
         <div className="run-console-actions">
-          <StatusBadge level={run.evidence_level} compact />
           {canStop ? (
             <Button
               variant="danger"
@@ -117,11 +134,11 @@ export function RunLog({
                 setStopping(true);
                 try {
                   const value = await api.stopRun(run.id);
-                  onChange?.(value);
+                  if (runIdRef.current === value.id) onChangeRef.current?.(value);
                 } catch (caught) {
-                  setError(uiErrorMessage(caught, language));
+                  if (runIdRef.current === run.id) setError(uiErrorMessage(caught, language));
                 } finally {
-                  setStopping(false);
+                  if (runIdRef.current === run.id) setStopping(false);
                 }
               }}
             >
@@ -130,10 +147,15 @@ export function RunLog({
           ) : null}
         </div>
       </div>
-      {error ? <InlineError message={error} /> : null}
+      {error ? <div>
+        <InlineError message={error} />
+        <Button variant="secondary" icon={RefreshCw} onClick={() => setRetry((value) => value + 1)}>
+          {language === "zh" ? "重新连接日志" : "Reconnect logs"}
+        </Button>
+      </div> : null}
       <div className="terminal" ref={viewport} role="log" aria-live="polite">
         <div className="terminal-command">
-          <span>$</span> {displayTechnicalText(run.command)}
+          <span>$</span> {run.command}
         </div>
         {events.map((event) => (
           <div
@@ -158,7 +180,9 @@ export function RunLog({
         {!events.length ? (
           <div className="terminal-line">
             <time>--:--:--</time>
-            <span>{t("loading")}...</span>
+            <span>{finalStates.has(run.status)
+              ? (language === "zh" ? "此运行没有日志内容。" : "No log entries for this run.")
+              : (language === "zh" ? "等待运行日志…" : "Waiting for run logs…")}</span>
           </div>
         ) : null}
       </div>

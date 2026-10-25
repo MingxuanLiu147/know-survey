@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from .catalog import ROOT, RepositoryCatalog
-from .schemas import PlanRequest
+from .schemas import ComposeRequest, PlanRequest
 
 
 class PlannerError(RuntimeError):
@@ -77,6 +77,8 @@ def _local_plan(request: PlanRequest) -> dict[str, Any]:
     ]
     if request.operation:
         argv.extend(["--operation", request.operation])
+    if request.modality:
+        argv.extend(["--modality", request.modality])
     if request.model_id:
         argv.extend(["--model-id", request.model_id])
     if request.dataset_id:
@@ -145,6 +147,8 @@ def _localize_warning(warning: str, language: str = "zh") -> str:
         return "运行前请检查本地 Qwen2.5-7B 模型路径和可用 GPU 显存。"
     if warning.startswith("LoReFT requires pyreft"):
         return "LoReFT 需要 pyreft 与 ReFT 数据整理器。"
+    if warning.startswith("Multimodal injection requires"):
+        return "多模态注入需要本地图文样本；请分别检查目标效果和保留探针。"
     if warning.startswith("UNKE requires preservation data"):
         return "UNKE 需要保留数据，公开包未提供此方法。"
     if warning.startswith("AnyEdit MEMIT/AlphaEdit backends require"):
@@ -201,6 +205,23 @@ def _local_reasoning(
             "Methods are limited to registered trainer or editor identifiers."
         )
         evaluation_reason = "Target efficacy and side effects are evaluated together."
+    if plan.get("modality") == "multimodal":
+        model_reason = (
+            "采用计划中列出的视觉语言模型。"
+            if language == "zh"
+            else "Uses the vision-language model listed in the plan."
+        )
+        evaluation_reason = (
+            "运行后核对目标效果和保留探针；缺少探针不代表已完成评估。"
+            if language == "zh"
+            else "Review target and retention probes after execution; absent probes are not completed evaluation."
+        )
+        if operation == "inject":
+            reasons[operation] = (
+                "选择图文样本的 LoRA 注入路线。"
+                if language == "zh"
+                else "Selected image-text injection with LoRA."
+            )
     return [
         {"field": "operation", "reason": reasons[operation]},
         {"field": "model", "reason": model_reason},
@@ -230,10 +251,17 @@ def _validate_remote_choice(
     catalog: RepositoryCatalog,
 ) -> dict[str, Any]:
     snapshot = catalog.snapshot()
-    models = {item["id"] for item in snapshot["models"]}
-    datasets = {item["id"] for item in snapshot["datasets"]}
+    modality = choice.get("modality", baseline.get("modality", "text"))
+    if modality not in {"text", "multimodal"}:
+        raise PlannerError("Provider selected an unsupported modality.")
+    models = {item["id"] for item in snapshot["models"] if item["modality"] == modality}
+    datasets = {
+        item["id"] for item in snapshot["datasets"] if item["modality"] == modality
+    }
     methods_by_operation = {
-        operation: {Path(item["id"]).name for item in rows}
+        operation: {
+            Path(item["id"]).name for item in rows if item["modality"] == modality
+        }
         for operation, rows in snapshot["trainers"].items()
     }
     operation = choice.get("operation", baseline["operation"])
@@ -255,6 +283,7 @@ def _validate_remote_choice(
     baseline.update(
         {
             "operation": operation,
+            "modality": modality,
             "model_id": model,
             "dataset_id": dataset,
             "methods": [str(item) for item in methods],
@@ -281,6 +310,7 @@ def _validate_remote_choice(
         PlanRequest(
             intent=baseline["intent"],
             operation=operation,
+            modality=modality,
             model_id=model,
             dataset_id=dataset,
             methods=baseline["methods"],
@@ -313,11 +343,21 @@ def _remote_plan(
     compact_catalog = {
         "operations": [item["id"] for item in snapshot["operations"]],
         "models": [
-            item["id"] for item in snapshot["models"] if item["modality"] == "text"
+            item["id"]
+            for item in snapshot["models"]
+            if item["modality"] == baseline.get("modality", "text")
         ],
-        "datasets": [item["id"] for item in snapshot["datasets"]],
+        "datasets": [
+            item["id"]
+            for item in snapshot["datasets"]
+            if item["modality"] == baseline.get("modality", "text")
+        ],
         "methods": {
-            key: [Path(item["id"]).name for item in value]
+            key: [
+                Path(item["id"]).name
+                for item in value
+                if item["modality"] == baseline.get("modality", "text")
+            ]
             for key, value in snapshot["trainers"].items()
         },
     }
@@ -325,7 +365,7 @@ def _remote_plan(
         "You are the Know-Surgery planner. Return JSON only. Select only IDs "
         "listed in the supplied registry. Keep public operation names exactly "
         "unlearning, inject, or edit. Include target efficacy and side-effect "
-        "evaluation. Return operation, model_id, dataset_id, methods, num_cases, "
+        "evaluation. Return operation, modality, model_id, dataset_id, methods, num_cases, "
         "reasoning (array of field/reason objects), and warnings."
     )
     system += (
@@ -379,7 +419,14 @@ def _remote_plan(
     except (KeyError, IndexError, TypeError) as exc:
         raise PlannerError(f"{provider} returned an unexpected response.") from exc
     choice = _extract_json(content)
-    for field in ("operation", "model_id", "dataset_id", "methods", "num_cases"):
+    for field in (
+        "operation",
+        "modality",
+        "model_id",
+        "dataset_id",
+        "methods",
+        "num_cases",
+    ):
         explicit = getattr(request, field)
         if explicit is not None and field in choice and choice[field] != explicit:
             raise PlannerError(f"Provider changed the explicit user selection: {field}")
@@ -397,6 +444,120 @@ def create_plan(
     catalog: RepositoryCatalog,
 ) -> dict[str, Any]:
     baseline = _local_plan(request)
-    if request.provider == "local":
-        return baseline
-    return _remote_plan(request.provider, request, baseline, catalog)
+    plan = (
+        baseline
+        if request.provider == "local"
+        else _remote_plan(request.provider, request, baseline, catalog)
+    )
+    step_match = re.search(
+        r"(\d+)\s*(?:(?:个|次)?\s*训练步|(?:training\s+)?steps?\b)",
+        request.intent,
+        flags=re.I,
+    )
+    max_steps = int(step_match.group(1)) if step_match else None
+    if max_steps is not None and max_steps < 1:
+        raise PlannerError("Training steps must be positive. / 训练步数必须大于零。")
+    sample_match = re.search(
+        r"(\d+)\s*(?:edits?\b|cases?\b|samples?\b|records?\b|facts?\b|条|个\s*(?:样本|记录|事实))",
+        request.intent,
+        flags=re.I,
+    )
+    explicit_samples = request.num_cases is not None or sample_match is not None
+    if request.num_cases is not None:
+        plan["num_cases"] = request.num_cases
+    elif sample_match is not None:
+        count = int(sample_match.group(1))
+        if not 1 <= count <= 100_000:
+            raise PlannerError("Sample count must be between 1 and 100000.")
+        plan["num_cases"] = count
+    # A step-only request keeps the selected dataset's range. The shared planner's
+    # default num_cases=1 is not evidence that the user requested one training row.
+    limit_samples = plan["operation"] == "edit" or max_steps is None or explicit_samples
+    plan["configuration_limits"] = {
+        "max_samples": plan["num_cases"] if limit_samples else None,
+        "max_steps": max_steps if plan["operation"] != "edit" else None,
+    }
+    configurations = {}
+    configuration_errors = {}
+    for method in plan["methods"]:
+        try:
+            configuration = configuration_from_plan(
+                plan, method, limit_samples=limit_samples, max_steps=max_steps
+            )
+            catalog.validate_request(configuration)
+            configurations[method] = configuration.model_dump()
+        except (PlannerError, ValueError, TypeError) as exc:
+            configuration_errors[method] = str(exc)
+    plan["configurations"] = configurations
+    plan["configuration"] = configurations.get(plan["methods"][0])
+    plan["configuration_errors"] = configuration_errors
+    return plan
+
+
+def configuration_from_plan(
+    plan: dict[str, Any],
+    method: str,
+    *,
+    limit_samples: bool = True,
+    max_steps: int | None = None,
+) -> ComposeRequest:
+    """Translate explicit plan choices without replacing their model or sample budget."""
+    if method not in plan["methods"]:
+        raise PlannerError("Method is outside the generated plan.")
+    operation = plan["operation"]
+    modality = plan.get("modality", "text")
+    experiment = plan.get("experiments", {}).get(method)
+    overrides = dict(plan.get("overrides", {}))
+    task_name = (
+        overrides.pop("task_name", None) or f"webui_{operation}_{uuid.uuid4().hex[:12]}"
+    )
+    seed = overrides.pop("trainer.args.seed", overrides.pop("seed", 42))
+    datasets = {}
+    for key in list(overrides):
+        if key.startswith("data/datasets@data."):
+            datasets[key.rsplit(".", 1)[-1]] = overrides.pop(key)
+    if not (modality == "multimodal" and operation == "unlearning"):
+        role = {"edit": "edit", "inject": "train", "unlearning": "forget"}[operation]
+        datasets[role] = plan["dataset_id"]
+    if operation == "unlearning" and not experiment:
+        if modality == "multimodal" or "retain" not in datasets:
+            raise PlannerError(
+                "Select an experiment with explicit forget and retain data. / 请选择包含遗忘集与保留集的实验配置。"
+            )
+    if plan.get("inputs"):
+        # Do not discard a role-bound input contract in favor of a dataset ID.
+        raise PlannerError(
+            "Apply the registered upload configuration for bound inputs. / 绑定输入请使用上传注册后返回的配置。"
+        )
+    limit_key = (
+        "max_edits"
+        if operation == "edit"
+        else "data.max_samples"
+        if modality == "multimodal"
+        else "++max_train_samples"
+    )
+    if limit_samples:
+        overrides[limit_key] = int(plan["num_cases"])
+    if max_steps is not None and operation != "edit":
+        overrides["++trainer.args.max_steps"] = max_steps
+    trainer = ("" if operation == "unlearning" else f"{operation}/") + method
+    evaluation = (
+        None
+        if experiment or modality == "multimodal" and operation == "inject"
+        else "mm_edit"
+        if modality == "multimodal"
+        else operation
+    )
+    return ComposeRequest(
+        operation=operation,
+        modality=modality,
+        experiment=experiment,
+        model=plan["model_id"],
+        trainer=trainer,
+        datasets=datasets,
+        evaluation=evaluation,
+        task_name=str(task_name),
+        seed=int(seed),
+        smoke=False,
+        overrides=overrides,
+    )

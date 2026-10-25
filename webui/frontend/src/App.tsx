@@ -3,6 +3,7 @@ import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { LoadingBlock } from "./components/ui";
 import { I18nProvider, useI18n } from "./i18n";
+import { TaskDraftProvider } from "./state/TaskDraft";
 
 const Workbench = lazy(() =>
   import("./pages/Workbench").then((module) => ({
@@ -42,7 +43,7 @@ function AppRoutes() {
 export default function App() {
   return (
     <I18nProvider>
-      <AppRoutes />
+      <TaskDraftProvider><AppRoutes /></TaskDraftProvider>
     </I18nProvider>
   );
 }

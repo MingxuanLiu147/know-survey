@@ -15,7 +15,8 @@ from typing import Any
 from omegaconf import OmegaConf
 
 from .catalog import ROOT, display_command
-from .results import run_evidence
+from .execution import request_digest
+from .results import _result_id, run_evidence
 
 
 FINAL_STATES = {"succeeded", "failed", "stopped", "interrupted"}
@@ -55,6 +56,8 @@ class JobManager:
                 record["error"] = "Backend restarted while the process was active."
                 self._write_record(record)
             run_id = str(record.get("id") or path.parent.name)
+            if record.get("output_dir"):
+                record.setdefault("result_id", _result_id(record["output_dir"]))
             self._jobs[run_id] = record
             self._events[run_id] = self._load_events(path.parent)
 
@@ -116,6 +119,31 @@ class JobManager:
             for job in self._jobs.values()
         )
 
+    def existing_request(self, request: dict[str, Any]) -> dict[str, Any] | None:
+        """Return a recorded retry, or reject reuse for different parameters."""
+        request_id = request.get("request_id")
+        if not request_id:
+            return None
+        digest = request_digest(request)
+        with self._lock:
+            for record in self._jobs.values():
+                if record.get("request_id") != request_id:
+                    continue
+                if record.get("request_digest") != digest:
+                    raise JobError(
+                        "request_id_conflict: use a new request ID for changed parameters."
+                    )
+                return self.get(record["id"])
+        return None
+
+    def for_result(self, result_id: str) -> dict[str, Any] | None:
+        """Find the run explicitly bound to an output directory identity."""
+        with self._lock:
+            for record in self._jobs.values():
+                if record.get("result_id") == result_id:
+                    return self.get(record["id"])
+        return None
+
     def _output_dir(
         self, compose: dict[str, Any], *, operation: str, task_name: str
     ) -> Path:
@@ -126,10 +154,12 @@ class JobManager:
                 raise ValueError("The composed task name differs from the request.")
             if config.get("mode") != MODE_DIR[operation]:
                 raise ValueError("The composed operation differs from the request.")
-            paths = [
-                OmegaConf.select(config, key)
-                for key in ("trainer.args.output_dir", "paths.output_dir")
-            ]
+            output_keys = (
+                ("output_dir",)
+                if config.get("entrypoint") == "mm_train"
+                else ("trainer.args.output_dir", "paths.output_dir")
+            )
+            paths = [OmegaConf.select(config, key) for key in output_keys]
             paths = [value for value in paths if value is not None]
             if not paths or any(
                 not isinstance(value, str) or not value for value in paths
@@ -162,6 +192,9 @@ class JobManager:
         request: dict[str, Any],
     ) -> dict[str, Any]:
         with self._lock:
+            existing = self.existing_request(request)
+            if existing is not None:
+                return existing
             if self._gpu_busy(gpu):
                 raise JobError(f"GPU {gpu} already has an active WebUI job.")
             output_dir = self._output_dir(
@@ -192,6 +225,11 @@ class JobManager:
                 "operation": operation,
                 "task_name": task_name,
                 "gpu": gpu,
+                "cuda_visible_devices": str(gpu)
+                if gpu is not None
+                else os.getenv("CUDA_VISIBLE_DEVICES"),
+                "request_id": request.get("request_id"),
+                "request_digest": request_digest(request),
                 "created_at": _utc(),
                 "started_at": None,
                 "finished_at": None,
@@ -200,6 +238,7 @@ class JobManager:
                 "argv": argv,
                 "command": display_command(argv),
                 "output_dir": output_dir.relative_to(self.root).as_posix(),
+                "result_id": _result_id(output_dir.relative_to(self.root).as_posix()),
                 "compose": compose,
                 "request": request,
                 "evidence_level": "configured",
@@ -224,6 +263,11 @@ class JobManager:
     def _execute(self, run_id: str) -> None:
         with self._lock:
             record = self._jobs[run_id]
+            if record["status"] == "stopping":
+                record.update(status="stopped", finished_at=_utc())
+                self._write_record(record)
+                self._emit(run_id, "status", {"status": "stopped"})
+                return
             record["status"] = "running"
             record["started_at"] = _utc()
             self._write_record(record)
@@ -251,6 +295,15 @@ class JobManager:
             )
             with self._lock:
                 self._processes[run_id] = process
+                stop_requested = record["status"] == "stopping"
+            if stop_requested:
+                try:
+                    os.killpg(process.pid, signal.SIGINT)
+                except ProcessLookupError:
+                    pass
+                threading.Thread(
+                    target=self._force_stop, args=(run_id, process), daemon=True
+                ).start()
             assert process.stdout is not None
             with process.stdout:
                 for line in process.stdout:
@@ -307,7 +360,9 @@ class JobManager:
             if record is None:
                 raise KeyError(run_id)
             process = self._processes.get(run_id)
-            if process is None or record["status"] not in {"running", "queued"}:
+            if record["status"] == "stopping":
+                return self.get(run_id)
+            if record["status"] not in {"running", "queued"}:
                 raise JobError("Run is not currently stoppable.")
             record["status"] = "stopping"
             self._write_record(record)
@@ -316,6 +371,9 @@ class JobManager:
             "status",
             {"status": "stopping", "message": "Interrupt requested."},
         )
+        if process is None:
+            # The worker checks this state both before and after Popen.
+            return self.get(run_id)
         try:
             os.killpg(process.pid, signal.SIGINT)
         except ProcessLookupError:

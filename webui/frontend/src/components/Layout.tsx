@@ -27,6 +27,7 @@ const links = [
 
 export function Layout() {
   const { t, toggleLanguage } = useI18n();
+  const [healthFailed, setHealthFailed] = useState(false);
   const [health, setHealth] = useState<Health | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
@@ -45,9 +46,9 @@ export function Layout() {
     const load = async () => {
       try {
         const value = await api.health();
-        if (!cancelled) setHealth(value);
+        if (!cancelled) { setHealth(value); setHealthFailed(false); }
       } catch {
-        if (!cancelled) setHealth(null);
+        if (!cancelled) { setHealth(null); setHealthFailed(true); }
       }
     };
     void load();
@@ -92,12 +93,10 @@ export function Layout() {
             aria-hidden="true"
           />
           <div>
-            <strong>{health ? t("ready") : t("loading")}</strong>
+            <strong>{health ? t("ready") : healthFailed ? t("connectionLost") : t("loading")}</strong>
             <span>
               {health
-                ? health.gpus.length +
-                  " GPU · " +
-                  health.skills +
+                ? health.skills +
                   " " +
                   t("skills")
                 : "API"}

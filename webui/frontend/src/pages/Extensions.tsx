@@ -5,6 +5,7 @@ import {
   Database,
   Eraser,
   PencilLine,
+  RefreshCw,
   Search,
   ServerCog,
   Syringe,
@@ -14,6 +15,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
 import {
+  Button,
   EmptyState,
   InlineError,
   LoadingBlock,
@@ -45,16 +47,26 @@ export function Extensions() {
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [loadAttempt, setLoadAttempt] = useState(0);
 
   useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError("");
     void Promise.all([api.catalog(), api.skills()])
       .then(([catalogValue, skillValue]) => {
+        if (cancelled) return;
         setCatalog(catalogValue);
         setSkills(skillValue.skills);
       })
-      .catch((caught) => setError(uiErrorMessage(caught, language)))
-      .finally(() => setLoading(false));
-  }, []);
+      .catch((caught) => {
+        if (!cancelled) setError(uiErrorMessage(caught, language));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [loadAttempt, language]);
 
   const filteredSkills = useMemo(
     () =>
@@ -68,8 +80,20 @@ export function Extensions() {
     [skills, search, language]
   );
 
-  if (loading || !catalog) {
+  if (loading && !catalog) {
     return <LoadingBlock label={t("loading")} />;
+  }
+  if (!catalog) {
+    return (
+      <div className="page extensions-page">
+        <SectionHeader title={t("extensions")} action={
+          <Button variant="secondary" icon={RefreshCw} onClick={() => setLoadAttempt((value) => value + 1)}>
+            {language === "zh" ? "重新加载" : "Retry"}
+          </Button>
+        } />
+        <InlineError message={error || (language === "zh" ? "组件目录暂时无法加载。" : "The component catalog is unavailable.")} />
+      </div>
+    );
   }
 
   const filteredModels = catalog.models.filter((item) =>
@@ -112,6 +136,7 @@ export function Extensions() {
         eyebrow={t("extensionsEyebrow")}
         title={t("extensions")}
         description={t("extensionsDescription")}
+        action={<Button variant="secondary" icon={RefreshCw} loading={loading} onClick={() => setLoadAttempt((value) => value + 1)}>{t("refresh")}</Button>}
       />
       {error ? <InlineError message={error} /> : null}
 
@@ -326,10 +351,7 @@ export function Extensions() {
         </section>
       ) : null}
 
-      {!filteredSkills.length &&
-      !filteredModels.length &&
-      !filteredDatasets.length &&
-      !filteredMethods.length ? (
+      {!({skills: filteredSkills, models: filteredModels, datasets: filteredDatasets, methods: filteredMethods}[tab]).length ? (
         <EmptyState icon={Boxes} title={t("noMatchingRegistry")} />
       ) : null}
 
