@@ -88,6 +88,7 @@ async def start_agent(request: AgentRequest) -> dict[str, Any]:
     session = AgentSession(
         ROOT,
         provider=request.provider,
+        modality=request.modality,
         allow_execute=request.execute,
         cuda=request.cuda,
         max_steps=request.max_steps,
@@ -545,6 +546,7 @@ async def preview_upload(
     mapping: str | None = Form(default=None),
     knowledge_type: str = Form(default="fact"),
     format_type: str = Form(default="custom"),
+    modality: str = Form(default="text"),
 ) -> dict[str, Any]:
     if operation not in {"unlearning", "inject", "edit"}:
         raise HTTPException(
@@ -560,6 +562,7 @@ async def preview_upload(
             mapping=mapping,
             knowledge_type=knowledge_type,
             format_type=format_type,
+            modality=modality,
             operation=operation,
             retain_data=retain_data,
             retain_filename=retain_file.filename if retain_file else None,

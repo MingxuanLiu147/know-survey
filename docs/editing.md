@@ -23,7 +23,7 @@ The same dataset can be reused through its adapter. Supported modes and model ma
 
 ## ROME, MEMIT and AlphaEdit
 
-The default trainer configurations use `implementation_variant=native_adapted`. Explicit reference profiles are `ROME_Official`, `MEMIT_Official` and `AlphaEdit_Official`. They select method-specific target optimization, context generation and update formulas. Model adapters remain necessary.
+For new ROME/MEMIT reproductions, select `ROME_Official` or `MEMIT_Official`. These profiles implement the original authors' target optimization, context generation and update formulas. `AlphaEdit_Official` supplies the corresponding AlphaEdit profile. The default trainer configurations retain `implementation_variant=native_adapted` for existing experiments; select the reference profile explicitly. Model adapters remain necessary.
 
 The complete GPT-2 and GPT-2-XL experiments are under `configs/experiment/edit/official/`:
 
@@ -36,6 +36,10 @@ know-surgery operation=edit experiment=edit/official/gpt2_rome \
 ```
 
 Change the experiment to `edit/official/gpt2_memit` or `edit/official/gpt2_alphaedit` for the corresponding method. Select `edit_type=batch` for one method call with multiple requests, or `edit_type=sequential` for cumulative updates. Reference profiles describe mechanisms, not a guarantee of published benchmark scores.
+
+The `gpt2-xl_rome` and `gpt2-xl_memit` experiments load weights in FP32, matching the original authors' model-loading precision. Their smaller `gpt2_*` counterparts adapt the same algorithms to GPT-2. When a subject appears more than once, use a prompt such as `Paris and {} are different` with `subject=Paris` to identify the intended occurrence. The inserted subject is used consistently for target optimization and key extraction, including when generated context also mentions it. Plain prompts without `{}` retain first-occurrence selection.
+
+CounterFact adapters retain this template automatically. Canonical records can also provide an expanded `prompt` plus a matching `prompt_template`; displayed questions and evaluation continue to use the expanded prompt.
 
 Important `trainer.method_args` settings:
 

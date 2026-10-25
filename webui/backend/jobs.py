@@ -126,10 +126,12 @@ class JobManager:
                 raise ValueError("The composed task name differs from the request.")
             if config.get("mode") != MODE_DIR[operation]:
                 raise ValueError("The composed operation differs from the request.")
-            paths = [
-                OmegaConf.select(config, key)
-                for key in ("trainer.args.output_dir", "paths.output_dir")
-            ]
+            output_keys = (
+                ("output_dir",)
+                if config.get("entrypoint") == "mm_train"
+                else ("trainer.args.output_dir", "paths.output_dir")
+            )
+            paths = [OmegaConf.select(config, key) for key in output_keys]
             paths = [value for value in paths if value is not None]
             if not paths or any(
                 not isinstance(value, str) or not value for value in paths

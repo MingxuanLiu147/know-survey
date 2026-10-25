@@ -58,6 +58,7 @@ class UploadStore:
         knowledge_type: str,
         format_type: str,
         operation: str = "inject",
+        modality: str = "text",
         retain_data: bytes | None = None,
         retain_filename: str | None = None,
     ) -> dict[str, Any]:
@@ -67,6 +68,12 @@ class UploadStore:
             raise UploadError("Upload exceeds the 50 MiB limit.")
         if operation not in SUPPORTED_OPERATIONS:
             raise UploadError("Unsupported custom upload operation.")
+        if modality not in {"text", "multimodal"}:
+            raise UploadError("Unsupported modality. / 不支持的模态。")
+        if modality == "multimodal" and operation != "inject":
+            raise UploadError(
+                "Use a benchmark experiment for multimodal editing/unlearning. / 多模态编辑与遗忘请选择基准实验。"
+            )
         if operation == "unlearning" and not retain_data:
             raise UploadError("Unlearning requires both forget and retain files.")
         if retain_data and len(retain_data) > MAX_UPLOAD_BYTES:
@@ -101,6 +108,37 @@ class UploadStore:
             }
         except ExtensionInputError as exc:
             raise UploadError(str(exc)) from exc
+        if modality == "multimodal":
+            from PIL import Image
+
+            for records in normalized_by_role.values():
+                for index, record in enumerate(records):
+                    images = record.get("images") or (
+                        [record["image"]] if record.get("image") else []
+                    )
+                    if not isinstance(images, list) or not images:
+                        raise UploadError(
+                            f"Record {index} needs image or images. / 图文样本缺少图片。"
+                        )
+                    resolved = []
+                    for raw in images:
+                        if not isinstance(raw, str):
+                            raise UploadError(
+                                "Image paths must be text. / 图片路径须为文本。"
+                            )
+                        path = Path(raw)
+                        if not path.is_absolute():
+                            path = self.root / path
+                        try:
+                            with Image.open(path) as image:
+                                image.verify()
+                        except (OSError, ValueError) as exc:
+                            raise UploadError(
+                                f"Record {index}: image is not readable on the server. / 服务器无法读取图片。"
+                            ) from exc
+                        resolved.append(str(path.resolve()))
+                    record["images"] = resolved
+                    record.pop("image", None)
         upload_id = uuid.uuid4().hex
         directory = self.upload_root / upload_id
         directory.mkdir(parents=True, exist_ok=False)
@@ -132,6 +170,7 @@ class UploadStore:
             "upload_id": upload_id,
             "status": "previewed",
             "operation": operation,
+            "modality": modality,
             "knowledge_type": knowledge_type,
             "format_type": format_type,
             "source_filename": Path(filename).name,
@@ -195,15 +234,32 @@ class UploadStore:
         except ExtensionInputError as exc:
             raise UploadError(str(exc)) from exc
         snapshot = catalog.snapshot()
-        text_models = {
-            item["id"] for item in snapshot["models"] if item["modality"] == "text"
+        if request.modality != manifest.get("modality", "text"):
+            raise UploadError(
+                "Upload modality differs from registration. / 上传与注册模态不一致。"
+            )
+        models = {
+            item["id"]
+            for item in snapshot["models"]
+            if item["modality"] == request.modality
         }
-        operation_trainers = {item["id"] for item in snapshot["trainers"][operation]}
-        if request.model not in text_models:
-            raise UploadError("Selected model is not registered as a text model.")
+        operation_trainers = {
+            item["id"]
+            for item in snapshot["trainers"][operation]
+            if item["modality"] == request.modality
+        }
+        if request.model not in models:
+            raise UploadError(
+                "Selected model does not match modality. / 模型与模态不一致。"
+            )
         if request.trainer not in operation_trainers:
             raise UploadError(f"Selected {operation} method is not registered.")
-        if request.evaluation not in set(snapshot["evaluations"]):
+        if request.modality == "multimodal" and operation == "inject":
+            if request.evaluation is not None:
+                raise UploadError(
+                    "Select multimodal probes, not a text evaluation suite. / 请使用多模态探针。"
+                )
+        elif request.evaluation not in set(snapshot["evaluations"]):
             raise UploadError("Selected evaluation is not registered.")
         if operation == "unlearning":
             return self._register_unlearning(
@@ -261,12 +317,31 @@ class UploadStore:
             {"override /data": operation},
             {f"override /data/datasets@data.{role}": config_name},
         ]
+        if request.modality == "multimodal":
+            dataset_config = {
+                "benchmark": "canonical_inject",
+                "mode": "inject",
+                "train_path": str(self.root / manifest["normalized_path"]),
+                "retain_path": None,
+                "image_root": None,
+                "batch_size": 1,
+                "ans_only": True,
+                "max_samples": None,
+            }
+            defaults = [
+                {"override /model": request.model},
+                {"override /trainer": request.trainer},
+                {"override /data": "canonical_mm_inject"},
+                {"override /data/datasets@data": config_name},
+            ]
         if request.trainer == "inject/LoReFT":
             defaults.append({"override /collator": "DataCollatorForReFTDataset"})
-        defaults.append({"override /eval": request.evaluation})
+        if request.evaluation is not None:
+            defaults.append({"override /eval": request.evaluation})
         experiment_config: dict[str, Any] = {
             "defaults": defaults,
             "task_name": f"webui_{dataset_id}_{operation}",
+            "modality": request.modality,
         }
         if operation == "inject":
             experiment_config["trainer"] = {
@@ -289,6 +364,15 @@ class UploadStore:
                     "save_edited_model": False,
                 }
             )
+        if request.modality == "multimodal":
+            experiment_config["trainer"] = {
+                "args": {
+                    "seed": request.seed,
+                    "max_steps": 1,
+                    "num_epochs": 1,
+                    "gradient_accumulation_steps": 1,
+                }
+            }
         config_path.parent.mkdir(parents=True, exist_ok=True)
         experiment_path.parent.mkdir(parents=True, exist_ok=True)
         config_path.write_text(
@@ -324,6 +408,7 @@ class UploadStore:
         )
         compose_request = ComposeRequest(
             operation=operation,
+            modality=request.modality,
             experiment=experiment_id,
             task_name=f"webui_{dataset_id}_{operation}_quick_run",
             seed=request.seed,

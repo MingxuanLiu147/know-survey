@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, field_validator
 
 
 Operation = Literal["unlearning", "inject", "edit"]
+Modality = Literal["text", "multimodal"]
 Provider = Literal["local", "openai", "deepseek"]
 Language = Literal["en", "zh"]
 
@@ -17,6 +18,7 @@ class PlanRequest(BaseModel):
     provider: Provider = "local"
     language: Language = "en"
     operation: Operation | None = None
+    modality: Modality | None = None
     model_id: str | None = None
     dataset_id: str | None = None
     methods: list[str] | None = None
@@ -24,6 +26,7 @@ class PlanRequest(BaseModel):
 
 
 class AgentRequest(BaseModel):
+    modality: Modality | None = None
     intent: str = Field(min_length=3, max_length=4000)
     provider: Literal["openai", "deepseek"]
     execute: bool = False
@@ -35,6 +38,7 @@ class AgentRequest(BaseModel):
 
 class ComposeRequest(BaseModel):
     operation: Operation
+    modality: Modality = "text"
     recipe_id: str | None = None
     experiment: str | None = None
     model: str | None = None
@@ -61,11 +65,12 @@ class RunRequest(ComposeRequest):
 
 
 class RegisterUploadRequest(BaseModel):
+    modality: Modality = "text"
     upload_id: str = Field(min_length=8, max_length=64)
     dataset_id: str = Field(min_length=1, max_length=48)
     model: str = "gpt2"
     trainer: str = "inject/LoRA"
-    evaluation: str = "inject"
+    evaluation: str | None = "inject"
     seed: int = Field(default=42, ge=0, le=2_147_483_647)
 
 

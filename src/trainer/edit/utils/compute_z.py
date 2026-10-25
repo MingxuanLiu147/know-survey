@@ -64,6 +64,23 @@ def format_request_prompt(prompt: str, subject: str) -> str:
     return str(prompt).format(str(subject)) if "{}" in str(prompt) else str(prompt)
 
 
+def _subject_start(prompt: str, subject: str) -> int:
+    """Locate the inserted subject, retaining first-match behavior for plain text."""
+    if "{}" in prompt:
+        return len(prompt.split("{}", 1)[0].format(subject))
+    return prompt.find(subject) if subject else -1
+
+
+def _contextualize_request(prompt: str, subject: str, context: str):
+    sentence = format_request_prompt(prompt, subject)
+    start = _subject_start(prompt, subject)
+    # The context may mention the subject too. Carry the request's position
+    # through formatting instead of searching the fully materialized string.
+    if start >= 0:
+        start += len(context.split("{}", 1)[0].format(""))
+    return context.format(sentence), start
+
+
 def _token_ids(tok, text: str, *, add_special_tokens: bool) -> list[int]:
     values = tok(text, add_special_tokens=add_special_tokens)["input_ids"]
     if isinstance(values, torch.Tensor):
@@ -78,6 +95,8 @@ def find_fact_lookup_idx(
     subject: str,
     tok: PreTrainedTokenizerBase,
     fact_token: str = "subject_last",
+    *,
+    subject_start: int | None = None,
 ) -> int:
     """Return a subject boundary token index including leading special tokens."""
     sentence = format_request_prompt(prompt, subject)
@@ -88,9 +107,9 @@ def find_fact_lookup_idx(
         return len(tokens) - 1
     if fact_token not in ("subject_first", "subject_last"):
         raise ValueError(f"Unsupported fact_token={fact_token!r}")
-    if not subject or subject not in sentence:
+    begin = _subject_start(prompt, subject) if subject_start is None else subject_start
+    if not subject or begin < 0 or sentence[begin : begin + len(subject)] != subject:
         raise ValueError(f"Subject {subject!r} is not present in prompt {sentence!r}")
-    begin = sentence.index(subject)
     end = begin + len(subject)
     try:
         spans = tok(sentence, return_offsets_mapping=True, add_special_tokens=True).get(
@@ -109,7 +128,12 @@ def find_fact_lookup_idx(
     # Slow tokenizers have no character offsets. Use the subject-prefix boundary
     # as in MEMIT's word-token lookup, keeping tokenizer-added leading tokens.
     through = _token_ids(tok, sentence[:end], add_special_tokens=True)
-    prefix = _token_ids(tok, sentence[:begin], add_special_tokens=True)
+    # Byte-level tokenizers attach a preceding space to the first subject
+    # token. A standalone trailing-space token must not shift subject_first.
+    prefix_text = sentence[:begin]
+    if prefix_text.endswith(" "):
+        prefix_text = prefix_text[:-1]
+    prefix = _token_ids(tok, prefix_text, add_special_tokens=True)
     if not through:
         raise ValueError("Subject tokenized to an empty sequence")
     return (
@@ -200,16 +224,17 @@ def get_module_input_output_at_words(
     groups = context_template_groups(context_templates)
     templates = [template for group in groups for template in group]
     expanded = [
-        (context.format(format_request_prompt(prompt, subject)), subject)
+        (*_contextualize_request(prompt, subject, context), subject)
         for prompt, subject in zip(prompts, subjects)
         for context in templates
     ]
     batch, offsets = _prompt_batch(
-        tok, [text for text, _ in expanded], _input_device(model)
+        tok, [text for text, _, _ in expanded], _input_device(model)
     )
     indices = [
-        find_fact_lookup_idx(text, subject, tok, fact_token) + offset
-        for (text, subject), offset in zip(expanded, offsets)
+        find_fact_lookup_idx(text, subject, tok, fact_token, subject_start=start)
+        + offset
+        for (text, start, subject), offset in zip(expanded, offsets)
     ]
     with _frozen_model(model), torch.no_grad(), nethook.Trace(
         model,
@@ -386,7 +411,7 @@ def compute_z(
     subject = str(request.get("subject") or "")
     if not subject:
         raise ValueError("compute_z requires request['subject'] for fact lookup")
-    prompt = format_request_prompt(request[prompt_key], subject)
+    prompt = str(request[prompt_key])
     target_text = str(request[target_key])
     target_tokens = _token_ids(
         tok,
@@ -395,16 +420,20 @@ def compute_z(
     )
     if not target_tokens:
         raise ValueError("target_new tokenized to an empty sequence")
-    contexts = [
-        template.format(prompt)
+    contextualized = [
+        _contextualize_request(prompt, subject, template)
         for group in context_template_groups(context_templates)
         for template in group
     ]
+    contexts = [text for text, _ in contextualized]
     device = _input_device(model)
     batch, labels = _build_rewrite_batch(
         tok, contexts, torch.tensor(target_tokens), device
     )
-    lookup = [find_fact_lookup_idx(text, subject, tok, fact_token) for text in contexts]
+    lookup = [
+        find_fact_lookup_idx(text, subject, tok, fact_token, subject_start=start)
+        for text, start in contextualized
+    ]
     kl_text = f"{subject} is a"
     kl_batch, offsets = _prompt_batch(tok, [kl_text], device)
     kl_lookup = [find_fact_lookup_idx(kl_text, subject, tok, fact_token) + offsets[0]]

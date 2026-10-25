@@ -1,3 +1,4 @@
+export type Modality = "text" | "multimodal";
 export type Operation = "unlearning" | "inject" | "edit";
 export type EvidenceLevel =
   | "planned"
@@ -26,10 +27,11 @@ export interface Catalog {
     local: boolean;
     status: EvidenceLevel;
   }>;
-  trainers: Record<Operation, Array<{ id: string; status: EvidenceLevel }>>;
+  trainers: Record<Operation, Array<{ id: string; status: EvidenceLevel; modality: Modality }>>;
   datasets: Array<{
     id: string;
     handlers: string[];
+    modality: Modality;
     operations: Operation[];
     status: EvidenceLevel;
   }>;
@@ -37,6 +39,7 @@ export interface Catalog {
   experiments: Array<{
     id: string;
     operation: Operation;
+    modality: Modality;
     status: EvidenceLevel;
   }>;
   recipes: Recipe[];
@@ -45,6 +48,7 @@ export interface Catalog {
 export interface Recipe {
   id: string;
   operation: Operation;
+  modality?: Modality;
   experiment: string;
   model: string;
   trainer: string;
@@ -61,6 +65,7 @@ export interface Plan {
   schema_version: string;
   intent: string;
   operation: Operation;
+  modality?: Modality;
   knowledge_type: string;
   model_id: string;
   dataset_id: string;
@@ -81,12 +86,13 @@ export interface Plan {
 
 export interface ComposePayload {
   operation: Operation;
+  modality?: Modality;
   recipe_id?: string;
   experiment?: string;
   model?: string;
   trainer?: string;
   datasets?: Record<string, string>;
-  evaluation?: string;
+  evaluation?: string | null;
   task_name: string;
   seed: number;
   smoke: boolean;
@@ -138,6 +144,7 @@ export interface RunRecord {
     | "stopped"
     | "interrupted";
   operation: Operation;
+  modality?: Modality;
   task_name: string;
   gpu: number | null;
   created_at: string;
@@ -213,6 +220,7 @@ export interface Skill {
 export interface ResponseExample {
   id: string;
   operation: Operation;
+  modality?: Modality;
   evidence_level: EvidenceLevel;
   model: string;
   method: string;

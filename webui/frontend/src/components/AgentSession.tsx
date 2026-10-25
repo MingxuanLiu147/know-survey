@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import type { Modality } from "../types";
 import { displayTechnicalText } from "../i18n";
 
 type Trace = {
@@ -9,8 +10,8 @@ type Trace = {
   calls: { skill: string; status: string; command?: string; error?: string; output?: string }[];
 };
 
-export function AgentSession({ intent, provider, language }: {
-  intent: string; provider: string; language: string;
+export function AgentSession({ intent, provider, language, modality }: {
+  intent: string; provider: string; language: string; modality?: Modality;
 }) {
   const zh = language === "zh";
   const [execute, setExecute] = useState(false);
@@ -42,7 +43,7 @@ export function AgentSession({ intent, provider, language }: {
   async function start() {
     setStarting(true); setError("");
     try {
-      const result = await call("", { intent, provider, execute, cuda: execute ? cuda : null,
+      const result = await call("", { intent, provider, modality, execute, cuda: execute ? cuda : null,
         max_steps: 12, max_cases: 2, timeout: 600 });
       setTrace({ ...result, calls: [] });
     } catch (err) { setError(String(err)); }

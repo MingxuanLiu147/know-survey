@@ -223,9 +223,7 @@ MM_UNLEARNING_ALGORITHMS: dict[str, MMAlgorithmRegistration] = {
             "retain_set",
             "dual_model_memory_or_offload",
         ),
-        notes=(
-            "CLEAR-only prototype with the paper's KL direction by default."
-        ),
+        notes=("CLEAR-only prototype with the paper's KL direction by default."),
     ),
     "MMRMU": MMAlgorithmRegistration(
         name="MMRMU",
@@ -301,6 +299,33 @@ MM_UNLEARNING_ALGORITHMS: dict[str, MMAlgorithmRegistration] = {
     ),
 }
 
+
+MM_INJECTION_ALGORITHMS: dict[str, MMAlgorithmRegistration] = {
+    "MMLoRA": MMAlgorithmRegistration(
+        name="MMLoRA",
+        family="injection",
+        implementation="trainer.inject.mm_lora.MMLoRA",
+        status="Prototype",
+        supported_benchmarks=("canonical_inject",),
+        requirements=("image_text_training_data", "lora_enabled"),
+        notes="Positive answer cross-entropy with the model's image-text processor.",
+    ),
+}
+
+MM_INJECTION_DATASETS: dict[str, MMDatasetRegistration] = {
+    "canonical_inject": MMDatasetRegistration(
+        key="canonical_inject",
+        name="Canonical_MM_inject",
+        loader="data.multimodal.get_mm_inject_data",
+        evaluator="",
+        status="Prototype",
+        paper_arxiv="",
+        source="User-supplied local JSON/JSONL with image paths",
+        supported_splits=("train", "retain"),
+        original_baselines=(),
+        original_models=(),
+    ),
+}
 
 MM_UNLEARNING_DATASETS: dict[str, MMDatasetRegistration] = {
     "mllmu": MMDatasetRegistration(
@@ -705,7 +730,10 @@ def _algorithm_aliases() -> dict[str, str]:
 
 def _dataset_aliases() -> dict[str, str]:
     aliases: dict[str, str] = {}
-    for key, registration in MM_UNLEARNING_DATASETS.items():
+    for key, registration in {
+        **MM_UNLEARNING_DATASETS,
+        **MM_INJECTION_DATASETS,
+    }.items():
         for alias in (key, registration.name, *registration.aliases):
             aliases[_normalize_name(alias)] = key
     return aliases
@@ -725,17 +753,29 @@ def _model_aliases() -> dict[str, str]:
 
 
 def get_mm_algorithm(
-    name: str, *, require_runnable: bool = True
+    name: str, *, require_runnable: bool = True, operation: str = "unlearning"
 ) -> MMAlgorithmRegistration:
     """Resolve an algorithm name/alias and optionally require local code."""
 
-    canonical = _algorithm_aliases().get(_normalize_name(name))
+    if operation == "inject":
+        registrations = MM_INJECTION_ALGORITHMS
+        aliases = {
+            _normalize_name(alias): key
+            for key, item in registrations.items()
+            for alias in (key, *item.aliases)
+        }
+    elif operation == "unlearning":
+        registrations = MM_UNLEARNING_ALGORITHMS
+        aliases = _algorithm_aliases()
+    else:
+        raise ValueError(f"Unsupported multimodal training operation: {operation}")
+    canonical = aliases.get(_normalize_name(name))
     if canonical is None:
-        available = ", ".join(sorted(MM_UNLEARNING_ALGORITHMS))
+        available = ", ".join(sorted(registrations))
         raise KeyError(
-            f"Unknown multimodal unlearning method `{name}`. Available: {available}"
+            f"Unknown multimodal {operation} method `{name}`. Available: {available}"
         )
-    registration = MM_UNLEARNING_ALGORITHMS[canonical]
+    registration = registrations[canonical]
     if require_runnable and not registration.runnable:
         raise NotImplementedError(
             f"{registration.name} is registered as {registration.status} but has no "
@@ -748,13 +788,12 @@ def get_mm_algorithm(
 def get_mm_dataset(name: str) -> MMDatasetRegistration:
     """Resolve a benchmark key/name/alias."""
 
+    registrations = {**MM_UNLEARNING_DATASETS, **MM_INJECTION_DATASETS}
     canonical = _dataset_aliases().get(_normalize_name(name))
     if canonical is None:
-        available = ", ".join(sorted(MM_UNLEARNING_DATASETS))
-        raise KeyError(
-            f"Unknown multimodal unlearning benchmark `{name}`. Available: {available}"
-        )
-    return MM_UNLEARNING_DATASETS[canonical]
+        available = ", ".join(sorted(registrations))
+        raise KeyError(f"Unknown multimodal dataset `{name}`. Available: {available}")
+    return registrations[canonical]
 
 
 def get_mm_model_registration(name: str) -> MMModelRegistration:

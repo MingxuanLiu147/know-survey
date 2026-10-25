@@ -26,7 +26,15 @@ MAX_CSV_COLUMNS = 256
 OPERATIONS = ("unlearning", "inject", "edit")
 
 
-KNOWLEDGE_TYPES = ("fact", "event", "procedural", "rule", "free_text", "concept")
+KNOWLEDGE_TYPES = (
+    "fact",
+    "event",
+    "procedural",
+    "rule",
+    "free_text",
+    "concept",
+    "multimodal",
+)
 
 
 DATASET_ROLES = {

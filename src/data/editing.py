@@ -42,6 +42,7 @@ class EditingSample:
     multimodal_locality_inputs: Optional[Dict[str, Any]] = None
     scope_training_prompts: Optional[List[str]] = None
     scope_training_negatives: Optional[List[str]] = None
+    prompt_template: Optional[str] = None
 
 
 class EditingDataset(Dataset):
@@ -185,6 +186,7 @@ class EditingDataset(Dataset):
             ),
             locality_inputs=item.get("locality_inputs", item.get("locality")),
             portability_inputs=item.get("portability_inputs", item.get("portability")),
+            prompt_template=item.get("prompt_template"),
         )
 
     def _build_sample(
@@ -196,15 +198,25 @@ class EditingDataset(Dataset):
         rephrase_prompts: Any = None,
         locality_inputs: Any = None,
         portability_inputs: Any = None,
+        prompt_template: Any = None,
     ) -> Optional[EditingSample]:
         prompt_text = self._flatten_text(prompt).strip()
         target_new_text = self._flatten_text(target_new).strip()
         if not prompt_text or not target_new_text:
             return None
 
-        subject_text = self._flatten_text(
-            subject
-        ).strip() or self._infer_subject_from_prompt(prompt_text)
+        explicit_subject = self._flatten_text(subject).strip()
+        subject_text = explicit_subject or self._infer_subject_from_prompt(prompt_text)
+        template_text = self._flatten_text(prompt_template).strip() or None
+        if template_text is None and explicit_subject and "{}" in prompt_text:
+            template_text = prompt_text
+        if template_text is not None:
+            if template_text.count("{}") != 1 or not subject_text:
+                raise ValueError("prompt_template requires one {} and a subject")
+            rendered = template_text.format(subject_text)
+            if prompt_text not in (template_text, rendered):
+                raise ValueError("prompt_template does not match the supplied prompt")
+            prompt_text = rendered
         if subject_text and subject_text not in prompt_text:
             prompt_text = f"Subject: {subject_text}\n{prompt_text}"
 
@@ -218,6 +230,9 @@ class EditingDataset(Dataset):
             prompt=prompt_text,
             subject=subject_text or prompt_text,
             target_new=target_new_text,
+            prompt_template=(
+                self._format_model_prompt(template_text) if template_text else None
+            ),
             target_old=self._flatten_text(target_old).strip() or None,
             rephrase_prompts=normalized_rephrases or None,
             locality_inputs=self._normalize_eval_groups(locality_inputs, "locality"),
@@ -407,9 +422,7 @@ class EditingDataset(Dataset):
         portability_inputs: Any = None,
     ) -> Optional[EditingSample]:
         subject = self._flatten_text(requested_rewrite.get("subject")).strip()
-        prompt = self._format_subject_prompt(
-            requested_rewrite.get("prompt", ""), subject
-        )
+        prompt = requested_rewrite.get("prompt", "")
         target_new = requested_rewrite.get("target_new")
         target_old = requested_rewrite.get(
             "target_true", requested_rewrite.get("target_old")
@@ -495,6 +508,7 @@ class EditingDataset(Dataset):
                 multimodal_locality_inputs=sample.multimodal_locality_inputs,
                 scope_training_prompts=sample.scope_training_prompts,
                 scope_training_negatives=sample.scope_training_negatives,
+                prompt_template=sample.prompt_template,
             )
             for sample in samples
         ]

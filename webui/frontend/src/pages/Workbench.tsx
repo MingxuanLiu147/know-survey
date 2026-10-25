@@ -46,6 +46,7 @@ import type {
   ComposeResult,
   Demo,
   Health,
+  Modality,
   Operation,
   Plan,
   ResponseExample,
@@ -90,6 +91,19 @@ const defaultIntents = {
   }
 };
 
+const multimodalIntents = {
+  en: {
+    unlearning: "Unlearn 1 image-text fact on Qwen2.5-VL-3B with GradAscent and review retention.",
+    inject: "Inject 1 image-text fact into Qwen2.5-VL-3B with LoRA and review retention probes.",
+    edit: "Edit 1 image-text fact on Qwen2.5-VL-3B with LoRA and evaluate locality."
+  },
+  zh: {
+    unlearning: "使用 GradAscent 在 Qwen2.5-VL-3B 上遗忘 1 条图文知识，并检查保留能力。",
+    inject: "使用 LoRA 向 Qwen2.5-VL-3B 注入 1 条图文知识，并检查保留探针。",
+    edit: "使用 LoRA 在 Qwen2.5-VL-3B 上编辑 1 条图文知识，并评估局部性。"
+  }
+};
+
 const longTextIntents = {
   en: {
     inject:
@@ -116,7 +130,7 @@ function isUploadOperation(value: Operation): boolean {
 }
 
 function isDefaultIntent(value: string): boolean {
-  return Object.values(defaultIntents).some((byOperation) =>
+  return [...Object.values(defaultIntents), ...Object.values(multimodalIntents)].some((byOperation) =>
     Object.values(byOperation).includes(value)
   );
 }
@@ -127,15 +141,15 @@ function defaultTaskName(operation: Operation): string {
   return `starter_tofu_gpt2_${timestamp}`;
 }
 
-function defaultRecipe(catalog: Catalog, operation: Operation) {
-  if (operation === DEFAULT_OPERATION) {
+function defaultRecipe(catalog: Catalog, operation: Operation, modality: Modality = "text") {
+  if (operation === DEFAULT_OPERATION && modality === "text") {
     const starter = catalog.recipes.find(
       (item) => item.id === STARTER_RECIPE_ID && item.default_runnable
     );
     if (starter) return starter;
   }
   return catalog.recipes.find(
-    (item) => item.operation === operation && item.default_runnable
+    (item) => item.operation === operation && (item.modality || "text") === modality && item.default_runnable
   );
 }
 
@@ -170,6 +184,7 @@ export function Workbench() {
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [error, setError] = useState("");
   const [operation, setOperation] = useState<Operation>(initialOperation);
+  const [modality, setModality] = useState<Modality>("text");
   const [intent, setIntent] = useState(
     defaultIntents[language][initialOperation]
   );
@@ -201,7 +216,7 @@ export function Workbench() {
   );
   const [showSkills, setShowSkills] = useState(true);
   const uploadSectionRef = useRef<HTMLElement>(null);
-  const plannedOperation = useRef<Operation | null>(null);
+  const plannedOperation = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -271,21 +286,21 @@ export function Workbench() {
   useEffect(() => {
     if (!catalog) return;
     // An explicit plan already supplied the recipe for this operation change.
-    if (plannedOperation.current === operation) {
+    if (plannedOperation.current === `${operation}:${modality}`) {
       plannedOperation.current = null;
       return;
     }
-    const firstRecipe = defaultRecipe(catalog, operation);
+    const firstRecipe = defaultRecipe(catalog, operation, modality);
     setRecipeId(firstRecipe?.id || "");
-    setExperiment("");
+    setExperiment(modality === "multimodal" && operation === "unlearning" ? catalog.experiments.find((item) => item.id === "unlearn/multimodal/smoke_qwen25vl3b_mllmu")?.id || "" : "");
     const firstModel =
       catalog.models.find(
-        (item) => item.modality === "text" && item.id === "gpt2"
-      ) || catalog.models.find((item) => item.modality === "text");
+        (item) => item.modality === modality && item.id === (modality === "text" ? "gpt2" : "Qwen2.5-VL-3B")
+      ) || catalog.models.find((item) => item.modality === modality);
     setModel(firstModel?.id || "");
-    setTrainer(catalog.trainers[operation][0]?.id || "");
+    setTrainer(catalog.trainers[operation].find((item) => item.modality === modality)?.id || "");
     setEvaluation(
-      catalog.evaluations.includes(
+      modality === "multimodal" ? (operation === "edit" ? "mm_edit" : "") : catalog.evaluations.includes(
         operation === "unlearning" ? "tofu" : operation
       )
         ? operation === "unlearning"
@@ -294,7 +309,7 @@ export function Workbench() {
         : catalog.evaluations[0] || ""
     );
     const operationDatasets = catalog.datasets.filter((item) =>
-      item.operations.includes(operation)
+      item.operations.includes(operation) && item.modality === modality
     );
     if (operation === "unlearning") {
       setDatasets({
@@ -316,7 +331,7 @@ export function Workbench() {
     setTaskName(defaultTaskName(operation));
     setComposeSnapshot(null);
     setCurrentRun(null);
-  }, [operation, catalog]);
+  }, [operation, modality, catalog]);
 
   useEffect(() => {
     if (gpu !== null || !health?.gpus.length) return;
@@ -326,17 +341,17 @@ export function Workbench() {
   useEffect(() => {
     setIntent((current) =>
       isDefaultIntent(current)
-        ? defaultIntents[language][operation]
+        ? (modality === "multimodal" ? multimodalIntents : defaultIntents)[language][operation]
         : current
     );
-  }, [language, operation]);
+  }, [language, operation, modality]);
 
   const recipes = useMemo(
     () =>
       catalog?.recipes.filter(
-        (item) => item.operation === operation && item.default_runnable
+        (item) => item.operation === operation && (item.modality || "text") === modality && item.default_runnable
       ) || [],
-    [catalog, operation]
+    [catalog, operation, modality]
   );
 
   const selectedSkillIds = useMemo(
@@ -353,13 +368,14 @@ export function Workbench() {
   );
 
   const responseExample = useMemo(
-    () => responseExamples.find((item) => item.operation === operation),
-    [operation, responseExamples]
+    () => modality === "text" ? responseExamples.find((item) => item.operation === operation) : undefined,
+    [operation, responseExamples, modality]
   );
 
   const payload = useMemo<ComposePayload>(() => {
     const base: ComposePayload = {
       operation,
+      modality,
       task_name: taskName,
       seed,
       smoke,
@@ -372,10 +388,11 @@ export function Workbench() {
       model,
       trainer,
       datasets,
-      evaluation
+      evaluation: evaluation || null
     };
   }, [
     operation,
+    modality,
     taskName,
     seed,
     smoke,
@@ -400,15 +417,26 @@ export function Workbench() {
     setPlanning(true);
     setError("");
     try {
-      const value = await api.plan({ intent, provider, language });
+      const value = await api.plan({ intent, provider, language, modality });
       setPlan(value);
       const exactExperiment = Object.values(value.experiments).find(
         (item): item is string => Boolean(item)
       );
-      if (exactExperiment && value.operation !== operation) {
-        plannedOperation.current = value.operation;
+      const nextModality = value.modality || "text";
+      if ((exactExperiment || nextModality === "multimodal") &&
+          (value.operation !== operation || nextModality !== modality)) {
+        plannedOperation.current = `${value.operation}:${nextModality}`;
       }
       setOperation(value.operation);
+      setModality(nextModality);
+      if (nextModality === "multimodal") {
+        setModel(value.model_id);
+        setTrainer(value.operation === "unlearning" ? value.methods[0] : `${value.operation}/${value.methods[0]}`);
+        setDatasets({[value.operation === "inject" ? "train" : value.operation === "edit" ? "edit" : "forget"]: value.dataset_id});
+        setEvaluation(value.operation === "edit" ? "mm_edit" : "");
+        setRecipeId("");
+        setExperiment("");
+      }
       if (exactExperiment) {
         setRecipeId("");
         setExperiment(exactExperiment);
@@ -622,6 +650,7 @@ export function Workbench() {
                 type="button"
                 onClick={() => {
                   setOperation("inject");
+                  setModality("text");
                   setIntent(longTextIntents[language].inject);
                   setPlan(null);
                   setComposeSnapshot(null);
@@ -634,6 +663,7 @@ export function Workbench() {
                 type="button"
                 onClick={() => {
                   setOperation("edit");
+                  setModality("text");
                   setIntent(longTextIntents[language].edit);
                   setPlan(null);
                   setComposeSnapshot(null);
@@ -672,7 +702,7 @@ export function Workbench() {
               </Button>
             </div>
 
-            <AgentSession intent={intent} provider={provider} language={language} />
+            <AgentSession intent={intent} provider={provider} language={language} modality={modality} />
             <div className="planner-skills">
               <div className="planner-skills-header">
                 <button
@@ -750,9 +780,10 @@ export function Workbench() {
                           key={method}
                           onClick={() => {
                             if (plan.operation !== operation) {
-                              plannedOperation.current = plan.operation;
+                              plannedOperation.current = `${plan.operation}:${plan.modality || "text"}`;
                               setOperation(plan.operation);
                             }
+                            setModality(plan.modality || "text");
                             setRecipeId("");
                             setExperiment(experimentId);
                             setTaskName(
@@ -822,17 +853,20 @@ export function Workbench() {
             />
             <div className="form-grid">
               <label className="field field-wide">
+                <span>{t("modality")}</span>
+                <select value={modality} onChange={(event) => {setModality(event.target.value as Modality); setPlan(null);}}>
+                  <option value="text">{language === "zh" ? "文本" : "Text"}</option>
+                  <option value="multimodal">{language === "zh" ? "图文" : "Image + text"}</option>
+                </select>
+              </label>
+              <label className="field field-wide">
                 <span>{t("recipe")}</span>
                 <select
                   value={experiment ? "__agent__" : recipeId || "__manual__"}
                   onChange={(event) => {
                     const value = event.target.value;
-                    setExperiment("");
-                    setRecipeId(
-                      value === "__manual__" || value === "__agent__"
-                        ? ""
-                        : value
-                    );
+                    setExperiment(value.startsWith("experiment:") ? value.slice(11) : "");
+                    setRecipeId(value.startsWith("experiment:") || value === "__manual__" || value === "__agent__" ? "" : value);
                     setComposeSnapshot(null);
                   }}
                 >
@@ -846,6 +880,9 @@ export function Workbench() {
                       {recipe.model} · {recipe.trainer?.split("/").at(-1)}
                     </option>
                   ))}
+                  {modality === "multimodal" ? catalog.experiments.filter((item) => item.operation === operation && item.modality === modality).map((item) => (
+                    <option key={item.id} value={`experiment:${item.id}`}>{displayTechnicalText(item.id)}</option>
+                  )) : null}
                   <option value="__manual__">{t("manualComposition")}</option>
                 </select>
               </label>
@@ -858,7 +895,7 @@ export function Workbench() {
                       onChange={(event) => setModel(event.target.value)}
                     >
                       {catalog.models
-                        .filter((item) => item.modality === "text")
+                        .filter((item) => item.modality === modality)
                         .map((item) => (
                           <option value={item.id} key={item.id}>
                             {item.id}
@@ -872,7 +909,7 @@ export function Workbench() {
                       value={trainer}
                       onChange={(event) => setTrainer(event.target.value)}
                     >
-                      {catalog.trainers[operation].map((item) => (
+                      {catalog.trainers[operation].filter((item) => item.modality === modality).map((item) => (
                         <option value={item.id} key={item.id}>
                           {item.id.split("/").at(-1)}
                         </option>
@@ -895,7 +932,7 @@ export function Workbench() {
                       >
                         {catalog.datasets
                           .filter((item) =>
-                            item.operations.includes(operation)
+                            item.operations.includes(operation) && item.modality === modality
                           )
                           .map((item) => (
                             <option value={item.id} key={item.id}>
@@ -911,7 +948,8 @@ export function Workbench() {
                       value={evaluation}
                       onChange={(event) => setEvaluation(event.target.value)}
                     >
-                      {catalog.evaluations.map((item) => (
+                      {modality === "multimodal" && operation !== "edit" ? <option value="">{language === "zh" ? "使用该多模态路线的探针" : "Use multimodal route probes"}</option> : null}
+                      {catalog.evaluations.filter((item) => modality === "text" ? !item.startsWith("mm_") : operation === "edit" && item.startsWith("mm_edit")).map((item) => (
                         <option value={item} key={item}>
                           {item}
                         </option>
@@ -1068,7 +1106,7 @@ export function Workbench() {
             ) : null}
           </section>
 
-          {isUploadOperation(operation) ? (
+          {isUploadOperation(operation) && (modality === "text" || operation === "inject") ? (
             <section
               className="panel custom-data-panel"
               ref={uploadSectionRef}
@@ -1094,9 +1132,10 @@ export function Workbench() {
               />
               {showUpload ? (
                 <DataUpload
-                  key={operation}
+                  key={`${operation}:${modality}`}
                   catalog={catalog}
                   operation={operation}
+                  modality={modality}
                   recommendedModel={
                     plan?.operation === operation ? plan.model_id : undefined
                   }

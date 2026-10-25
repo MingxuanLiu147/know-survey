@@ -30,6 +30,7 @@ SKILLS = {
         {
             "intent": "string",
             "operation": "string",
+            "modality": "string",
             "model_id": "string",
             "dataset_id": "string",
             "methods": "string",
@@ -156,6 +157,7 @@ class AgentSession:
         root: Path,
         *,
         provider: str,
+        modality: str | None = None,
         allow_execute: bool = False,
         cuda: str | None = None,
         max_steps: int = 12,
@@ -181,6 +183,9 @@ class AgentSession:
             raise ValueError("Invalid session limits.")
         if cuda is not None and not re.fullmatch(r"[0-9]+(?:,[0-9]+)*", cuda):
             raise ValueError("cuda must be a comma-separated list of device indices.")
+        if modality not in {None, "text", "multimodal"}:
+            raise ValueError("Invalid modality.")
+        self.modality = modality
         self.id = session_id or uuid.uuid4().hex
         if not re.fullmatch(r"[a-f0-9]{32}", self.id):
             raise ValueError("Invalid session ID.")
@@ -196,6 +201,7 @@ class AgentSession:
             "schema_version": "1.0",
             "session_id": self.id,
             "provider": provider,
+            "modality": modality,
             "status": "pending",
             "evidence_level": "configured",
             "allow_execute": allow_execute,
@@ -296,6 +302,12 @@ class AgentSession:
             if type(value) is not types[fields[key]]:
                 raise ValueError(f"Invalid argument type: {key}")
         arguments = dict(arguments)
+        if name == "plan_surgery" and self.modality is not None:
+            if arguments.get("modality", self.modality) != self.modality:
+                raise ValueError(
+                    "Plan modality conflicts with the selected session modality."
+                )
+            arguments["modality"] = self.modality
         for key in ("input", "plan", "run_dir", "cases"):
             if key in arguments:
                 arguments[key] = str(self._path(arguments[key]).relative_to(self.root))
@@ -416,6 +428,7 @@ class AgentSession:
                     "Describe execution scope using record counts and training steps, "
                     "and report only results present in tool observations. "
                     f"Execution enabled: {self.allow_execute}. Maximum cases: {self.max_cases}. "
+                    f"Selected modality: {self.modality or 'infer from user intent'}. "
                     "Explain choices and completion in the user's language. You may finish with a bounded "
                     "plan if execution is disabled; state this clearly."
                 ),
@@ -488,6 +501,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--root", type=Path, default=Path.cwd())
     parser.add_argument("--provider", choices=("openai", "deepseek"), required=True)
     parser.add_argument("--intent", required=True)
+    parser.add_argument("--modality", choices=("text", "multimodal"))
     parser.add_argument("--execute", action="store_true")
     parser.add_argument("--cuda")
     parser.add_argument("--max-steps", type=int, default=12)
@@ -497,6 +511,7 @@ def main(argv: list[str] | None = None) -> int:
     session = AgentSession(
         args.root,
         provider=args.provider,
+        modality=args.modality,
         allow_execute=args.execute,
         cuda=args.cuda,
         max_steps=args.max_steps,

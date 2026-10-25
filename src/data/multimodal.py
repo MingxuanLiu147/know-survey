@@ -9,6 +9,7 @@ import json
 import logging
 import os
 from io import BytesIO
+from pathlib import Path
 from typing import Dict, List
 
 import pandas as pd
@@ -230,6 +231,7 @@ def mm_collate_fn(examples, processor, ans_only=False):
     """
     images = []
     texts = []
+    prompt_texts = []
     answer_tokens_list: list[list[list[int]]] = []
 
     def token_ids(text: str) -> list[int]:
@@ -245,24 +247,33 @@ def mm_collate_fn(examples, processor, ans_only=False):
         return [int(token_id) for token_id in encoded]
 
     for ex in examples:
-        image = ex["image"]
+        example_images = ex.get("images")
+        if example_images is None:
+            example_images = [ex["image"]] if ex.get("image") is not None else []
         question = ex["question"]
         answer = ex["answer"]
 
-        user_content = [{"type": "image"}, {"type": "text", "text": question}]
-        if image is not None:
-            images.append(image)
-        else:
-            user_content = [{"type": "text", "text": question}]
+        images.extend(example_images)
+        user_content = [{"type": "image"} for _ in example_images]
+        user_content.append({"type": "text", "text": question})
 
         messages = [
             {"role": "user", "content": user_content},
             {"role": "assistant", "content": [{"type": "text", "text": answer}]},
         ]
         text = processor.apply_chat_template(messages, add_generation_prompt=False)
-        texts.append(text.strip())
+        texts.append(text)
 
         if ans_only:
+            prompt_text = processor.apply_chat_template(
+                messages[:1], add_generation_prompt=True
+            )
+            if not text.startswith(prompt_text):
+                raise ValueError(
+                    "The chat template must render the user turn and assistant "
+                    "generation prompt as a prefix of the full conversation."
+                )
+            prompt_texts.append(prompt_text)
             candidates: list[list[int]] = []
             for candidate_text in (answer, f" {answer}"):
                 try:
@@ -286,12 +297,36 @@ def mm_collate_fn(examples, processor, ans_only=False):
     labels = batch["input_ids"].clone()
 
     if ans_only and answer_tokens_list:
+        # Process the prompt with the same images: VLM processors expand image
+        # placeholders, so plain-text token counts cannot locate the answer.
+        prompt_batch = processor(
+            text=prompt_texts,
+            images=images if images else None,
+            padding=True,
+            truncation=False,
+            return_tensors="pt",
+        )
         for i, candidate_sequences in enumerate(answer_tokens_list):
-            sequence = labels[i].detach().cpu().tolist()
+            positions = batch["attention_mask"][i].bool().nonzero().flatten()
+            sequence = labels[i, positions].detach().cpu().tolist()
+            prompt_ids = (
+                prompt_batch["input_ids"][i][prompt_batch["attention_mask"][i].bool()]
+                .detach()
+                .cpu()
+                .tolist()
+            )
+            prompt_length = len(prompt_ids)
+            if sequence[:prompt_length] != prompt_ids:
+                raise ValueError(
+                    "Assistant answer boundary cannot be aligned; the prompt may "
+                    "have been truncated or the template tokenization differs."
+                )
             best_match: tuple[int, int] | None = None
             for answer_ids in candidate_sequences:
                 answer_length = len(answer_ids)
-                for start in range(len(sequence) - answer_length, -1, -1):
+                for start in range(
+                    len(sequence) - answer_length, prompt_length - 1, -1
+                ):
                     if sequence[start : start + answer_length] == answer_ids:
                         candidate_match = (start, answer_length)
                         if best_match is None or start > best_match[0]:
@@ -299,18 +334,144 @@ def mm_collate_fn(examples, processor, ans_only=False):
                         break
             if best_match is None:
                 raise ValueError(
-                    "Answer token span was not found in the processor chat template; "
+                    "Complete answer token span was not found in the assistant turn "
+                    "(it may have been truncated); "
                     f"answer={examples[i]['answer']!r}"
                 )
             start, answer_length = best_match
-            answer_labels = labels[i, start : start + answer_length].clone()
+            answer_positions = positions[start : start + answer_length]
+            answer_labels = labels[i, answer_positions].clone()
             labels[i].fill_(-100)
-            labels[i, start : start + answer_length] = answer_labels
+            labels[i, answer_positions] = answer_labels
     else:
-        labels[labels == processor.tokenizer.pad_token_id] = -100
+        labels[batch["attention_mask"] == 0] = -100
 
     batch["labels"] = labels
     return dict(batch)
+
+
+class CanonicalMMInjectionDataset(Dataset):
+    """Load local image/text targets; resolve image paths beside the JSON file."""
+
+    def __init__(
+        self,
+        path: str,
+        *,
+        image_root: str | None = None,
+        require_images: bool = True,
+        max_samples: int | None = None,
+    ):
+        source = Path(path).expanduser().resolve()
+        text = source.read_text(encoding="utf-8")
+        records = (
+            [json.loads(line) for line in text.splitlines() if line.strip()]
+            if source.suffix.lower() == ".jsonl"
+            else json.loads(text)
+        )
+        if not isinstance(records, list) or not records:
+            raise ValueError("Multimodal injection needs a nonempty JSON list or JSONL")
+        root = Path(image_root).expanduser().resolve() if image_root else source.parent
+        self.samples = []
+        for index, record in enumerate(records):
+            if max_samples is not None and max_samples > 0 and index >= max_samples:
+                break
+            if not isinstance(record, dict):
+                raise ValueError(f"Expected a JSON object at record {index}")
+            question = next(
+                (
+                    record.get(k)
+                    for k in ("prompt", "question", "instruction", "input")
+                    if record.get(k)
+                ),
+                None,
+            )
+            if (
+                record.get("instruction")
+                and record.get("input")
+                and question == record["instruction"]
+            ):
+                question = f"{question}\n{record['input']}"
+            answer = next(
+                (
+                    record.get(k)
+                    for k in ("target_new", "answer", "output")
+                    if record.get(k)
+                ),
+                None,
+            )
+            if (
+                not isinstance(question, str)
+                or not question.strip()
+                or not isinstance(answer, str)
+                or not answer.strip()
+            ):
+                raise ValueError(f"Missing nonempty prompt/target at record {index}")
+            paths = record.get("images", record.get("image", []))
+            if isinstance(paths, str):
+                paths = [paths]
+            if not isinstance(paths, list) or (require_images and not paths):
+                raise ValueError(f"Missing image path(s) at record {index}")
+            resolved = []
+            for value in paths:
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError(f"Invalid image path at record {index}")
+                path_value = Path(value).expanduser()
+                image_path = (
+                    path_value if path_value.is_absolute() else root / path_value
+                ).resolve()
+                if not image_path.is_file():
+                    raise FileNotFoundError(
+                        f"Image at record {index} not found: {image_path}"
+                    )
+                resolved.append(image_path)
+            self.samples.append(
+                {"question": question, "answer": answer, "image_paths": resolved}
+            )
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, index):
+        record = self.samples[index]
+        images = []
+        for path in record["image_paths"]:
+            with Image.open(path) as source:
+                images.append(source.convert("RGB"))
+        return {
+            "question": record["question"],
+            "answer": record["answer"],
+            "images": images,
+        }
+
+
+def get_mm_inject_data(data_cfg: DictConfig, processor):
+    """Return training and optional retention loaders for image/text injection."""
+    if str(data_cfg.get("mode")) != "inject":
+        raise ValueError("Canonical_MM_inject requires data.mode=inject")
+    loaders = []
+    for role in ("train", "retain"):
+        source = data_cfg.get(f"{role}_path")
+        if not source:
+            if role == "train":
+                raise ValueError("Multimodal injection requires data.train_path")
+            loaders.append(None)
+            continue
+        dataset = CanonicalMMInjectionDataset(
+            str(source),
+            image_root=data_cfg.get("image_root"),
+            require_images=role == "train",
+            max_samples=data_cfg.get("max_samples"),
+        )
+        loaders.append(
+            _make_loader(
+                dataset,
+                processor,
+                batch_size=int(data_cfg.get("batch_size", 1)),
+                ans_only=bool(data_cfg.get("ans_only", True)),
+                shuffle=role == "train",
+            )
+        )
+    return tuple(loaders)
 
 
 def mm_paired_modality_collate_fn(examples, processor, ans_only=False):

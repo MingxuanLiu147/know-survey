@@ -97,30 +97,34 @@ class RepositoryCatalog:
         return rows
 
     def trainers(self) -> dict[str, list[dict[str, str]]]:
-        unlearning = [
-            {"id": name, "status": "configured"}
-            for name in self._scan("trainer", recursive=False)
-            if name not in {"finetune"} and not name.startswith("MM")
-        ]
-        inject = [
-            {"id": name, "status": "configured"}
-            for name in self._scan("trainer/inject", recursive=False)
-            if name != "base_inject"
-        ]
-        edit = [
-            {"id": name, "status": "configured"}
-            for name in self._scan("trainer/edit", recursive=False)
-            if name != "base_editor" and not name.startswith("MM_")
-        ]
-        return {
-            "unlearning": unlearning,
-            "inject": [
-                {"id": f"inject/{row['id']}", "status": row["status"]} for row in inject
-            ],
-            "edit": [
-                {"id": f"edit/{row['id']}", "status": row["status"]} for row in edit
-            ],
-        }
+        from src.mm_registry import MM_UNLEARNING_ALGORITHMS
+
+        rows: dict[str, list[dict[str, str]]] = {key: [] for key in OPERATION_DIR}
+        for operation, group in (
+            ("unlearning", "trainer"),
+            ("inject", "trainer/inject"),
+            ("edit", "trainer/edit"),
+        ):
+            for name in self._scan(group, recursive=False):
+                if name in {"finetune", "base_inject", "base_editor"}:
+                    continue
+                config = _yaml(self.configs / group / f"{name}.yaml")
+                handler = str(config.get("handler", name))
+                multimodal = name.startswith("MM")
+                if operation == "unlearning" and multimodal:
+                    registration = MM_UNLEARNING_ALGORITHMS.get(handler)
+                    if not registration or not registration.runnable:
+                        continue
+                rows[operation].append(
+                    {
+                        "id": name
+                        if operation == "unlearning"
+                        else f"{operation}/{name}",
+                        "status": "configured",
+                        "modality": "multimodal" if multimodal else "text",
+                    }
+                )
+        return rows
 
     def datasets(self) -> list[dict[str, Any]]:
         rows = []
@@ -137,12 +141,24 @@ class RepositoryCatalog:
                 operations.append("unlearning")
             if "inject" in lowered or "train" in lowered or "alpaca" in lowered:
                 operations.append("inject")
-            if "edit" in lowered or any("Editing" in str(item) for item in handlers):
+            if "edit" in lowered or any(
+                "Editing" in str(item) or str(item).startswith(("MMEdit", "MMKE"))
+                for item in handlers
+            ):
                 operations.append("edit")
             rows.append(
                 {
                     "id": name,
                     "handlers": handlers,
+                    "modality": "multimodal"
+                    if (
+                        config.get("benchmark")
+                        or name.startswith("Canonical_MM_")
+                        or any(
+                            str(item).startswith(("MM", "VLKEB")) for item in handlers
+                        )
+                    )
+                    else "text",
                     "operations": operations or ["unlearning", "inject", "edit"],
                     "status": "configured",
                 }
@@ -158,8 +174,32 @@ class RepositoryCatalog:
             operation = relative.split("/", 1)[0]
             public = "unlearning" if operation == "unlearn" else operation
             if public in OPERATION_DIR:
+                config = _yaml(path)
+                model = next(
+                    (
+                        value
+                        for item in config.get("defaults", [])
+                        if isinstance(item, dict)
+                        for key, value in item.items()
+                        if key in {"model", "/model", "override /model"}
+                    ),
+                    None,
+                )
+                model_cfg = (
+                    _yaml(self.configs / "model" / f"{model}.yaml") if model else {}
+                )
+                modality = config.get("modality") or (
+                    "multimodal"
+                    if "multimodal" in path.parts or model_cfg.get("model_family")
+                    else "text"
+                )
                 rows.append(
-                    {"id": relative, "operation": public, "status": "configured"}
+                    {
+                        "id": relative,
+                        "operation": public,
+                        "modality": modality,
+                        "status": "configured",
+                    }
                 )
         return rows
 
@@ -189,6 +229,7 @@ class RepositoryCatalog:
                 {
                     "id": raw.get("id"),
                     "operation": raw.get("operation"),
+                    "modality": raw.get("modality", "text"),
                     "experiment": experiment,
                     "model": _component_name(raw.get("model"), "model"),
                     "trainer": _component_name(raw.get("method"), "trainer"),
@@ -264,31 +305,61 @@ class RepositoryCatalog:
         snapshot = self.snapshot()
         if request.recipe_id:
             recipe = self.recipe(request.recipe_id)
+            if recipe["modality"] != request.modality:
+                raise CatalogError(
+                    "Recipe modality does not match the request. / 配方模态与请求不一致。"
+                )
             if recipe["operation"] != request.operation:
                 raise CatalogError("Recipe operation does not match the request.")
             if recipe["status"] != "configured":
                 raise CatalogError("Recipe is not currently composable.")
         elif request.experiment:
             experiments = {
-                item["id"]: item["operation"] for item in snapshot["experiments"]
+                item["id"]: (item["operation"], item["modality"])
+                for item in snapshot["experiments"]
             }
-            if experiments.get(request.experiment) != request.operation:
+            if experiments.get(request.experiment) != (
+                request.operation,
+                request.modality,
+            ):
                 raise CatalogError(
                     "Experiment is unknown or belongs to another operation."
                 )
         else:
             models = {
-                item["id"] for item in snapshot["models"] if item["modality"] == "text"
+                item["id"]
+                for item in snapshot["models"]
+                if item["modality"] == request.modality
             }
             self._require(request.model, models, "model")
-            trainers = {item["id"] for item in snapshot["trainers"][request.operation]}
+            trainers = {
+                item["id"]
+                for item in snapshot["trainers"][request.operation]
+                if item["modality"] == request.modality
+            }
             self._require(request.trainer, trainers, "trainer")
-            self._require(
-                request.evaluation,
-                set(snapshot["evaluations"]),
-                "evaluation",
-            )
-            datasets = {item["id"] for item in snapshot["datasets"]}
+            if request.modality == "multimodal" and request.operation == "unlearning":
+                raise CatalogError(
+                    "Use a multimodal benchmark experiment for unlearning. / 多模态遗忘请选择对应基准实验。"
+                )
+            if request.modality == "multimodal" and request.operation == "inject":
+                if request.evaluation is not None:
+                    raise CatalogError(
+                        "Multimodal injection uses its configured probes, not a text evaluation suite. / 多模态注入使用配置中的探针。"
+                    )
+            else:
+                evaluations = set(snapshot["evaluations"])
+                if request.modality == "multimodal":
+                    evaluations = {
+                        name for name in evaluations if name.startswith("mm_edit")
+                    }
+                self._require(request.evaluation, evaluations, "evaluation")
+            datasets = {
+                item["id"]
+                for item in snapshot["datasets"]
+                if item["modality"] == request.modality
+                and request.operation in item["operations"]
+            }
             required_roles = DATASET_ROLES[request.operation]
             if set(request.datasets) != set(required_roles):
                 raise CatalogError(
@@ -297,6 +368,17 @@ class RepositoryCatalog:
                 )
             for value in request.datasets.values():
                 self._require(value, datasets, "dataset")
+        if request.modality == "multimodal" and request.operation != "edit":
+            replacements = {
+                "trainer.args.learning_rate": "trainer.args.lr",
+                "trainer.args.num_train_epochs": "trainer.args.num_epochs",
+                "trainer.args.per_device_train_batch_size": "data.batch_size",
+            }
+            for key in request.overrides:
+                if key.lstrip("+") in replacements:
+                    raise CatalogError(
+                        f"For multimodal training use {replacements[key.lstrip('+')]}. / 多模态训练请使用该字段。"
+                    )
         self._validate_overrides(request.overrides, smoke=request.smoke)
 
     @staticmethod
@@ -371,6 +453,7 @@ class RepositoryCatalog:
             "src/surgery.py",
             "--config-name=surgery.yaml",
             f"operation={request.operation}",
+            f"modality={request.modality}",
         ]
         if request.recipe_id:
             argv.append(f"experiment={self.recipe(request.recipe_id)['experiment']}")
@@ -381,12 +464,23 @@ class RepositoryCatalog:
                 [
                     f"model={request.model}",
                     f"trainer={request.trainer}",
-                    f"eval={request.evaluation}",
                 ]
             )
+            if request.evaluation is not None:
+                argv.append(f"eval={request.evaluation}")
             for role, dataset in request.datasets.items():
-                argv.append(f"data/datasets@data.{role}={dataset}")
-        argv.append(f"task_name={request.task_name}")
+                if request.modality == "multimodal" and request.operation == "inject":
+                    argv.append(f"data/datasets@data={dataset}")
+                else:
+                    argv.append(f"data/datasets@data.{role}={dataset}")
+        task_prefix = (
+            "++"
+            if request.modality == "multimodal" and request.operation == "unlearning"
+            else ""
+        )
+        argv.append(f"{task_prefix}task_name={request.task_name}")
+        if request.modality == "multimodal" and request.operation == "unlearning":
+            argv.append(f"++output_dir=saves/unlearning/{request.task_name}")
         argv.append(f"++trainer.args.seed={request.seed}")
         if request.smoke:
             if request.operation == "edit":

@@ -217,7 +217,7 @@ class MEMITEditor(EditTrainer):
         z_layer = layer_indices[-1]
         req_dicts = [
             {
-                "prompt": request.prompt,
+                "prompt": request.prompt_template or request.prompt,
                 "subject": request.subject,
                 "target_new": request.target_new,
             }
@@ -253,7 +253,7 @@ class MEMITEditor(EditTrainer):
             z_list.append(z)
         zs = torch.stack(z_list, dim=0)
 
-        prompts = [r.prompt for r in requests]
+        prompts = [r.prompt_template or r.prompt for r in requests]
         subjects = [r.subject for r in requests]
 
         for i, layer_idx in enumerate(layer_indices):

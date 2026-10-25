@@ -101,6 +101,49 @@ know-surgery operation=unlearning model=Qwen2.5-3B-Instruct trainer=GradDiff \
 
 This last command configures training only. Replace the default evaluation with a protocol appropriate to your custom data before evaluating. Forget and retain records must be disjoint.
 
+## Image/text injection
+
+Use `operation=inject modality=multimodal` for processor-based LoRA training.
+The initial recipe uses `Qwen2.5-VL-3B`; other VLM/model combinations need their
+own compatibility checks. Supply local JSON/JSONL records:
+
+```json
+{"prompt": "What is the code name of this object?", "target_new": "cobalt", "images": ["images/object.png"]}
+```
+
+`image` accepts one path; `images` accepts a list. Relative image paths resolve
+beside the JSON/JSONL file, or under `data.image_root` when set. Retention records
+use the same question/answer fields and may omit images for text-only probes.
+Keep image rights and data provenance with your input files.
+
+```bash
+know-surgery operation=inject modality=multimodal \
+  model=Qwen2.5-VL-3B trainer=inject/MM_LoRA \
+  model.model_path=/path/to/model model.processor_path=/path/to/model \
+  data.train_path=/path/to/train.jsonl data.retain_path=/path/to/retain.jsonl \
+  trainer.args.seed=42 trainer.args.max_steps=1 task_name=mm_inject_example --cfg job
+```
+
+Remove `--cfg job` to run. `max_steps` caps optimizer updates within
+`num_epochs`; gradient-accumulation microbatches do not count as separate updates.
+`-1` uses the full epoch budget. The saved directory contains merged model
+weights and the Processor. For inference, use
+`get_mm_model(config, for_training=False)` to load the saved Processor and avoid
+creating a new adapter.
+
+`MM_INJECT_SUMMARY.json` records before/after loss and teacher-forced token
+accuracy on the first `trainer.method_args.eval_max_batches` batches (default 8)
+in stable dataset order. These are training probes, not a held-out benchmark.
+With `data.retain_path`, it also records retention accuracy and prediction
+agreement under the same target prefixes. Without that file, retention is
+unavailable. Token accuracy is over the supervised labels (`data.ans_only=true`
+by default), not free-generation exact match. Standalone `mm_eval.py` remains
+benchmark-specific; these injection probes run inside the training recipe.
+
+图文注入使用独立的 `train` 数据和正向交叉熵，不占用遗忘数据角色。先预览上面的命令，
+再删除 `--cfg job` 执行。训练步数按实际参数更新计数；保留集可包含纯文本问题。
+结果明确区分训练样本表现、保留集准确率和前后预测一致率，不能把一次小样本运行视为完整基准结果。
+
 ## Normalize structured input
 
 CLI and WebUI share a data contract for facts, events, procedures, rules and free text. JSON/JSONL/CSV/TXT can be normalized before building operation-specific cases:

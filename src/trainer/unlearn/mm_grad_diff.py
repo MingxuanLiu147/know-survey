@@ -7,6 +7,7 @@ prevents a shared trainer from silently changing a benchmark baseline.
 """
 
 import logging
+import math
 
 import torch
 from tqdm import tqdm
@@ -63,6 +64,14 @@ class MMGradDiff(MMUnlearnBase):
         outputs = model(**batch)
         return -outputs.loss
 
+    def _optimizer_steps_per_epoch(self) -> int:
+        steps = super()._optimizer_steps_per_epoch()
+        if self.schedule_mode == "sequential":
+            steps += math.ceil(
+                len(self.retain_loader) / self.gradient_accumulation_steps
+            )
+        return steps
+
     def compute_forget_loss(self, model, batch) -> torch.Tensor:
         """Compute the forget-side objective for alternating training."""
         outputs = model(**batch)
@@ -96,12 +105,9 @@ class MMGradDiff(MMUnlearnBase):
                     self.model.parameters(), self.max_grad_norm
                 )
             )
-        self.optimizer.step()
-        self.lr_scheduler.step()
-        self.optimizer.zero_grad()
-        return grad_norm, bool(self.accelerator.sync_gradients)
+        return grad_norm, self._step_optimizer()
 
-    def _train_sequential_epoch(self, epoch: int):
+    def _train_sequential_epoch(self, epoch: int, completed_steps: int = 0):
         total_forget = 0.0
         total_retain = 0.0
         forget_steps = 0
@@ -120,7 +126,7 @@ class MMGradDiff(MMUnlearnBase):
                 disable=not self.accelerator.is_local_main_process,
             )
             for step, batch in enumerate(progress):
-                with self.accelerator.accumulate(self.model):
+                with self._accumulate(step, len(loader)):
                     loss = objective(self.model, batch)
                     grad_norm, stepped = self._backward_and_step(loss)
                     if grad_norm is not None:
@@ -135,6 +141,10 @@ class MMGradDiff(MMUnlearnBase):
                     retain_steps += 1
                     mean_loss = total_retain / retain_steps
                 progress.set_postfix(loss=mean_loss)
+                if self._budget_reached(completed_steps + optimizer_steps):
+                    break
+            if self._budget_reached(completed_steps + optimizer_steps):
+                break
 
         return {
             "forget_total": total_forget,
@@ -145,7 +155,7 @@ class MMGradDiff(MMUnlearnBase):
             "last_grad_norm": last_grad_norm,
         }
 
-    def _train_paired_epoch(self, epoch: int):
+    def _train_paired_epoch(self, epoch: int, completed_steps: int = 0):
         total_forget = 0.0
         total_retain = 0.0
         optimizer_steps = 0
@@ -165,7 +175,7 @@ class MMGradDiff(MMUnlearnBase):
                 retain_iter = iter(self.retain_loader)
                 retain_batch = next(retain_iter)
 
-            with self.accelerator.accumulate(self.model):
+            with self._accumulate(step, n_iters):
                 loss, loss_forget, loss_retain = self.compute_paired_loss(
                     self.model, forget_batch, retain_batch
                 )
@@ -180,12 +190,14 @@ class MMGradDiff(MMUnlearnBase):
                 f_loss=total_forget / (step + 1),
                 r_loss=total_retain / (step + 1),
             )
+            if self._budget_reached(completed_steps + optimizer_steps):
+                break
 
         return {
             "forget_total": total_forget,
             "retain_total": total_retain,
-            "forget_steps": n_iters,
-            "retain_steps": n_iters,
+            "forget_steps": step + 1,
+            "retain_steps": step + 1,
             "optimizer_steps": optimizer_steps,
             "last_grad_norm": last_grad_norm,
         }
@@ -207,33 +219,44 @@ class MMGradDiff(MMUnlearnBase):
         for epoch in range(self.num_epochs):
             self.model.train()
             if self.schedule_mode == "sequential":
-                stats = self._train_sequential_epoch(epoch)
+                stats = self._train_sequential_epoch(epoch, optimizer_steps)
             else:
-                stats = self._train_paired_epoch(epoch)
+                stats = self._train_paired_epoch(epoch, optimizer_steps)
             optimizer_steps += stats["optimizer_steps"]
             if stats["last_grad_norm"] is not None:
                 last_grad_norm = stats["last_grad_norm"]
-            avg_forget_loss = stats["forget_total"] / stats["forget_steps"]
-            avg_retain_loss = stats["retain_total"] / stats["retain_steps"]
-            avg_loss = avg_forget_loss + avg_retain_loss
+            avg_forget_loss = (
+                stats["forget_total"] / stats["forget_steps"]
+                if stats["forget_steps"]
+                else None
+            )
+            avg_retain_loss = (
+                stats["retain_total"] / stats["retain_steps"]
+                if stats["retain_steps"]
+                else None
+            )
+            avg_loss = (avg_forget_loss or 0.0) + (avg_retain_loss or 0.0)
             epoch_forget_losses.append(avg_forget_loss)
             epoch_retain_losses.append(avg_retain_loss)
             epoch_losses.append(avg_loss)
             epoch_forget_steps.append(stats["forget_steps"])
             epoch_retain_steps.append(stats["retain_steps"])
             logger.info(
-                "Epoch %d - loss: %.4f, forget_objective: %.4f, retain_loss: %.4f",
+                "Epoch %d - loss: %.4f, forget_objective: %s, retain_loss: %s",
                 epoch + 1,
                 avg_loss,
                 avg_forget_loss,
                 avg_retain_loss,
             )
+            if self._budget_reached(optimizer_steps):
+                break
 
         peak_memory_mb = None
         if torch.cuda.is_available():
             peak_memory_mb = torch.cuda.max_memory_allocated() / (1024**2)
         return {
-            "epochs": self.num_epochs,
+            "epochs": len(epoch_losses),
+            "max_steps": self.max_steps,
             "optimizer_steps": optimizer_steps,
             "epoch_losses": epoch_losses,
             "epoch_forget_losses": epoch_forget_losses,

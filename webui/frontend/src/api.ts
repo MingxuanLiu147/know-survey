@@ -78,6 +78,7 @@ export const api = {
     provider: string;
     language: "en" | "zh";
     operation?: string;
+    modality?: "text" | "multimodal";
   }) =>
     request<Plan>("/plans", {
       method: "POST",
@@ -140,7 +141,8 @@ export const api = {
     dataset_id: string;
     model: string;
     trainer: string;
-    evaluation: string;
+    evaluation: string | null;
+    modality?: "text" | "multimodal";
     seed: number;
     }
   ) =>

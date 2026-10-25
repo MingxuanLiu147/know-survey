@@ -175,6 +175,15 @@ def _operation_from_intent(text: str) -> str:
 
 def _model_from_intent(text: str) -> str:
     lowered = text.lower().replace("_", "-")
+    for model in (
+        "Qwen2.5-VL-3B",
+        "Qwen2VL-2B",
+        "Qwen2VL-7B",
+        "Qwen3-VL-4B",
+        "LLaVA-1.5-7B",
+    ):
+        if re.sub(r"[^a-z0-9]", "", model.lower()) in re.sub(r"[^a-z0-9]", "", lowered):
+            return model
     if "deepseek" in lowered and "7b" in lowered:
         return "DeepSeek-R1-Distill-Qwen-7B"
     if re.search(r"(?:qwen(?:2\.5)?|qwen25).{0,12}7b", lowered):
@@ -376,6 +385,27 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
     if operation not in OPERATIONS:
         raise ValueError(f"Unsupported operation: {operation}")
     model = args.model_id or _model_from_intent(args.intent)
+    modality = getattr(args, "modality", None)
+    if modality is None:
+        model_config = yaml.safe_load(
+            (ROOT / "configs/model" / f"{model}.yaml").read_text()
+        )
+        modality = (
+            "multimodal"
+            if model_config.get("model_family")
+            or any(
+                word in args.intent.lower()
+                for word in ("multimodal", "image-text", "多模态", "图文")
+            )
+            else "text"
+        )
+    if (
+        modality == "multimodal"
+        and args.model_id is None
+        and model == "gpt2"
+        and not re.search(r"gpt[ -]?2", args.intent, flags=re.I)
+    ):
+        model = "Qwen2.5-VL-3B"
     dataset, knowledge_type = _dataset_from_intent(args.intent, operation)
     dataset = args.dataset_id or dataset
     methods = (
@@ -383,6 +413,49 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
         if args.methods
         else _methods_from_intent(args.intent, operation)
     )
+    if modality == "multimodal":
+        knowledge_type = "multimodal"
+        dataset = (
+            args.dataset_id
+            or {
+                "inject": "Canonical_MM_inject",
+                "edit": "MMEdit_VQA",
+                "unlearning": "MLLMU_Bench_unlearn",
+            }[operation]
+        )
+        explicit_methods = (
+            methods
+            if args.methods
+            else [
+                method
+                for method in KNOWN_METHODS
+                if re.search(
+                    r"(?<![a-z])" + re.escape(method.lower()) + r"(?![a-z])",
+                    args.intent.lower(),
+                )
+            ]
+        )
+        if explicit_methods:
+            methods = [
+                method
+                if method.startswith("MM")
+                else (
+                    "MM_LoRA"
+                    if operation == "inject" and method == "LoRA"
+                    else "MM_LORA"
+                    if operation == "edit" and method == "LoRA"
+                    else f"MM_{method}"
+                    if operation == "edit"
+                    else f"MM{method}"
+                )
+                for method in explicit_methods
+            ]
+        else:
+            methods = [
+                {"inject": "MM_LoRA", "edit": "MM_LORA", "unlearning": "MMGradAscent"}[
+                    operation
+                ]
+            ]
     num_cases = (
         args.num_cases if args.num_cases is not None else _num_cases(args.intent)
     )
@@ -393,6 +466,11 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
         "inject": ["task_accuracy", "knowledge_retention"],
         "edit": ["reliability", "generalization", "locality", "portability"],
     }[operation]
+    if modality == "multimodal" and operation == "inject":
+        evaluators = [
+            "train_tf_token_accuracy_before_after",
+            "retain_tf_token_accuracy_before_after",
+        ]
     warnings = []
     if args.model_id is None and model == "gpt2" and "gpt" not in args.intent.lower():
         warnings.append("No model was explicit; selected GPT-2.")
@@ -409,6 +487,29 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
             "Only the 7B size was explicit; selected Qwen2.5-7B-Instruct because registered long-text recipes target it."
         )
     experiments = _experiments(model, dataset, methods, operation)
+    if modality == "multimodal" and operation == "unlearning":
+        for method in methods:
+            for path in sorted(
+                (ROOT / "configs/experiment/unlearn/multimodal").glob("smoke_*.yaml")
+            ):
+                config = yaml.safe_load(path.read_text())
+                defaults = {
+                    key: value
+                    for row in config.get("defaults", [])
+                    if isinstance(row, dict)
+                    for key, value in row.items()
+                }
+                benchmark = "clear" if dataset == "CLEAR_unlearn" else "mllmu"
+                if (
+                    defaults.get("override /model") == model
+                    and defaults.get("override /data") == benchmark
+                ):
+                    experiments[method] = (
+                        path.relative_to(ROOT / "configs/experiment")
+                        .with_suffix("")
+                        .as_posix()
+                    )
+                    break
     if args.dataset_id:
         registry = ROOT / "configs/extensions/recipes.yaml"
         rows = (
@@ -446,7 +547,13 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
         warnings.append(
             "AnyEdit MEMIT/AlphaEdit backends require method-specific statistics when enabled."
         )
+    if modality == "multimodal" and operation == "inject":
+        warnings.append(
+            "Multimodal injection requires local image-text cases; review target and retention probes separately."
+        )
     sequence = ["plan-surgery", "inspect-repo"]
+    if modality == "multimodal":
+        sequence.append("add-multimodal-case")
     if re.search(
         r"\b(?:new|add|onboard|register)\b.{0,32}\bdataset\b", args.intent, flags=re.I
     ):
@@ -464,6 +571,7 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
         "schema_version": "1.0",
         "intent": args.intent,
         "operation": operation,
+        "modality": modality,
         "knowledge_type": knowledge_type,
         "model_id": model,
         "dataset_id": dataset,
@@ -507,6 +615,33 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
                 (ROOT / "configs").resolve()
             ):
                 raise ValueError(f"Unregistered {kind}: {component}")
+    model_config = yaml.safe_load(
+        (ROOT / "configs/model" / f"{model}.yaml").read_text()
+    )
+    model_modality = (
+        "text"
+        if model_config.get("model_args") and model_config.get("tokenizer_args")
+        else "multimodal"
+    )
+    if model_modality != modality:
+        raise ValueError("Model does not match the selected modality.")
+    if any(method.startswith("MM") != (modality == "multimodal") for method in methods):
+        raise ValueError("Method does not match the selected modality.")
+    if modality == "multimodal" and operation == "unlearning":
+        from mm_registry import get_mm_algorithm
+
+        for method in methods:
+            get_mm_algorithm(method)
+    dataset_config = yaml.safe_load(
+        (ROOT / "configs/data/datasets" / f"{dataset}.yaml").read_text()
+    )
+    dataset_is_mm = bool(dataset_config.get("benchmark")) or any(
+        isinstance(value, dict)
+        and str(value.get("handler", "")).startswith(("MM", "VLKEB"))
+        for value in dataset_config.values()
+    )
+    if dataset_is_mm != (modality == "multimodal"):
+        raise ValueError("Dataset does not match the selected modality.")
     if getattr(args, "cases", None):
         _bind_plan_cases(payload, _path(args.cases), _path(args.output))
     return payload
@@ -748,6 +883,29 @@ def _bind_plan_cases(plan: dict[str, Any], source: Path, plan_path: Path) -> Non
     from know_surgery.data_contract import build_cases
 
     cases, manifest = build_cases(_records(source), plan["operation"])
+    if plan.get("modality", "text") == "multimodal":
+        if plan["operation"] != "inject":
+            raise ValueError(
+                "Custom multimodal cases currently support injection; use a benchmark recipe for editing/unlearning."
+            )
+        from PIL import Image
+
+        for index, case in enumerate(cases):
+            images = case.get("images") or (
+                [case["image"]] if case.get("image") else []
+            )
+            if not isinstance(images, list) or not images:
+                raise ValueError(f"Case {index} requires image or images.")
+            resolved = []
+            for image_path in images:
+                path = Path(image_path)
+                if not path.is_absolute():
+                    path = source.parent / path
+                with Image.open(path) as image:
+                    image.verify()
+                resolved.append(str(path.resolve()))
+            case["images"] = resolved
+            case.pop("image", None)
     if plan["operation"] == "edit" and set(plan["methods"]) & {
         "ROME",
         "MEMIT",
@@ -802,6 +960,9 @@ def _bind_plan_cases(plan: dict[str, Any], source: Path, plan_path: Path) -> Non
 
 def _plan_command(plan: dict[str, Any], method: str, *, preview: bool) -> list[str]:
     operation = plan["operation"]
+    modality = plan.get("modality", "text")
+    if modality not in {"text", "multimodal"}:
+        raise ValueError("Unsupported plan modality.")
     if operation not in OPERATIONS or method not in plan["methods"]:
         raise ValueError("Operation/method is outside the reviewed plan.")
     trainer = (
@@ -822,6 +983,7 @@ def _plan_command(plan: dict[str, Any], method: str, *, preview: bool) -> list[s
         "src/surgery.py",
         "--config-name=surgery.yaml",
         f"operation={operation}",
+        f"modality={modality}",
     ]
     experiment = plan.get("experiments", {}).get(method)
     if experiment:
@@ -850,35 +1012,69 @@ def _plan_command(plan: dict[str, Any], method: str, *, preview: bool) -> list[s
                 or binding["records"] < plan["num_cases"]
             ):
                 raise ValueError(f"Bound {role} sample count does not match the plan.")
-            dataset = "Canonical_inject" if role == "train" else f"Canonical_{role}"
-            command.append(f"data/datasets@data.{role}={dataset}")
-            field = "data_path" if role == "edit" else "hf_args.data_files"
-            command.append(
-                f"data.{role}.{dataset}.args.{field}={json.dumps(str(path), ensure_ascii=False)}"
-            )
+            if modality == "multimodal":
+                if operation != "inject":
+                    raise ValueError(
+                        "Custom multimodal cases currently support injection only."
+                    )
+                command.extend(
+                    [
+                        "data/datasets@data=Canonical_MM_inject",
+                        f"data.train_path={json.dumps(str(path), ensure_ascii=False)}",
+                    ]
+                )
+            else:
+                dataset = "Canonical_inject" if role == "train" else f"Canonical_{role}"
+                command.append(f"data/datasets@data.{role}={dataset}")
+                field = "data_path" if role == "edit" else "hf_args.data_files"
+                command.append(
+                    f"data.{role}.{dataset}.args.{field}={json.dumps(str(path), ensure_ascii=False)}"
+                )
     elif operation in {"edit", "inject"}:
         role = "edit" if operation == "edit" else "train"
-        command.append(f"data/datasets@data.{role}={plan['dataset_id']}")
+        package = (
+            "data"
+            if modality == "multimodal" and operation == "inject"
+            else f"data.{role}"
+        )
+        command.append(f"data/datasets@{package}={plan['dataset_id']}")
     elif not experiment:
         if not plan.get("overrides", {}).get("data/datasets@data.retain"):
             raise ValueError(
                 "Unlearning without an exact recipe requires an explicit retain dataset override."
             )
         command.append(f"data/datasets@data.forget={plan['dataset_id']}")
-    command.append(f"task_name={_task_name(plan, method)}")
+    task_prefix = "++" if modality == "multimodal" and operation == "unlearning" else ""
+    command.append(f"{task_prefix}task_name={_task_name(plan, method)}")
     if operation == "edit":
         command.append(f"max_edits={plan['num_cases']}")
+    elif modality == "multimodal":
+        command.append(f"data.max_samples={plan['num_cases']}")
+        if operation == "unlearning":
+            command.append(f"++output_dir=saves/unlearning/{_task_name(plan, method)}")
     else:
         command.append(f"++max_train_samples={plan['num_cases']}")
     for key, value in plan.get("overrides", {}).items():
         if key == "task_name":
             continue
         if inputs and key.lstrip("+").startswith("data"):
-            raise ValueError("Data overrides conflict with bound input cases.")
+            if (
+                modality == "multimodal"
+                and operation == "inject"
+                and key.lstrip("+") == "data.retain_path"
+            ):
+                if value is not None:
+                    retain_path = _path(value)
+                    if not retain_path.is_file():
+                        raise ValueError("Retain probe file does not exist.")
+                    value = json.dumps(str(retain_path.resolve()), ensure_ascii=False)
+            else:
+                raise ValueError("Data overrides conflict with bound input cases.")
         if not re.fullmatch(r"[+]{0,2}[A-Za-z_][A-Za-z0-9_./@-]*", key):
             raise ValueError(f"Invalid override key: {key}")
         if key.lstrip("+") in {
             "operation",
+            "modality",
             "model",
             "trainer",
             "experiment",
@@ -1121,7 +1317,7 @@ def cmd_smoke(args: argparse.Namespace) -> int:
             (
                 value
                 for key, value in plan.get("overrides", {}).items()
-                if key.lstrip("+") == "trainer.args.output_dir"
+                if key.lstrip("+") in {"trainer.args.output_dir", "output_dir"}
             ),
             None,
         )
@@ -1132,6 +1328,7 @@ def cmd_smoke(args: argparse.Namespace) -> int:
             args.execute
             and result["returncode"] == 0
             and plan["operation"] == "unlearning"
+            and plan.get("modality", "text") == "text"
         ):
             for run_dir in run_dirs:
                 if (
@@ -1673,6 +1870,7 @@ def build_parser() -> argparse.ArgumentParser:
     plan = subs.add_parser("plan")
     plan.add_argument("--intent", required=True)
     plan.add_argument("--operation", choices=sorted(OPERATIONS))
+    plan.add_argument("--modality", choices=["text", "multimodal"])
     plan.add_argument("--model-id")
     plan.add_argument("--dataset-id")
     plan.add_argument("--methods")

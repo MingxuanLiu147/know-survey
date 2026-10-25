@@ -77,6 +77,8 @@ def _local_plan(request: PlanRequest) -> dict[str, Any]:
     ]
     if request.operation:
         argv.extend(["--operation", request.operation])
+    if request.modality:
+        argv.extend(["--modality", request.modality])
     if request.model_id:
         argv.extend(["--model-id", request.model_id])
     if request.dataset_id:
@@ -145,6 +147,8 @@ def _localize_warning(warning: str, language: str = "zh") -> str:
         return "运行前请检查本地 Qwen2.5-7B 模型路径和可用 GPU 显存。"
     if warning.startswith("LoReFT requires pyreft"):
         return "LoReFT 需要 pyreft 与 ReFT 数据整理器。"
+    if warning.startswith("Multimodal injection requires"):
+        return "多模态注入需要本地图文样本；请分别检查目标效果和保留探针。"
     if warning.startswith("UNKE requires preservation data"):
         return "UNKE 需要保留数据，公开包未提供此方法。"
     if warning.startswith("AnyEdit MEMIT/AlphaEdit backends require"):
@@ -201,6 +205,23 @@ def _local_reasoning(
             "Methods are limited to registered trainer or editor identifiers."
         )
         evaluation_reason = "Target efficacy and side effects are evaluated together."
+    if plan.get("modality") == "multimodal":
+        model_reason = (
+            "采用计划中列出的视觉语言模型。"
+            if language == "zh"
+            else "Uses the vision-language model listed in the plan."
+        )
+        evaluation_reason = (
+            "运行后核对目标效果和保留探针；缺少探针不代表已完成评估。"
+            if language == "zh"
+            else "Review target and retention probes after execution; absent probes are not completed evaluation."
+        )
+        if operation == "inject":
+            reasons[operation] = (
+                "选择图文样本的 LoRA 注入路线。"
+                if language == "zh"
+                else "Selected image-text injection with LoRA."
+            )
     return [
         {"field": "operation", "reason": reasons[operation]},
         {"field": "model", "reason": model_reason},
@@ -230,10 +251,17 @@ def _validate_remote_choice(
     catalog: RepositoryCatalog,
 ) -> dict[str, Any]:
     snapshot = catalog.snapshot()
-    models = {item["id"] for item in snapshot["models"]}
-    datasets = {item["id"] for item in snapshot["datasets"]}
+    modality = choice.get("modality", baseline.get("modality", "text"))
+    if modality not in {"text", "multimodal"}:
+        raise PlannerError("Provider selected an unsupported modality.")
+    models = {item["id"] for item in snapshot["models"] if item["modality"] == modality}
+    datasets = {
+        item["id"] for item in snapshot["datasets"] if item["modality"] == modality
+    }
     methods_by_operation = {
-        operation: {Path(item["id"]).name for item in rows}
+        operation: {
+            Path(item["id"]).name for item in rows if item["modality"] == modality
+        }
         for operation, rows in snapshot["trainers"].items()
     }
     operation = choice.get("operation", baseline["operation"])
@@ -255,6 +283,7 @@ def _validate_remote_choice(
     baseline.update(
         {
             "operation": operation,
+            "modality": modality,
             "model_id": model,
             "dataset_id": dataset,
             "methods": [str(item) for item in methods],
@@ -281,6 +310,7 @@ def _validate_remote_choice(
         PlanRequest(
             intent=baseline["intent"],
             operation=operation,
+            modality=modality,
             model_id=model,
             dataset_id=dataset,
             methods=baseline["methods"],
@@ -313,11 +343,21 @@ def _remote_plan(
     compact_catalog = {
         "operations": [item["id"] for item in snapshot["operations"]],
         "models": [
-            item["id"] for item in snapshot["models"] if item["modality"] == "text"
+            item["id"]
+            for item in snapshot["models"]
+            if item["modality"] == baseline.get("modality", "text")
         ],
-        "datasets": [item["id"] for item in snapshot["datasets"]],
+        "datasets": [
+            item["id"]
+            for item in snapshot["datasets"]
+            if item["modality"] == baseline.get("modality", "text")
+        ],
         "methods": {
-            key: [Path(item["id"]).name for item in value]
+            key: [
+                Path(item["id"]).name
+                for item in value
+                if item["modality"] == baseline.get("modality", "text")
+            ]
             for key, value in snapshot["trainers"].items()
         },
     }
@@ -325,7 +365,7 @@ def _remote_plan(
         "You are the Know-Surgery planner. Return JSON only. Select only IDs "
         "listed in the supplied registry. Keep public operation names exactly "
         "unlearning, inject, or edit. Include target efficacy and side-effect "
-        "evaluation. Return operation, model_id, dataset_id, methods, num_cases, "
+        "evaluation. Return operation, modality, model_id, dataset_id, methods, num_cases, "
         "reasoning (array of field/reason objects), and warnings."
     )
     system += (
@@ -379,7 +419,14 @@ def _remote_plan(
     except (KeyError, IndexError, TypeError) as exc:
         raise PlannerError(f"{provider} returned an unexpected response.") from exc
     choice = _extract_json(content)
-    for field in ("operation", "model_id", "dataset_id", "methods", "num_cases"):
+    for field in (
+        "operation",
+        "modality",
+        "model_id",
+        "dataset_id",
+        "methods",
+        "num_cases",
+    ):
         explicit = getattr(request, field)
         if explicit is not None and field in choice and choice[field] != explicit:
             raise PlannerError(f"Provider changed the explicit user selection: {field}")
