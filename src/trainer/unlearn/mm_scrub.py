@@ -324,7 +324,7 @@ class MMSCRUB(MMUnlearnBase):
                     retain_iter = iter(self.retain_loader)
                     retain_batch = next(retain_iter)
 
-                with self.accelerator.accumulate(self.model):
+                with self._accumulate(step, n_iters):
                     loss, forget_kl, retain_kl, retain_task = self.compute_paired_loss(
                         self.model,
                         forget_batch,
@@ -337,11 +337,7 @@ class MMSCRUB(MMUnlearnBase):
                             self.model.parameters(), self.max_grad_norm
                         )
                         last_grad_norm = float(grad_norm)
-                    self.optimizer.step()
-                    self.lr_scheduler.step()
-                    self.optimizer.zero_grad()
-                    if self.accelerator.sync_gradients:
-                        optimizer_steps += 1
+                    optimizer_steps += int(self._step_optimizer())
 
                 total_loss += loss.detach().item()
                 total_forget_kl += forget_kl.detach().item()
@@ -352,11 +348,14 @@ class MMSCRUB(MMUnlearnBase):
                     forget_kl=total_forget_kl / (step + 1),
                     retain_kl=total_retain_kl / (step + 1),
                 )
+                if self._budget_reached(optimizer_steps):
+                    break
 
-            epoch_losses.append(total_loss / n_iters)
-            epoch_forget_kls.append(total_forget_kl / n_iters)
-            epoch_retain_kls.append(total_retain_kl / n_iters)
-            epoch_retain_task_losses.append(total_retain_task / n_iters)
+            completed_batches = step + 1
+            epoch_losses.append(total_loss / completed_batches)
+            epoch_forget_kls.append(total_forget_kl / completed_batches)
+            epoch_retain_kls.append(total_retain_kl / completed_batches)
+            epoch_retain_task_losses.append(total_retain_task / completed_batches)
             logger.info(
                 "Epoch %d - loss: %.4f, forget_kl: %.4f, retain_kl: %.4f, "
                 "retain_task: %.4f",
@@ -366,12 +365,15 @@ class MMSCRUB(MMUnlearnBase):
                 epoch_retain_kls[-1],
                 epoch_retain_task_losses[-1],
             )
+            if self._budget_reached(optimizer_steps):
+                break
 
         peak_memory_mb = None
         if torch.cuda.is_available():
             peak_memory_mb = torch.cuda.max_memory_allocated() / (1024**2)
         return {
-            "epochs": self.num_epochs,
+            "epochs": len(epoch_losses),
+            "max_steps": self.max_steps,
             "optimizer_steps": optimizer_steps,
             "epoch_losses": epoch_losses,
             "epoch_forget_kls": epoch_forget_kls,

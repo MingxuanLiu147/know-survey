@@ -1,0 +1,9 @@
+# User-owned image/text JSON or JSONL; retain source/license with the input.
+benchmark: canonical_inject
+mode: inject
+train_path: ???
+retain_path: null
+image_root: null
+batch_size: 1
+ans_only: true
+max_samples: null

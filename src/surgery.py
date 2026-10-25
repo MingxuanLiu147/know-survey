@@ -19,6 +19,7 @@ def _usage() -> str:
         "  edit\n"
         "\n"
         "Multimodal support:\n"
+        "  operation=inject modality=multimodal\n"
         "  operation=unlearning modality=multimodal\n"
         "  operation=edit modality=multimodal\n"
         "\nInstalled workflow commands:\n"

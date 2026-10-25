@@ -1,0 +1,15 @@
+defaults:
+  - model: Qwen2.5-VL-3B
+  - data: canonical_mm_inject
+  - trainer: inject/MM_LoRA
+  - _self_
+  - experiment: null
+
+operation: inject
+modality: multimodal
+device: cuda
+require_cuda: true
+seed: 42
+task_name: mm_inject_${now:%Y-%m-%d_%H-%M-%S}
+output_dir: saves/inject/${task_name}
+save_model: true

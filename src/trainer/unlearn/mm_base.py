@@ -5,8 +5,10 @@
 """
 
 import logging
+import math
 import os
 from abc import ABC, abstractmethod
+from contextlib import nullcontext
 
 import torch
 from accelerate import Accelerator
@@ -60,6 +62,7 @@ class MMUnlearnBase(ABC):
         max_grad_norm: float = 1.0,
         gradient_accumulation_steps: int = 1,
         warmup_steps: int = 0,
+        max_steps: int = -1,
         save_dir: str = "./saves/mm_unlearn",
         grad_mask: dict = None,
         scheduler_steps_per_epoch: int | None = None,
@@ -72,6 +75,11 @@ class MMUnlearnBase(ABC):
         self.max_grad_norm = max_grad_norm
         self.gradient_accumulation_steps = gradient_accumulation_steps
         self.warmup_steps = warmup_steps
+        self.max_steps = int(max_steps)
+        if self.max_steps == 0 or self.max_steps < -1:
+            raise ValueError(
+                "max_steps must be -1 (epoch budget) or a positive integer"
+            )
         self.save_dir = save_dir
         self.grad_mask = grad_mask
         self.scheduler_steps_per_epoch = (
@@ -92,22 +100,13 @@ class MMUnlearnBase(ABC):
             logger.info("Gradient checkpointing enabled")
 
         self.optimizer = AdamW(model.parameters(), lr=lr)
-        total_steps = self.scheduler_steps_per_epoch * num_epochs
-        self.lr_scheduler = get_scheduler(
-            name="linear",
-            optimizer=self.optimizer,
-            num_warmup_steps=warmup_steps,
-            num_training_steps=total_steps,
-        )
-
-        prepare_args = [model, self.optimizer, forget_loader, self.lr_scheduler]
+        prepare_args = [model, self.optimizer, forget_loader]
         if retain_loader is not None:
             prepare_args.append(retain_loader)
             (
                 self.model,
                 self.optimizer,
                 self.forget_loader,
-                self.lr_scheduler,
                 self.retain_loader,
             ) = self.accelerator.prepare(*prepare_args)
         else:
@@ -115,8 +114,51 @@ class MMUnlearnBase(ABC):
                 self.model,
                 self.optimizer,
                 self.forget_loader,
-                self.lr_scheduler,
             ) = self.accelerator.prepare(*prepare_args)
+
+        total_steps = self._optimizer_steps_per_epoch() * num_epochs
+        if self.max_steps > 0:
+            total_steps = min(total_steps, self.max_steps)
+        # Use the prepared loader lengths (per process), and advance exactly once
+        # per optimizer update rather than once per microbatch or per GPU.
+        self.lr_scheduler = get_scheduler(
+            name="linear",
+            optimizer=self.optimizer,
+            num_warmup_steps=warmup_steps,
+            num_training_steps=total_steps,
+        )
+
+    def _optimizer_steps_per_epoch(self) -> int:
+        return math.ceil(len(self.forget_loader) / self.gradient_accumulation_steps)
+
+    def _budget_reached(self, optimizer_steps: int) -> bool:
+        return self.max_steps > 0 and optimizer_steps >= self.max_steps
+
+    def _accumulate(self, batch_index: int, batch_count: int):
+        """Accumulate against the driving loader, including its final partial batch.
+
+        A cycling retain loader must not decide when a paired update is flushed.
+        There is one ordinary optimizer call per microbatch and no extra tail step.
+        """
+        self.accelerator.sync_gradients = (
+            batch_index + 1
+        ) % self.gradient_accumulation_steps == 0 or batch_index + 1 == batch_count
+        return (
+            nullcontext()
+            if self.accelerator.sync_gradients
+            else self.accelerator.no_sync(self.model)
+        )
+
+    def _step_optimizer(self) -> bool:
+        self.optimizer.step()
+        stepped = (
+            self.accelerator.sync_gradients
+            and not self.accelerator.optimizer_step_was_skipped
+        )
+        if stepped:
+            self.lr_scheduler.step()
+        self.optimizer.zero_grad()
+        return stepped
 
     @abstractmethod
     def compute_loss(self, model, batch) -> torch.Tensor:
@@ -147,7 +189,7 @@ class MMUnlearnBase(ABC):
                 disable=not self.accelerator.is_local_main_process,
             )
             for step, batch in enumerate(progress):
-                with self.accelerator.accumulate(self.model):
+                with self._accumulate(step, len(self.forget_loader)):
                     loss = self.compute_loss(self.model, batch)
                     self.accelerator.backward(loss)
                     self._apply_grad_mask()
@@ -156,26 +198,27 @@ class MMUnlearnBase(ABC):
                             self.model.parameters(), self.max_grad_norm
                         )
                         last_grad_norm = float(grad_norm)
-                    self.optimizer.step()
-                    self.lr_scheduler.step()
-                    self.optimizer.zero_grad()
-                    if self.accelerator.sync_gradients:
-                        optimizer_steps += 1
+                    optimizer_steps += int(self._step_optimizer())
 
                 total_loss += loss.detach().item()
                 progress.set_postfix(loss=total_loss / (step + 1))
+                if self._budget_reached(optimizer_steps):
+                    break
 
-            avg_loss = total_loss / len(self.forget_loader)
+            avg_loss = total_loss / (step + 1)
             epoch_losses.append(avg_loss)
             logger.info(
                 "Epoch %d/%d - avg loss: %.4f", epoch + 1, self.num_epochs, avg_loss
             )
+            if self._budget_reached(optimizer_steps):
+                break
 
         peak_memory_mb = None
         if torch.cuda.is_available():
             peak_memory_mb = torch.cuda.max_memory_allocated() / (1024**2)
         return {
-            "epochs": self.num_epochs,
+            "epochs": len(epoch_losses),
+            "max_steps": self.max_steps,
             "optimizer_steps": optimizer_steps,
             "epoch_losses": epoch_losses,
             "last_grad_norm": last_grad_norm,

@@ -81,7 +81,7 @@ TOFU unlearning requires the intended starting checkpoint. The RuleTaker recipe 
 | Long-target editing | AnyEdit with MEMIT/AlphaEdit ARE | Set target chunks, model mappings and preservation statistics |
 | Memory / adapter editing | IKE, GRACE, WISE, SERAC | IKE needs demonstrations; WISE needs scope negatives; SERAC needs trained auxiliary networks |
 | Auxiliary-network editing | MEND, MALMEN, InstructEdit | Compact implementations requiring matching trained checkpoints |
-| Image–text updates | Multimodal unlearning and editing adapters | Experimental, model/method-specific; no multimodal injection route |
+| Image–text updates | Multimodal unlearning, LoRA injection and editing adapters | Experimental, model/method-specific; [local image/text injection](docs/components.md#imagetext-injection) |
 
 Text configurations cover GPT-2/XL, GPT-J, Llama, Qwen2.5, Phi, Gemma, Zephyr and DeepSeek distillations. Dataset adapters include TOFU, CounterFact, zsRE, LEME, ELKEN, AKEW, WikiHow, RuleTaker, RuleArena, Alpaca/ShareGPT, ConceptEdit and image–text datasets. A configuration does not guarantee compatibility with every method.
 

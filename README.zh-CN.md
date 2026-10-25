@@ -81,7 +81,7 @@ TOFU 遗忘需要使用正确的起始权重。RuleTaker 配置默认关闭评�
 | 长目标编辑 | AnyEdit 的 MEMIT/AlphaEdit ARE 后端 | 目标分块、模型映射和保留统计量 |
 | 记忆／适配器编辑 | IKE、GRACE、WISE、SERAC | IKE 需要演示库，WISE 需要独立负例，SERAC 需要训练辅助网络 |
 | 辅助网络编辑 | MEND、MALMEN、InstructEdit | 紧凑实现，需要匹配的预训练编辑网络 |
-| 图文更新 | 多模态遗忘与编辑适配器 | 实验性能力，按模型与方法选择；没有多模态注入入口 |
+| 图文更新 | 多模态遗忘、LoRA 注入与编辑适配器 | 实验性能力，按模型与方法选择；[本地图文注入说明](docs/components.md#imagetext-injection) |
 
 文本模型配置覆盖 GPT-2/XL、GPT-J、Llama、Qwen2.5、Phi、Gemma、Zephyr 和 DeepSeek 蒸馏模型。数据适配器包括 TOFU、CounterFact、zsRE、LEME、ELKEN、AKEW、WikiHow、RuleTaker、RuleArena、Alpaca/ShareGPT、ConceptEdit 及图文数据集。配置存在不表示可以任意组合模型与方法。
 

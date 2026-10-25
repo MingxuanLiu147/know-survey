@@ -95,7 +95,7 @@ Default output directories are `saves/unlearn/<task_name>/`, `saves/inject/<task
 
 ## Image–text tasks
 
-Use `modality=multimodal` with a compatible editing or unlearning experiment. Multimodal configurations use `model.model_path` and `model.processor_path`, rather than the text model's `model_args`/`tokenizer_args` paths:
+Use `modality=multimodal` with a compatible editing, injection or unlearning configuration. Multimodal configurations use `model.model_path` and `model.processor_path`, rather than the text model's `model_args`/`tokenizer_args` paths:
 
 ```bash
 know-surgery operation=edit modality=multimodal \
@@ -107,7 +107,7 @@ know-surgery operation=edit modality=multimodal \
   data.edit.MMEdit_VQA.args.rephrase_image_dir=/path/to/rephrase_images --cfg job
 ```
 
-This example uses a one-step GRACE budget. Supply readable images and the correct processor, then adjust the method budget for the intended task. Image–text methods are experimental and compatibility depends on the exact model and dataset; there is no multimodal injection route.
+This example uses a one-step GRACE budget. Supply readable images and the correct processor, then adjust the method budget for the intended task. Image–text methods are experimental and compatibility depends on the exact model and dataset. For LoRA injection, use `operation=inject modality=multimodal` with local training images and targets; see the [data and execution example](components.md#imagetext-injection).
 
 Unlearning experiments are under `configs/experiment/unlearn/multimodal/`. MLLMU-Bench/CLEAR require the corresponding full-data-trained starting checkpoint; methods may additionally need a retain-only reference or a teacher. `MMUnlearner` requires checkpoint-bound gradient masks: prepare them with `scripts/run_mm_generate_mask.py` and set `trainer.method_args.grad_mask_path`. Use that script's `--help` for the benchmark, model family, dataset and output arguments. Generating masks can require substantially more memory than LoRA training.
 

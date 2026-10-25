@@ -13,11 +13,15 @@
         trainer=MMGradAscent
 """
 
+import hashlib
 import json
 import logging
+import os
 import shlex
 import sys
 import time
+from datetime import datetime, timezone
+from importlib.metadata import version
 from pathlib import Path
 
 import torch
@@ -87,6 +91,10 @@ def _validate_method_data_mode(trainer_name: str, data_cfg: DictConfig) -> None:
     """Prevent methods from silently training on the wrong primary split."""
 
     mode = str(data_cfg.get("mode", "unlearn")).lower()
+    if trainer_name == "MMLoRA":
+        if mode != "inject":
+            raise ValueError("MMLoRA requires data.mode=inject and a train dataset")
+        return
     if trainer_name == "MMRetainFT" and mode != "reference":
         raise ValueError(
             "MMRetainFT requires data.mode=reference so the primary loader contains "
@@ -102,9 +110,19 @@ def _resolve_algorithm(cfg: DictConfig):
     """Resolve a trainer alias and normalize the runtime config to its canonical name."""
 
     requested_name = str(cfg.trainer.handler)
-    algorithm = get_mm_algorithm(requested_name, require_runnable=True)
+    algorithm = get_mm_algorithm(
+        requested_name,
+        require_runnable=True,
+        operation=str(cfg.get("operation", "unlearning")),
+    )
     cfg.trainer.handler = algorithm.name
     return requested_name, algorithm
+
+
+def _resolve_seed(cfg: DictConfig) -> int:
+    """Use the same trainer seed field produced by the WebUI and Agent Skills."""
+    trainer_seed = cfg.trainer.get("args", {}).get("seed")
+    return int(cfg.get("seed", 42) if trainer_seed is None else trainer_seed)
 
 
 def _write_run_trace(
@@ -115,9 +133,12 @@ def _write_run_trace(
     elapsed_seconds: float | None = None,
     train_summary: dict | None = None,
     error: BaseException | None = None,
+    input_manifest: dict | None = None,
 ) -> None:
     """Persist the resolved config and an auditable run summary."""
 
+    if int(os.environ.get("RANK", "0")) != 0:
+        return
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
     (output_path / "resolved_config.yaml").write_text(
@@ -147,11 +168,13 @@ def _write_run_trace(
         "trainer": str(cfg.trainer.handler),
         "benchmark": str(cfg.data.benchmark),
         "model_path": str(cfg.model.model_path),
-        "seed": int(cfg.get("seed", 42)),
+        "seed": _resolve_seed(cfg),
         "output_dir": str(output_dir),
         "model_save_requested": bool(cfg.get("save_model", True)),
         "cuda_devices": cuda_devices,
         "elapsed_seconds": elapsed_seconds,
+        "runtime_seconds": elapsed_seconds,
+        "updated_at_utc": datetime.now(timezone.utc).isoformat(),
         "command": invocation_command,
         "train": train_summary or {},
         "error": (
@@ -163,6 +186,66 @@ def _write_run_trace(
     (output_path / "run_summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
     )
+    (output_path / "run_trace.json").write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    (output_path / "command.txt").write_text(
+        invocation_command + "\n", encoding="utf-8"
+    )
+    if status == "running":
+        environment = {
+            "python": sys.version.split()[0],
+            "torch": torch.__version__,
+            "transformers": version("transformers"),
+            "accelerate": version("accelerate"),
+            "peft": version("peft"),
+            "seed": _resolve_seed(cfg),
+            "cuda_devices": cuda_devices,
+            "world_size": int(os.environ.get("WORLD_SIZE", "1")),
+        }
+        (output_path / "environment.json").write_text(
+            json.dumps(environment, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    if input_manifest is not None:
+        (output_path / "input_manifest.json").write_text(
+            json.dumps(input_manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    if status == "completed":
+        operation = str(cfg.get("operation", "unlearning")).upper()
+        (output_path / f"MM_{operation}_SUMMARY.json").write_text(
+            json.dumps(train_summary or {}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+
+def _input_manifest(cfg: DictConfig, primary_loader, retain_loader) -> dict:
+    """Record selected input scope; optimizer caps may consume fewer records."""
+    sources = []
+    for key in ("train_path", "retain_path", "data_dir", "image_root"):
+        value = cfg.data.get(key)
+        if not value:
+            continue
+        path = Path(str(value))
+        digest = None
+        if path.is_file():
+            hasher = hashlib.sha256()
+            with path.open("rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    hasher.update(chunk)
+            digest = hasher.hexdigest()
+        sources.append({"role": key, "path": str(path), "sha256": digest})
+    data_config = OmegaConf.to_container(cfg.data, resolve=True)
+    return {
+        "operation": str(cfg.get("operation", "unlearning")),
+        "modality": "multimodal",
+        "records": len(primary_loader.dataset),
+        "retain_records": len(retain_loader.dataset)
+        if retain_loader is not None
+        else 0,
+        "count_scope": "selected_dataset_before_optimizer_step_cap",
+        "data_config": data_config,
+        "sources": sources,
+    }
 
 
 @hydra.main(version_base=None, config_path="../configs", config_name="mm_train.yaml")
@@ -181,14 +264,23 @@ def main(cfg: DictConfig):
         )
     _validate_method_data_mode(trainer_name, cfg.data)
 
-    data_dir = Path(str(cfg.data.data_dir))
-    if not data_dir.exists():
+    data_path = (
+        cfg.data.get("train_path")
+        if trainer_name == "MMLoRA"
+        else cfg.data.get("data_dir")
+    )
+    if not data_path or not Path(str(data_path)).exists():
         raise FileNotFoundError(
-            f"{benchmark.name} data directory not found: {data_dir}. "
+            f"{benchmark.name} data source not found: {data_path}. "
             f"Registered public source: {benchmark.source}"
         )
 
-    set_seed(int(cfg.get("seed", 42)))
+    set_seed(_resolve_seed(cfg))
+
+    if trainer_name == "MMLoRA" and not bool(
+        cfg.model.get("lora", {}).get("enabled", False)
+    ):
+        raise ValueError("MMLoRA requires model.lora.enabled=true")
 
     if trainer_name in {"MMUnlearner", "MMMANU"} and bool(
         cfg.model.get("lora", {}).get("enabled", False)
@@ -267,9 +359,14 @@ def main(cfg: DictConfig):
                 "lora": {"enabled": False},
             }
         )
-        reference_model, _ = _load(reference_cfg)
+        reference_model, _ = _load(reference_cfg, for_training=False)
         method_args[model_key] = reference_model
 
+    budget_args = (
+        {}
+        if trainer_name == "MMMANU"
+        else {"max_steps": trainer_args.get("max_steps", -1)}
+    )
     trainer = trainer_cls(
         model=model,
         processor=processor,
@@ -281,10 +378,16 @@ def main(cfg: DictConfig):
         gradient_accumulation_steps=trainer_args.get("gradient_accumulation_steps", 1),
         warmup_steps=trainer_args.get("warmup_steps", 0),
         save_dir=output_dir,
+        **budget_args,
         **method_args,
     )
 
-    _write_run_trace(cfg, output_dir, status="running")
+    _write_run_trace(
+        cfg,
+        output_dir,
+        status="running",
+        input_manifest=_input_manifest(cfg, forget_loader, retain_loader),
+    )
     start_time = time.perf_counter()
     train_summary = None
     try:

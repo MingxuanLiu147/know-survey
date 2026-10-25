@@ -116,12 +116,9 @@ class MMUnlearner(MMGradDiff):
                     self.model.parameters(), self.max_grad_norm
                 )
             )
-        self.optimizer.step()
-        self.lr_scheduler.step()
-        self.optimizer.zero_grad()
-        return grad_norm, bool(self.accelerator.sync_gradients)
+        return grad_norm, self._step_optimizer()
 
-    def _train_paired_epoch(self):
+    def _train_paired_epoch(self, completed_steps: int = 0):
         total_forget = 0.0
         total_retain = 0.0
         optimizer_steps = 0
@@ -135,7 +132,7 @@ class MMUnlearner(MMGradDiff):
                 retain_iter = iter(self.retain_loader)
                 retain_batch = next(retain_iter)
 
-            with self.accelerator.accumulate(self.model):
+            with self._accumulate(step, len(self.forget_loader)):
                 forget_objective = self.compute_forget_loss(self.model, forget_batch)
                 self.accelerator.backward(forget_objective)
                 self._apply_forget_grad_mask()
@@ -147,17 +144,19 @@ class MMUnlearner(MMGradDiff):
                 optimizer_steps += int(stepped)
             total_forget += forget_objective.detach().item()
             total_retain += retain_objective.detach().item()
+            if self._budget_reached(completed_steps + optimizer_steps):
+                break
 
         return {
             "forget_total": total_forget,
             "retain_total": total_retain,
-            "forget_steps": len(self.forget_loader),
-            "retain_steps": len(self.forget_loader),
+            "forget_steps": step + 1,
+            "retain_steps": step + 1,
             "optimizer_steps": optimizer_steps,
             "last_grad_norm": last_grad_norm,
         }
 
-    def _train_retain_frequency_epoch(self, epoch: int):
+    def _train_retain_frequency_epoch(self, epoch: int, completed_steps: int = 0):
         """Match the official repository's full-retain/frequent-forget schedule."""
 
         total_forget = 0.0
@@ -181,7 +180,7 @@ class MMUnlearner(MMGradDiff):
                 except StopIteration:
                     forget_batch = None
                 if forget_batch is not None:
-                    with self.accelerator.accumulate(self.model):
+                    with self._accumulate(forget_steps, len(self.forget_loader)):
                         forget_objective = self.compute_forget_loss(
                             self.model, forget_batch
                         )
@@ -193,8 +192,10 @@ class MMUnlearner(MMGradDiff):
                         optimizer_steps += int(stepped)
                     total_forget += forget_objective.detach().item()
                     forget_steps += 1
+                    if self._budget_reached(completed_steps + optimizer_steps):
+                        break
 
-            with self.accelerator.accumulate(self.model):
+            with self._accumulate(retain_index, len(self.retain_loader)):
                 retain_objective = self.compute_retain_loss(self.model, retain_batch)
                 self.accelerator.backward(retain_objective)
                 grad_norm, stepped = self._clip_and_step()
@@ -207,8 +208,12 @@ class MMUnlearner(MMGradDiff):
                 f_loss=(total_forget / forget_steps if forget_steps else 0.0),
                 r_loss=total_retain / retain_steps,
             )
+            if self._budget_reached(completed_steps + optimizer_steps):
+                break
 
-        if forget_steps != len(self.forget_loader):
+        if forget_steps != len(self.forget_loader) and not self._budget_reached(
+            completed_steps + optimizer_steps
+        ):
             raise RuntimeError(
                 "MMUnlearner retain-frequency schedule did not consume the complete "
                 f"forget loader: {forget_steps}/{len(self.forget_loader)}"
@@ -243,15 +248,23 @@ class MMUnlearner(MMGradDiff):
         for epoch in range(self.num_epochs):
             self.model.train()
             if self.update_schedule == "retain_frequency":
-                stats = self._train_retain_frequency_epoch(epoch)
+                stats = self._train_retain_frequency_epoch(epoch, optimizer_steps)
             else:
-                stats = self._train_paired_epoch()
+                stats = self._train_paired_epoch(optimizer_steps)
             optimizer_steps += stats["optimizer_steps"]
             if stats["last_grad_norm"] is not None:
                 last_grad_norm = stats["last_grad_norm"]
-            avg_forget_loss = stats["forget_total"] / stats["forget_steps"]
-            avg_retain_loss = stats["retain_total"] / stats["retain_steps"]
-            avg_loss = avg_forget_loss + avg_retain_loss
+            avg_forget_loss = (
+                stats["forget_total"] / stats["forget_steps"]
+                if stats["forget_steps"]
+                else None
+            )
+            avg_retain_loss = (
+                stats["retain_total"] / stats["retain_steps"]
+                if stats["retain_steps"]
+                else None
+            )
+            avg_loss = (avg_forget_loss or 0.0) + (avg_retain_loss or 0.0)
             epoch_forget_losses.append(avg_forget_loss)
             epoch_retain_losses.append(avg_retain_loss)
             epoch_losses.append(avg_loss)
@@ -259,18 +272,21 @@ class MMUnlearner(MMGradDiff):
             epoch_retain_steps.append(stats["retain_steps"])
             forget_frequencies.append(stats.get("forget_frequency"))
             logger.info(
-                "Epoch %d - objective: %.4f, masked forget: %.4f, retain: %.4f",
+                "Epoch %d - objective: %.4f, masked forget: %s, retain: %s",
                 epoch + 1,
                 avg_loss,
                 avg_forget_loss,
                 avg_retain_loss,
             )
+            if self._budget_reached(optimizer_steps):
+                break
 
         peak_memory_mb = None
         if torch.cuda.is_available():
             peak_memory_mb = torch.cuda.max_memory_allocated() / (1024**2)
         return {
-            "epochs": self.num_epochs,
+            "epochs": len(epoch_losses),
+            "max_steps": self.max_steps,
             "optimizer_steps": optimizer_steps,
             "epoch_losses": epoch_losses,
             "epoch_forget_losses": epoch_forget_losses,

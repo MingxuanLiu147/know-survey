@@ -79,8 +79,17 @@ def main(cfg: DictConfig):
     seed = int(cfg.get("seed", 42))
     set_seed(seed)
 
+    benchmark = str(cfg.eval.get("benchmark", "mllmu"))
+    registration = get_mm_dataset(benchmark)
+    if not registration.evaluator:
+        raise ValueError(
+            f"{registration.name} has no standalone multimodal evaluator. "
+            "Use the before/after train and retain probes recorded by MMLoRA "
+            "in run_summary.json."
+        )
+
     logger.info("Loading model for evaluation...")
-    model, processor = get_mm_model(cfg.model)
+    model, processor = get_mm_model(cfg.model, for_training=False)
     if device.startswith("cuda"):
         model = model.to(device)
         logger.info("Moved evaluation model to %s", device)
@@ -88,8 +97,6 @@ def main(cfg: DictConfig):
         logger.warning("Evaluation will run on CPU")
     model.eval()
 
-    benchmark = str(cfg.eval.get("benchmark", "mllmu"))
-    registration = get_mm_dataset(benchmark)
     data_dir = Path(str(cfg.eval.get("data_dir", "")))
     if not data_dir.exists():
         raise FileNotFoundError(
