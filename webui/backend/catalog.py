@@ -21,6 +21,19 @@ DATASET_ROLES = {
     "inject": ("train",),
     "edit": ("edit",),
 }
+EVALUATION_SUPPORT = {
+    "edit": ("text", ("edit",)),
+    "edit_benchmark": ("text", ("edit",)),
+    "inject": ("text", ("inject",)),
+    "tofu": ("text", ("unlearning",)),
+    "muse": ("text", ("unlearning",)),
+    "lm_eval": ("text", ("unlearning", "inject", "edit")),
+    "clear": ("multimodal", ("unlearning",)),
+    "mllmu": ("multimodal", ("unlearning",)),
+    "mm_edit": ("multimodal", ("edit",)),
+    "mm_edit_main": ("multimodal", ("edit",)),
+    "mm_edit_portability_only": ("multimodal", ("edit",)),
+}
 OVERRIDE_KEY = re.compile(r"^\+{0,2}[A-Za-z0-9_][A-Za-z0-9_.-]*$")
 
 
@@ -52,6 +65,12 @@ def display_command(argv: list[str]) -> str:
     """Render a public command while the process uses the active interpreter."""
 
     return shlex.join(["python", *argv[1:]])
+
+
+def _declared_unlearning_role(name: str) -> str | None:
+    """Recognize explicit forget/retain names without classifying generic data."""
+    roles = set(re.findall(r"(?:^|[_-])(forget|retain)(?=$|[_-]|\d)", name.lower()))
+    return next(iter(roles)) if len(roles) == 1 else None
 
 
 class RepositoryCatalog:
@@ -149,6 +168,7 @@ class RepositoryCatalog:
             rows.append(
                 {
                     "id": name,
+                    "unlearning_role": _declared_unlearning_role(name),
                     "handlers": handlers,
                     "modality": "multimodal"
                     if (
@@ -164,6 +184,15 @@ class RepositoryCatalog:
                 }
             )
         return rows
+
+    def evaluation_support(self) -> list[dict[str, Any]]:
+        """Expose built-in evaluator scopes while leaving extension IDs available."""
+        return [
+            {"id": name, "modality": modality, "operations": list(operations)}
+            for name in self._scan("eval", recursive=False)
+            if name in EVALUATION_SUPPORT
+            for modality, operations in [EVALUATION_SUPPORT[name]]
+        ]
 
     def experiments(self) -> list[dict[str, str]]:
         rows = []
@@ -285,6 +314,7 @@ class RepositoryCatalog:
             "trainers": self.trainers(),
             "datasets": self.datasets(),
             "evaluations": self._scan("eval", recursive=False),
+            "evaluation_support": self.evaluation_support(),
             "experiments": self.experiments(),
             "recipes": self.recipes(),
         }
@@ -382,11 +412,16 @@ class RepositoryCatalog:
                 )
         elif request.evaluation is not None or not has_base:
             evaluations = set(snapshot["evaluations"])
-            if request.modality == "multimodal":
-                evaluations = {
-                    name for name in evaluations if name.startswith("mm_edit")
-                }
             self._require(request.evaluation, evaluations, "evaluation")
+            support = EVALUATION_SUPPORT.get(request.evaluation)
+            if support and (
+                request.modality != support[0] or request.operation not in support[1]
+            ):
+                raise CatalogError(
+                    f"Evaluation {request.evaluation!r} does not support "
+                    f"{request.modality}/{request.operation}; choose a matching evaluation. / "
+                    "该评测与当前操作或模态不匹配，请选择对应评测。"
+                )
         datasets = {
             item["id"]
             for item in snapshot["datasets"]
@@ -400,8 +435,14 @@ class RepositoryCatalog:
             raise CatalogError(
                 f"{request.operation} requires dataset roles: {', '.join(sorted(required_roles))}"
             )
-        for value in request.datasets.values():
+        for role, value in request.datasets.items():
             self._require(value, datasets, "dataset")
+            declared_role = _declared_unlearning_role(value)
+            if request.operation == "unlearning" and declared_role not in (None, role):
+                raise CatalogError(
+                    f"Dataset {value!r} is declared for {declared_role}, not {role}. / "
+                    "遗忘集与保留集的用途不匹配，请检查数据集选择。"
+                )
         if request.modality == "multimodal" and request.operation != "edit":
             replacements = {
                 "trainer.args.learning_rate": "trainer.args.lr",
@@ -414,6 +455,203 @@ class RepositoryCatalog:
                         f"For multimodal training use {replacements[key.lstrip('+')]}. / 多模态训练请使用该字段。"
                     )
         self._validate_overrides(request.overrides, smoke=request.smoke)
+
+    def validate_composed(self, request: ComposeRequest, resolved_config: str) -> None:
+        """Reject known runtime prerequisites after experiment defaults are merged.
+
+        These checks do not load models or certify arbitrary model/method pairs.
+        They prevent known mismatches from passing a configuration-only preview.
+        """
+        config = yaml.safe_load(resolved_config)
+        if not isinstance(config, dict):
+            raise CatalogError("Expected a composed configuration. / 未得到完整配置。")
+        self._validate_local_model_weights(config.get("model") or {})
+        data = config.get("data") or {}
+        if request.operation == "unlearning" and request.modality == "text":
+            scopes = {}
+            for role in ("forget", "retain"):
+                scope = data.get(role)
+                if not isinstance(scope, dict) or not scope:
+                    raise CatalogError(
+                        f"Unlearning requires explicit {role} data. / 遗忘操作需要分别配置遗忘集与保留集。"
+                    )
+                # Configuration keys may differ while the same dataset is loaded.
+                scopes[role] = [
+                    node.get("args", {})
+                    for node in scope.values()
+                    if isinstance(node, dict) and node.get("handler")
+                ]
+                for name in scope:
+                    declared = _declared_unlearning_role(name)
+                    if declared not in (None, role):
+                        raise CatalogError(
+                            f"Composed {role} data contains {name!r}, declared for {declared}. / "
+                            "实验配置中的遗忘集与保留集用途不匹配。"
+                        )
+            if scopes["forget"] and scopes["forget"] == scopes["retain"]:
+                raise CatalogError(
+                    "Forget and retain resolve to identical dataset inputs; choose separate scopes. / "
+                    "遗忘集与保留集指向相同输入，请分别选择不同的数据范围。"
+                )
+        if request.modality != "text":
+            return
+        trainer = config.get("trainer") or {}
+        method = trainer.get("method_args") or {}
+        handler = trainer.get("handler")
+        model = request.model or ""
+        source = str(
+            (config.get("model") or {})
+            .get("model_args", {})
+            .get("pretrained_model_name_or_path", "")
+        )
+        # Prefer the actual source if it explicitly identifies a registered family.
+        family_hint = source.rsplit("/", 1)[-1].lower()
+        if not family_hint.startswith(("gpt2", "qwen", "llama")):
+            family_hint = model.lower()
+        if request.operation == "inject" and family_hint.startswith("gpt2"):
+            targets = method.get("target_modules")
+            foreign_projections = {
+                "q_proj",
+                "v_proj",
+                "k_proj",
+                "o_proj",
+                "gate_proj",
+                "up_proj",
+                "down_proj",
+            }
+            if (
+                handler in {"LoRATrainer", "AdaLoRATrainer", "DoRATrainer"}
+                and isinstance(targets, list)
+                and targets
+                and all(
+                    isinstance(target, str)
+                    and target.rsplit(".", 1)[-1] in foreign_projections
+                    for target in targets
+                )
+            ):
+                raise CatalogError(
+                    "GPT-2 has no q_proj/v_proj-style modules. Select a GPT-2 experiment "
+                    "or set trainer.method_args.target_modules to its actual modules (for example [c_attn]). / "
+                    "GPT-2 不包含所选投影层，请使用 GPT-2 实验配置或指定实际模块（如 [c_attn]）。"
+                )
+        if request.operation != "edit":
+            return
+        checkpoint_field = None
+        if handler == "MENDEditor" and method.get("require_pretrained", True):
+            checkpoint_field = "edit_network_path"
+        elif handler == "SERACEditor":
+            checkpoint_field = "archive"
+        if checkpoint_field:
+            value = method.get(checkpoint_field)
+            if not isinstance(value, str) or not value.strip() or value == "???":
+                raise CatalogError(
+                    f"{handler} requires trainer.method_args.{checkpoint_field}; "
+                    "provide its trained auxiliary checkpoint before execution. / "
+                    "该方法需要已训练的辅助权重，请先填写对应 checkpoint 路径。"
+                )
+            if (
+                "${" not in value
+                and not (self.root / Path(value).expanduser()).is_file()
+            ):
+                raise CatalogError(
+                    f"trainer.method_args.{checkpoint_field} is not an existing local file. / "
+                    "辅助权重文件不存在，请检查 checkpoint 路径。"
+                )
+        if handler not in {
+            "ROMEEditor",
+            "MEMITEditor",
+            "AlphaEditEditor",
+            "AnyEditEditor",
+        }:
+            return
+        expected_prefix = (
+            "transformer.h."
+            if family_hint.startswith("gpt2")
+            else "model.layers."
+            if family_hint.startswith(("qwen", "llama"))
+            else None
+        )
+        for key in ("rewrite_module_tmp", "layer_module_tmp"):
+            value = method.get(key)
+            if (
+                expected_prefix
+                and isinstance(value, str)
+                and not value.startswith(expected_prefix)
+            ):
+                raise CatalogError(
+                    f"{key}={value!r} does not match the selected model family; "
+                    "choose a model-specific experiment or supply the correct layer mapping. / "
+                    "编辑层映射与所选模型不匹配，请使用对应模型的实验配置或修改层映射。"
+                )
+
+    def _validate_local_model_weights(self, model: dict[str, Any]) -> None:
+        """Check explicit local Transformers sources without downloading weights."""
+        handler = model.get("model_handler", "AutoModelForCausalLM")
+        args = model.get("model_args") or model
+        if handler not in {
+            "AutoModelForCausalLM",
+            "ProbedLlamaForCausalLM",
+        } or args.get("trust_remote_code"):
+            return
+        source = args.get("pretrained_model_name_or_path", model.get("model_path"))
+        if (
+            not isinstance(source, str)
+            or "${" in source
+            or args.get("state_dict") is not None
+        ):
+            return
+        path = self.root / Path(source).expanduser()
+        if not source.startswith(("/", "./", "../", "~/")) and not path.exists():
+            return  # Hugging Face IDs are allowed; this check never fetches them.
+        if args.get("from_tf") and Path(str(path) + ".index").is_file():
+            return  # TensorFlow checkpoints may be addressed by their prefix.
+        if path.is_file():
+            return  # Explicit supported conversion/checkpoint files reach the loader.
+        path = path / str(args.get("subfolder") or "")
+        if not path.is_dir():
+            raise CatalogError(
+                "Local model directory does not exist. / 本地模型目录不存在，请检查模型路径。"
+            )
+        names = {
+            "model.safetensors",
+            "pytorch_model.bin",
+            "tf_model.h5",
+            "model.ckpt.index",
+            "flax_model.msgpack",
+        }
+        variant = args.get("variant")
+        if variant:
+            names.update(
+                {f"model.{variant}.safetensors", f"pytorch_model.{variant}.bin"}
+            )
+        if args.get("gguf_file"):
+            names.add(str(args["gguf_file"]))
+        if (path / "adapter_config.json").is_file():
+            names.update({"adapter_model.safetensors", "adapter_model.bin"})
+        if any(
+            (path / name).is_file() and (path / name).stat().st_size for name in names
+        ):
+            return
+        for pattern in ("model*.index*.json", "pytorch_model*.index*.json"):
+            for index in path.glob(pattern):
+                try:
+                    shards = set(
+                        json.loads(index.read_text()).get("weight_map", {}).values()
+                    )
+                except (OSError, ValueError, TypeError, AttributeError):
+                    continue
+                if shards and all(
+                    isinstance(shard, str)
+                    and (path / shard).is_file()
+                    and (path / shard).stat().st_size
+                    for shard in shards
+                ):
+                    return
+        raise CatalogError(
+            "Local model directory has no complete model weights or adapter weights; "
+            "config/tokenizer files alone cannot load a model. Select a complete checkpoint. / "
+            "本地模型目录缺少完整权重，只有配置或分词器文件无法加载模型，请选择已完整保存的模型。"
+        )
 
     @staticmethod
     def _validate_overrides(overrides: dict[str, Any], *, smoke: bool = False) -> None:

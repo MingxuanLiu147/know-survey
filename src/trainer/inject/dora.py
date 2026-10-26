@@ -37,7 +37,7 @@ class DoRATrainer(InjectTrainer):
         r: int = 8,
         lora_alpha: int = 16,
         lora_dropout: float = 0.05,
-        target_modules: Optional[List[str]] = None,
+        target_modules: Optional[List[str] | str] = None,
         use_dora: bool = True,
         bias: str = "none",
         task_type: str = "CAUSAL_LM",
@@ -59,7 +59,9 @@ class DoRATrainer(InjectTrainer):
         self.lora_alpha = lora_alpha
         self.lora_dropout = lora_dropout
         self.target_modules = (
-            list(target_modules)
+            target_modules
+            if isinstance(target_modules, str)
+            else list(target_modules)
             if target_modules
             else ["q_proj", "v_proj", "k_proj", "o_proj"]
         )

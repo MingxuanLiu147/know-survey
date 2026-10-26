@@ -64,7 +64,7 @@ class AdaLoRATrainer(InjectTrainer):
         target_r: int = 8,
         lora_alpha: int = 32,
         lora_dropout: float = 0.05,
-        target_modules: Optional[List[str]] = None,
+        target_modules: Optional[List[str] | str] = None,
         tinit: int = 0,
         tfinal: int = 0,
         deltaT: int = 1,
@@ -98,7 +98,9 @@ class AdaLoRATrainer(InjectTrainer):
         self.lora_alpha = lora_alpha
         self.lora_dropout = lora_dropout
         self.target_modules = (
-            list(target_modules)
+            target_modules
+            if isinstance(target_modules, str)
+            else list(target_modules)
             if target_modules
             else ["q_proj", "v_proj", "k_proj", "o_proj"]
         )

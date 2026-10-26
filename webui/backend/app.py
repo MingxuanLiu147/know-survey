@@ -370,7 +370,10 @@ def _compose(request: ComposeRequest) -> dict[str, Any]:
     }
     if result["valid"]:
         try:
+            catalog.validate_composed(request, result["resolved_config"])
             result.update(composition_identity(result["resolved_config"], ROOT))
+        except CatalogError as exc:
+            result.update(valid=False, stderr=str(exc))
         except (OSError, ValueError, TypeError) as exc:
             raise HTTPException(
                 422, f"Cannot inspect the composed configuration: {exc}"
