@@ -1,7 +1,7 @@
 import { ChevronLeft, ChevronRight, FileQuestion, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 import { ApiError } from "../api";
-import { displayTechnicalText, uiErrorMessage, useI18n } from "../i18n";
+import { displayTechnicalText, resultReasonText, uiErrorMessage, useI18n } from "../i18n";
 import type { ResultSummary } from "../types";
 import { Button, EmptyState, InlineError, LoadingBlock } from "./ui";
 
@@ -109,13 +109,15 @@ export function CaseInspector({ results, metricId }: { results: ResultSummary[];
               {teacherForced ? <p className="section-description">{zh ? "逐词预测使用给定的参考上下文，与自由生成回答分别统计。" : "Token predictions use the provided reference context and are measured separately from free generation."}</p> : null}
               <div className="answer-grid">{renderAnswer(item.before, item.before_score, true)}{renderAnswer(item.after, item.after_score, false)}</div>
               {item.score !== null && item.score !== undefined ? <p>{zh ? "样本指标" : "Example score"}：{item.score}</p> : null}
-              {item.unavailable_reason ? <p className="section-description">{displayTechnicalText(item.unavailable_reason)}</p> : null}
+              {item.unavailable_reason ? <p className="section-description">{resultReasonText(item.unavailable_reason, language)}</p> : null}
               <details className="source-details"><summary>{zh ? "查看来源与评测设置" : "Source and evaluation settings"}</summary>
                 <dl className="metadata-grid">
                   <div><dt>{zh ? "来源" : "Source"}</dt><dd className="mono">{item.source}{item.source_pointer ? ` · ${item.source_pointer}` : ""}</dd></div>
                   <div><dt>{zh ? "样本编号" : "Example ID"}</dt><dd>{item.case_index ?? "—"}{item.probe_index !== null && item.probe_index !== undefined ? ` / ${item.probe_index}` : ""}</dd></div>
                   <div><dt>{zh ? "评测协议" : "Evaluation protocol"}</dt><dd>{item.protocol_version ?? "—"}</dd></div>
                   <div><dt>{zh ? "评分方式" : "Scoring"}</dt><dd>{item.scoring ?? item.measurement_kind ?? "—"}</dd></div>
+                  <div><dt>{zh ? "评测来源 / 阶段" : "Evaluator / phase"}</dt><dd>{item.evaluator ?? "—"} / {item.phase ?? "—"}</dd></div>
+                  {item.unavailable_reason ? <div><dt>{zh ? "原始原因" : "Recorded reason"}</dt><dd className="mono">{item.unavailable_reason}</dd></div> : null}
                 </dl>
                 {item.warnings?.map((warning, warningIndex) => <p key={warningIndex}>{displayTechnicalText(warning)}</p>)}
               </details>

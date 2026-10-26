@@ -33,9 +33,11 @@ export interface Catalog {
     handlers: string[];
     modality: Modality;
     operations: Operation[];
+    unlearning_role?: string | null;
     status: EvidenceLevel;
   }>;
   evaluations: string[];
+  evaluation_support?: Array<{ id: string; modality: Modality; operations: Operation[] }>;
   experiments: Array<{
     id: string;
     operation: Operation;

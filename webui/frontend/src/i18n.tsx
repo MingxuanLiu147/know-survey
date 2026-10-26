@@ -139,7 +139,7 @@ const messages = {
     intentPresets: "Intent presets",
     longTextInjectionPreset: "Long-text injection · 7B · LoReFT",
     longTextEditingPreset: "Long-text editing · 7B · AnyEdit",
-    availableSkills: "Available Agent Skills",
+    availableSkills: "Shared project Skills",
     selectedForPlan: "selected for this plan",
     viewRegistry: "View registry",
     configuredPlanRecipes: "Configured plan recipes",
@@ -380,7 +380,7 @@ const messages = {
     intentPresets: "目标模板",
     longTextInjectionPreset: "长文本注入 · 7B · LoReFT",
     longTextEditingPreset: "长文本编辑 · 7B · AnyEdit",
-    availableSkills: "可用智能体技能",
+    availableSkills: "项目共享 Skills",
     selectedForPlan: "项用于当前计划",
     viewRegistry: "查看注册表",
     configuredPlanRecipes: "已配置的计划配方",
@@ -540,6 +540,37 @@ export function displayTechnicalText(value: string): string {
     .replace(/smoke/gi, "run")
     .replaceAll("冒烟测试", "运行检查")
     .replaceAll("冒烟", "运行检查");
+}
+
+const resultReasons: Record<string, { en: string; zh: string }> = {
+  before_not_recorded: { en: "The model response before the update was not recorded.", zh: "未记录更新前的模型回答。" },
+  response_not_recorded: { en: "The model response was not recorded.", zh: "未记录模型回答。" },
+  responses_not_recorded: { en: "The model responses before and after the update were not recorded.", zh: "未记录更新前后的模型回答。" },
+  after_not_recorded: { en: "The model response after the update was not recorded.", zh: "未记录更新后的模型回答。" },
+  missing_component_metrics: { en: "The overall score requires component metrics that are missing.", zh: "缺少计算综合得分所需的分项指标。" },
+  missing_portability_inputs: { en: "No transfer questions were provided for evaluation.", zh: "未提供用于评测迁移性的问答。" },
+  missing_locality_inputs: { en: "No locality questions were provided for evaluation.", zh: "未提供用于评测局部性的问答。" },
+  missing_rephrase_prompts: { en: "No rephrased questions were provided for evaluation.", zh: "未提供用于评测泛化性的改写问题。" },
+  missing_reliability_inputs: { en: "No target questions were provided for evaluation.", zh: "未提供用于评测目标效果的问答。" },
+  semantic_model_not_configured: { en: "No model was configured to measure semantic similarity.", zh: "未配置用于计算语义相似度的模型。" },
+  missing_original_model: { en: "The original model was not available for comparison.", zh: "未提供用于对照的原始模型。" },
+  missing_pre_edit_baseline: { en: "No baseline before editing was recorded.", zh: "未记录编辑前的基线结果。" },
+  missing_tokenizer: { en: "The tokenizer required for this evaluation was unavailable.", zh: "缺少此项评测所需的分词器。" },
+  missing_processor: { en: "The image-text processor required for this evaluation was unavailable.", zh: "缺少此项评测所需的图文处理器。" },
+  missing_tokenizer_or_edit_data: { en: "The tokenizer or editing data required for evaluation was unavailable.", zh: "缺少评测所需的分词器或编辑数据。" },
+  missing_long_form_pairs: { en: "No long-form answers and references were available for comparison.", zh: "没有可用于比较的长文本回答与参考答案。" },
+  missing_mmlu_probes: { en: "No MMLU questions were provided for evaluation.", zh: "未提供 MMLU 评测问题。" },
+  no_valid_eval_samples: { en: "No valid evaluation samples were available.", zh: "没有可用的评测样本。" },
+  no_valid_benchmark_samples: { en: "No valid benchmark samples were available.", zh: "没有可用的基准评测样本。" },
+  no_valid_reference_samples: { en: "No valid reference samples were available.", zh: "没有可用的对照评测样本。" },
+  no_evaluable_response_tokens: { en: "No answer tokens were available for scoring.", zh: "没有可用于评分的回答词元。" },
+  original_score_non_positive: { en: "The original score is zero or negative, so a retention ratio cannot be calculated.", zh: "原始得分为零或负数，无法计算保留比例。" }
+};
+
+export function resultReasonText(reason: string, language: Language): string {
+  return resultReasons[reason]?.[language] || (language === "zh"
+    ? "此项记录不完整，可展开详情查看原始说明。"
+    : "This item has incomplete information. Expand the details to see the recorded reason.");
 }
 
 export function localizedSkillDescription(

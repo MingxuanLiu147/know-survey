@@ -11,7 +11,7 @@ import {
   Syringe,
   Workflow
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
 import {
@@ -31,6 +31,7 @@ import {
 import type { Catalog, Skill } from "../types";
 
 type Tab = "skills" | "models" | "datasets" | "methods";
+const tabs: Tab[] = ["skills", "models", "datasets", "methods"];
 
 const tabIcons = {
   skills: Bot,
@@ -44,6 +45,7 @@ export function Extensions() {
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [skills, setSkills] = useState<Skill[]>([]);
   const [tab, setTab] = useState<Tab>("skills");
+  const tabButtons = useRef<Partial<Record<Tab, HTMLButtonElement | null>>>({});
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -164,17 +166,32 @@ export function Extensions() {
       </section>
 
       <div className="catalog-toolbar">
-        <div className="catalog-tabs" role="tablist">
-          {(["skills", "models", "datasets", "methods"] as Tab[]).map(
+        <div className="catalog-tabs" role="tablist" aria-label={t("extensions")}>
+          {tabs.map(
             (value) => {
               const Icon = tabIcons[value];
               return (
                 <button
+                  ref={(element) => { tabButtons.current[value] = element; }}
+                  id={`registry-tab-${value}`}
                   role="tab"
                   aria-selected={tab === value}
+                  aria-controls="registry-panel"
+                  tabIndex={tab === value ? 0 : -1}
                   className={tab === value ? "active" : ""}
                   key={value}
                   onClick={() => setTab(value)}
+                  onKeyDown={(event) => {
+                    const index = tabs.indexOf(value);
+                    const next = event.key === "ArrowRight" ? tabs[(index + 1) % tabs.length]
+                      : event.key === "ArrowLeft" ? tabs[(index + tabs.length - 1) % tabs.length]
+                      : event.key === "Home" ? tabs[0]
+                      : event.key === "End" ? tabs[tabs.length - 1] : null;
+                    if (!next) return;
+                    event.preventDefault();
+                    setTab(next);
+                    tabButtons.current[next]?.focus();
+                  }}
                 >
                   <Icon size={16} />
                   {value === "skills" ? t("skills") : t(value.slice(0, -1) as "model" | "dataset" | "method")}
@@ -194,6 +211,7 @@ export function Extensions() {
         </label>
       </div>
 
+      <div id="registry-panel" role="tabpanel" aria-labelledby={`registry-tab-${tab}`} tabIndex={0}>
       {tab === "skills" ? (
         <section className="skill-catalog">
           <div className="skill-grid">
@@ -354,6 +372,7 @@ export function Extensions() {
       {!({skills: filteredSkills, models: filteredModels, datasets: filteredDatasets, methods: filteredMethods}[tab]).length ? (
         <EmptyState icon={Boxes} title={t("noMatchingRegistry")} />
       ) : null}
+      </div>
 
       <section className="extension-contract">
         <div>

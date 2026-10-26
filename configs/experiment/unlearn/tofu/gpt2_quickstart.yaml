@@ -7,9 +7,36 @@ defaults:
   - override /data: unlearn
   - override /data/datasets@data.forget: TOFU_local_smoke_forget
   - override /data/datasets@data.retain: TOFU_local_smoke_retain
+  - override /eval: null
 
 mode: unlearn
-eval: null
+eval:
+  tofu:
+    handler: TOFUEvaluator
+    output_dir: ${paths.output_dir}
+    overwrite: false
+    retain_logs_path: null
+    metrics:
+      forget_Q_A_Prob:
+        handler: probability
+        batch_size: 1
+        datasets: ${data.forget}
+        collators:
+          DataCollatorForSupervisedDataset:
+            handler: DataCollatorForSupervisedDataset
+            args:
+              padding_side: right
+              index: index
+      retain_Q_A_Prob:
+        handler: probability
+        batch_size: 1
+        datasets: ${data.retain}
+        collators:
+          DataCollatorForSupervisedDataset:
+            handler: DataCollatorForSupervisedDataset
+            args:
+              padding_side: right
+              index: index
 
 model:
   model_args:
@@ -28,7 +55,7 @@ trainer:
     bf16: false
     bf16_full_eval: false
     gradient_checkpointing: false
-    do_eval: false
+    do_eval: true
     eval_on_start: false
     save_strategy: "no"
     optim: adamw_torch

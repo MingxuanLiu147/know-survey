@@ -187,6 +187,24 @@ export function Workbench() {
   const [smoke, setSmoke] = useDraftField("smoke");
   const [baseSelections, setBaseSelections] = useDraftField("baseSelections");
   const [overrides, setOverrides] = useDraftField("overrides");
+  const [overridesDraft, setOverridesDraft] = useDraftField("overridesDraft");
+  const previousOverrides = useRef(overrides);
+  useEffect(() => {
+    if (previousOverrides.current !== overrides) {
+      setOverridesDraft(null);
+      previousOverrides.current = overrides;
+    }
+  }, [overrides, setOverridesDraft]);
+  const parameterEdit = useMemo(() => {
+    if (overridesDraft === null) return { value: overrides, error: "" };
+    try {
+      const value: unknown = JSON.parse(overridesDraft);
+      if (!value || Array.isArray(value) || typeof value !== "object") throw new Error();
+      return { value: value as Record<string, unknown>, error: "" };
+    } catch {
+      return { value: null, error: language === "zh" ? "请输入 JSON 对象，例如 {\"trainer.args.learning_rate\": 0.0001}。" : "Enter a JSON object, such as {\"trainer.args.learning_rate\": 0.0001}." };
+    }
+  }, [overridesDraft, overrides, language]);
   const [composeSnapshot, setComposeSnapshot] = useDraftField("composeSnapshot");
   const [currentRun, setCurrentRun] = useDraftField("currentRun");
   const [planning, setPlanning] = useState(false);
@@ -396,7 +414,7 @@ export function Workbench() {
 
   const payloadKey = JSON.stringify(payload);
   const composeResult =
-    composeSnapshot?.key === payloadKey ? composeSnapshot.result : null;
+    overridesDraft === null && composeSnapshot?.key === payloadKey ? composeSnapshot.result : null;
 
   const latest = useRef({ payloadKey, intent, provider, language });
   latest.current = { payloadKey, intent, provider, language };
@@ -443,6 +461,7 @@ export function Workbench() {
   };
 
   const compose = async () => {
+    if (overridesDraft !== null) return;
     const sequence = ++composeSequence.current;
     setComposing(true);
     setComposeSnapshot(null);
@@ -702,6 +721,9 @@ export function Workbench() {
                   {t("viewRegistry")} <ChevronRight size={14} />
                 </Link>
               </div>
+              {showSkills && <p className="section-description">{language === "zh"
+                ? "这些是项目共享的工作流定义；Agent 可调用的工具随执行模式而定。"
+                : "These are shared workflow definitions. The tools available to the Agent depend on its execution mode."}</p>}
               {showSkills ? (
                 <div className="planner-skill-list" role="list">
                   {skills.map((skill) => {
@@ -911,7 +933,8 @@ export function Workbench() {
                       >
                         {catalog.datasets
                           .filter((item) =>
-                            item.operations.includes(operation) && item.modality === modality
+                            item.operations.includes(operation) && item.modality === modality &&
+                            (operation !== "unlearning" || !item.unlearning_role || item.unlearning_role === role)
                           )
                           .map((item) => (
                             <option value={item.id} key={item.id}>
@@ -928,7 +951,11 @@ export function Workbench() {
                       onChange={(event) => setEvaluation(event.target.value)}
                     >
                       {modality === "multimodal" && operation !== "edit" ? <option value="">{language === "zh" ? "使用该多模态路线的探针" : "Use multimodal route probes"}</option> : null}
-                      {catalog.evaluations.filter((item) => modality === "text" ? !item.startsWith("mm_") : operation === "edit" && item.startsWith("mm_edit")).map((item) => (
+                      {catalog.evaluations.filter((item) => {
+                        const support = catalog.evaluation_support?.find(entry => entry.id === item);
+                        return support ? support.modality === modality && support.operations.includes(operation)
+                          : modality === "text" ? !item.startsWith("mm_") : operation === "edit" && item.startsWith("mm_edit");
+                      }).map((item) => (
                         <option value={item} key={item}>
                           {item}
                         </option>
@@ -968,12 +995,36 @@ export function Workbench() {
               </label>
             </div>
 
+            <details className="parameter-editor">
+              <summary>{language === "zh" ? "参数与本地路径" : "Parameters and local paths"}</summary>
+              <label className="field field-wide">
+                <span>{language === "zh" ? "参数覆盖（JSON）" : "Parameter overrides (JSON)"}</span>
+                <textarea rows={7} spellCheck={false}
+                  aria-invalid={!!parameterEdit.error}
+                  aria-describedby="parameter-editor-help"
+                  value={overridesDraft ?? JSON.stringify(overrides, null, 2)}
+                  onChange={event => setOverridesDraft(event.target.value)} />
+              </label>
+              <p id="parameter-editor-help" className="section-description">{language === "zh"
+                ? "可调整学习率、方法参数及模型／数据路径。字段使用 Hydra 参数名；应用后重新预览。操作、模型类型和输出目录由任务配置管理。"
+                : "Adjust learning rate, method settings, and model/data paths using Hydra keys. Apply changes, then preview again. Task fields manage the operation, model type, and output directory."}</p>
+              {parameterEdit.error && <InlineError message={parameterEdit.error} />}
+              <Button variant="secondary" disabled={overridesDraft === null || !parameterEdit.value}
+                onClick={() => { if (parameterEdit.value) { setOverrides(parameterEdit.value); setOverridesDraft(null); setComposeSnapshot(null); } }}>
+                {language === "zh" ? "应用参数" : "Apply parameters"}
+              </Button>
+              {overridesDraft !== null && <Button variant="ghost" onClick={() => setOverridesDraft(null)}>
+                {language === "zh" ? "恢复已应用参数" : "Restore applied parameters"}
+              </Button>}
+            </details>
+
             <div className="execute-bar">
               <div className="execute-actions">
                 <Button
                   variant="secondary"
                   icon={GitBranch}
                   loading={composing}
+                  disabled={overridesDraft !== null}
                   onClick={compose}
                 >
                   {t("preview")}
@@ -989,6 +1040,9 @@ export function Workbench() {
               </div>
             </div>
 
+            {composeResult && !composeResult.valid && (
+              <InlineError message={composeResult.stderr || (language === "zh" ? "配置未通过校验，请调整参数后重新预览。" : "Configuration validation failed. Update the parameters and preview again.")} />
+            )}
             {composeResult ? (
               <div
                 className={

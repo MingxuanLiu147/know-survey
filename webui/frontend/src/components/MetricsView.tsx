@@ -16,7 +16,7 @@ import {
   XAxis,
   YAxis
 } from "recharts";
-import { useI18n } from "../i18n";
+import { displayTechnicalText, resultReasonText, useI18n, type Language } from "../i18n";
 import type { Metric, ResultDetail } from "../types";
 import { EmptyState, StatusBadge } from "./ui";
 
@@ -70,6 +70,29 @@ export function formatMetric(metric: Metric): string {
   return value.toFixed(3);
 }
 
+export function metricDisplayLabel(metric: Metric, metrics: Metric[], language: Language): string {
+  const label = metric.label[language];
+  const matching = metrics.filter((item) => item.label[language] === label);
+  if (new Set(matching.map((item) => item.id)).size < 2) return label;
+  const evaluators: Record<string, { en: string; zh: string }> = {
+    edit: { en: "Editing evaluation", zh: "编辑评测" },
+    edit_inline: { en: "In-process editing evaluation", zh: "编辑过程评测" },
+    inject: { en: "Injection evaluation", zh: "注入评测" },
+    run_trace: { en: "Run measurements", zh: "运行测量" }
+  };
+  const phases: Record<string, { en: string; zh: string }> = {
+    run: { en: "This run", zh: "本次运行" },
+    before: { en: "Before", zh: "更新前" },
+    after: { en: "After", zh: "更新后" },
+    pre: { en: "Before", zh: "更新前" },
+    post: { en: "After", zh: "更新后" }
+  };
+  const evaluator = metric.evaluator ? evaluators[metric.evaluator]?.[language] || metric.evaluator : (language === "zh" ? "来源未记录" : "Source not recorded");
+  const phase = metric.phase ? phases[metric.phase]?.[language] || metric.phase : (language === "zh" ? "阶段未记录" : "Phase not recorded");
+  const sameSource = matching.some((item) => item.id !== metric.id && item.evaluator === metric.evaluator && item.phase === metric.phase);
+  return displayTechnicalText(`${label} · ${evaluator} / ${phase}${sameSource ? ` · ${metric.id}` : ""}`);
+}
+
 export function MetricsView({
   metrics,
   compact = false
@@ -97,7 +120,7 @@ export function MetricsView({
     .slice(0, 10)
     .map((metric) => ({
       id: metric.id,
-      name: metric.label[language],
+      name: metricDisplayLabel(metric, metrics, language),
       value: metric.value! * 100,
       category: metric.category,
       formatted: formatMetric(metric)
@@ -106,9 +129,9 @@ export function MetricsView({
     <div className={compact ? "metrics-view compact" : "metrics-view"}>
       <div className="metric-grid">
         {metrics.slice(0, compact ? 4 : 12).map((metric) => (
-          <article className="metric-card" key={metric.id} title={[metric.evaluator, metric.phase, metric.protocol_version, metric.measurement_kind, metric.unavailable_reason].filter(Boolean).join(" · ")}>
+          <article className="metric-card" key={metric.id} title={metric.unavailable_reason ? resultReasonText(metric.unavailable_reason, language) : metricDisplayLabel(metric, metrics, language)}>
             <div className="metric-card-top">
-              <span>{metric.label[language]}</span>
+              <span style={{ whiteSpace: "normal", overflow: "visible" }}>{metricDisplayLabel(metric, metrics, language)}</span>
               <Gauge size={15} aria-hidden="true" />
             </div>
             <strong className={metric.value === null ? "is-na" : ""}>
@@ -118,12 +141,17 @@ export function MetricsView({
               <Direction metric={metric} />
               <span>{t(metric.category)}</span>
             </div>
+            {metric.unavailable_reason ? <details className="source-details">
+              <summary>{language === "zh" ? "查看原因" : "View reason"}</summary>
+              <p>{resultReasonText(metric.unavailable_reason, language)}</p>
+              <p className="mono">{metric.unavailable_reason}</p>
+            </details> : null}
           </article>
         ))}
       </div>
       {!compact && chartData.length > 1 ? (
         <figure className="metric-chart" aria-label={t("metricOverview")}>
-          <ResponsiveContainer width="100%" height={250}>
+          <ResponsiveContainer width="100%" height={Math.max(250, chartData.length * 70)}>
             <BarChart
               data={chartData}
               layout="vertical"

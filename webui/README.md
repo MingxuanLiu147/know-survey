@@ -37,6 +37,36 @@ Preview composes the configuration without loading model weights. Execution need
 the configured inputs, dependencies and compute. The one-edit/one-step switch
 sets exactly that limit; turn it off to use the configuration's full budget.
 
+## Configure a task
+
+The dataset and evaluation choices follow the selected operation. Unlearning uses
+separate forget and retain scopes. Preview also checks known model-specific module
+mappings, required editor checkpoints, and explicitly configured local inputs.
+A valid preview checks these prerequisites; model loading and execution still
+appear as separate run states.
+
+Open **Parameters and local paths** to edit individual Hydra overrides as a JSON
+object, for example:
+
+```json
+{
+  "trainer.args.learning_rate": 0.0001,
+  "model.model_args.pretrained_model_name_or_path": "/path/to/model",
+  "model.tokenizer_args.pretrained_model_name_or_path": "/path/to/model"
+}
+```
+
+Apply the parameters and preview again before execution. Unapplied edits disable
+preview and execution; **Restore applied parameters** returns to the previous
+configuration. Operation, model/trainer selection, task name, seed and output
+location remain managed by the task fields. Parameters use the same keys in both
+languages and appear in the equivalent command.
+
+The GPT-2 TOFU starter evaluates answer probability on its forget and retain
+inputs after training. Uploaded injection data needs separate evaluation inputs
+for target accuracy and retention; configure these paths and enable
+`trainer.args.do_eval` when those probes are available.
+
 ## Agent execution
 
 The local planner works without an API key. For model-selected Skills, configure

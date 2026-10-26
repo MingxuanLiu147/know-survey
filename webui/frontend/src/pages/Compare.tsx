@@ -18,7 +18,7 @@ import {
   YAxis
 } from "recharts";
 import { api } from "../api";
-import { formatMetric } from "../components/MetricsView";
+import { formatMetric, metricDisplayLabel } from "../components/MetricsView";
 import { CaseInspector } from "../components/CaseInspector";
 import {
   Button,
@@ -28,7 +28,7 @@ import {
   SectionHeader,
   StatusBadge
 } from "../components/ui";
-import { displayTechnicalText, uiErrorMessage, useI18n } from "../i18n";
+import { displayTechnicalText, resultReasonText, uiErrorMessage, useI18n } from "../i18n";
 import type { ResultDetail, ResultSummary } from "../types";
 
 const chartColors = [
@@ -137,6 +137,11 @@ export function Compare() {
       .filter((item) => item.value !== null && item.value !== undefined);
   }, [comparison, metricId]);
   const chartMetrics = comparison?.results.flatMap((result) => result.metrics.filter((metric) => metric.id === metricId)) || [];
+  const comparisonMetrics = comparison?.results.flatMap((result) => result.metrics) || [];
+  const metricLabel = (id: string) => {
+    const metric = comparisonMetrics.find((item) => item.id === id);
+    return metric ? metricDisplayLabel(metric, comparisonMetrics, language) : id;
+  };
   const chartCompatible = ["unit", "scoring", "measurement_kind", "protocol_version"].every((key) =>
     new Set(chartMetrics.map((metric) => metric[key as "unit" | "scoring" | "measurement_kind" | "protocol_version"] ?? null)).size <= 1
   );
@@ -182,6 +187,7 @@ export function Compare() {
   const comparisonNote = (text: string): string => {
     if (language !== "zh") return displayTechnicalText(text);
     if (text === "Compares recorded inputs, model revision, record counts, evaluation settings, run limits and environment.") return "按已记录的输入、模型版本、样本数、评测设置、运行设置和环境比较。";
+    if (text === "Compares recorded inputs, model revision, record counts, evaluation settings, run limits, environment, metric protocols and scoring semantics. Unmatched results remain side by side without a ranking.") return "按已记录的输入、模型版本、样本数、评测与运行设置、环境、指标协议和评分方式比较。条件不匹配的结果仅并列展示，不作排名。";
     if (text === "Check that both runs have completed evaluation, share quality metrics, and use matching comparison settings.") return "请检查各运行是否完成评测、具有相同效果指标，并采用一致的比较条件。";
     return displayTechnicalText(text);
   };
@@ -335,7 +341,7 @@ export function Compare() {
                       >
                         {comparison.metric_ids.map((item) => (
                           <option value={item} key={item}>
-                            {comparison.results.flatMap((result) => result.metrics).find((metric) => metric.id === item)?.label[language] || item}
+                            {metricLabel(item)}
                           </option>
                         ))}
                       </select>
@@ -404,7 +410,7 @@ export function Compare() {
                         <tr>
                           <th>{t("run")}</th>
                           {comparison.metric_ids.map((item) => (
-                            <th key={item}>{comparison.results.flatMap((result) => result.metrics).find((metric) => metric.id === item)?.label[language] || item}</th>
+                            <th key={item}>{metricLabel(item)}</th>
                           ))}
                         </tr>
                       </thead>
@@ -425,12 +431,14 @@ export function Compare() {
                               return (
                                 <td key={item}>
                                   {metric && metric.value !== null && metric.value !== undefined ? formatMetric(metric) : (language === "zh" ? "不可用" : "Unavailable")}
-                                  {metric?.unavailable_reason ? <p className="muted">{displayTechnicalText(metric.unavailable_reason)}</p> : null}
+                                  {metric?.unavailable_reason ? <p className="muted">{resultReasonText(metric.unavailable_reason, language)}</p> : null}
                                   {metric ? <details className="source-details"><summary>{language === "zh" ? "指标说明" : "Metric details"}</summary>
                                     <p>{language === "zh" ? "单位" : "Unit"}: {metric.unit || "—"}</p>
                                     <p>{language === "zh" ? "分子 / 分母" : "Numerator / denominator"}: {metric.numerator ?? "—"} / {metric.denominator ?? "—"}</p>
                                     <p>{language === "zh" ? "评分方式" : "Scoring"}: {metric.scoring || metric.measurement_kind || "—"}</p>
                                     <p>{language === "zh" ? "评测协议" : "Protocol"}: {metric.protocol_version || "—"}</p>
+                                    <p>{language === "zh" ? "评测来源 / 阶段" : "Evaluator / phase"}: {metric.evaluator || "—"} / {metric.phase || "—"}</p>
+                                    {metric.unavailable_reason ? <p>{language === "zh" ? "原始原因" : "Recorded reason"}: {metric.unavailable_reason}</p> : null}
                                     <p className="mono">{metric.source}</p>
                                   </details> : null}
                                 </td>

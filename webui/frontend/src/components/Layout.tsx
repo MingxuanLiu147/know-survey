@@ -11,7 +11,7 @@ import {
   Wrench,
   X
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { api } from "../api";
 import { useI18n } from "../i18n";
@@ -30,6 +30,8 @@ export function Layout() {
   const [healthFailed, setHealthFailed] = useState(false);
   const [health, setHealth] = useState<Health | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const mobileBackdrop = useRef<HTMLDivElement>(null);
+  const mobileDrawer = useRef<HTMLElement>(null);
   const [collapsed, setCollapsed] = useState(false);
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     const stored = localStorage.getItem("know-surgery-theme");
@@ -40,6 +42,56 @@ export function Layout() {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem("know-surgery-theme", theme);
   }, [theme]);
+
+  useEffect(() => {
+    if (!mobileOpen || !mobileDrawer.current || !mobileBackdrop.current) return;
+    const drawer = mobileDrawer.current;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const siblings = Array.from(mobileBackdrop.current.parentElement?.children || [])
+      .filter((element): element is HTMLElement => element instanceof HTMLElement && element !== mobileBackdrop.current)
+      .map((element) => ({ element, inert: element.inert }));
+    siblings.forEach(({ element }) => { element.inert = true; });
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const focusable = () => Array.from(drawer.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex="0"]'
+    )).filter((element) => element.getClientRects().length > 0);
+    (focusable()[0] || drawer).focus();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setMobileOpen(false);
+      } else if (event.key === "Tab") {
+        const elements = focusable();
+        const first = elements[0] || drawer;
+        const last = elements.at(-1) || drawer;
+        if (event.shiftKey && (document.activeElement === first || document.activeElement === drawer)) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && (document.activeElement === last || document.activeElement === drawer)) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    };
+    const keepFocusInside = (event: FocusEvent) => {
+      if (event.target instanceof Node && !drawer.contains(event.target)) (focusable()[0] || drawer).focus();
+    };
+    const desktop = window.matchMedia("(min-width: 821px)");
+    const closeOnDesktop = () => { if (desktop.matches) setMobileOpen(false); };
+    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("focusin", keepFocusInside);
+    desktop.addEventListener("change", closeOnDesktop);
+    closeOnDesktop();
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("focusin", keepFocusInside);
+      desktop.removeEventListener("change", closeOnDesktop);
+      siblings.forEach(({ element, inert }) => { element.inert = inert; });
+      document.body.style.overflow = previousOverflow;
+      if (previousFocus?.isConnected) previousFocus.focus();
+    };
+  }, [mobileOpen]);
 
   useEffect(() => {
     let cancelled = false;
@@ -134,6 +186,8 @@ export function Layout() {
           className="mobile-brand"
           onClick={() => setMobileOpen(true)}
           aria-label={t("openNavigation")}
+          aria-expanded={mobileOpen}
+          aria-controls={mobileOpen ? "mobile-navigation" : undefined}
         >
           <Menu size={20} />
           <span className="brand-symbol" aria-hidden="true">
@@ -162,11 +216,18 @@ export function Layout() {
       </header>
       {mobileOpen ? (
         <div
+          ref={mobileBackdrop}
           className="mobile-drawer-backdrop"
           onClick={() => setMobileOpen(false)}
         >
           <aside
+            ref={mobileDrawer}
+            id="mobile-navigation"
             className="mobile-drawer"
+            role="dialog"
+            aria-modal="true"
+            aria-label={t("primaryNavigation")}
+            tabIndex={-1}
             onClick={(event) => event.stopPropagation()}
           >
             <IconButton
