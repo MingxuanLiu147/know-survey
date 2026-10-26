@@ -8,6 +8,7 @@ import csv
 import hashlib
 import importlib.util
 import json
+import math
 import os
 import re
 import shlex
@@ -214,6 +215,12 @@ def _is_long_text(text: str) -> bool:
 
 def _dataset_from_intent(text: str, operation: str) -> tuple[str, str]:
     lowered = text.lower()
+    if operation == "edit" and "zsre" in lowered:
+        return (
+            ("LEME_zsre_edit", "free_text")
+            if "leme" in lowered
+            else ("ZSRE_edit", "fact")
+        )
     if operation == "edit" and "akew" in lowered:
         return "AKEW_counterfact_unstructured_edit", "free_text"
     if operation == "edit" and "leme" in lowered:
@@ -1163,7 +1170,7 @@ def _has_smoke_evidence(
             "input_manifest.json",
         )
     ]
-    metrics = list(run_dir.glob("*_SUMMARY.json"))
+    metrics = _summary_paths(run_dir)
     metrics.extend(
         path for path in (run_dir / "unlearning_metrics.json",) if path.is_file()
     )
@@ -1394,6 +1401,43 @@ def cmd_smoke(args: argparse.Namespace) -> int:
     return 0 if all(item["returncode"] == 0 for item in results) else 1
 
 
+def _summary_paths(run_dir: Path) -> list[Path]:
+    """Read root summaries and only the checkpoint matching final Trainer state."""
+    paths = sorted(run_dir.glob("*_SUMMARY.json"))
+    state = run_dir / "trainer_state.json"
+    if state.is_file():
+        step = _read_json(state).get("global_step")
+        if type(step) is int and step >= 0:
+            paths.extend(
+                sorted(
+                    (run_dir / f"checkpoint-{step}" / "evals").glob("*_SUMMARY.json")
+                )
+            )
+    return list(
+        dict.fromkeys(
+            path for path in paths if path.resolve().is_relative_to(run_dir.resolve())
+        )
+    )
+
+
+def _run_inputs(paths: list[str]) -> list[Path]:
+    """Avoid counting a run twice when its final checkpoint is also supplied."""
+    runs = []
+    for raw in paths:
+        path = _path(raw).resolve()
+        checkpoint = path.parent
+        if path.name == "evals" and re.fullmatch(r"checkpoint-\d+", checkpoint.name):
+            parent = checkpoint.parent
+            state = parent / "trainer_state.json"
+            if state.is_file() and _read_json(state).get("global_step") == int(
+                checkpoint.name.removeprefix("checkpoint-")
+            ):
+                path = parent
+        if path not in runs:
+            runs.append(path)
+    return runs
+
+
 def _summary_payload(run_dir: Path) -> dict[str, Any]:
     if not run_dir.is_dir():
         raise FileNotFoundError(f"Run directory not found: {run_dir}")
@@ -1402,25 +1446,81 @@ def _summary_payload(run_dir: Path) -> dict[str, Any]:
     paper_columns: dict[str, Any] = {}
     paper_protocol_columns: dict[str, Any] = {}
     summary_files = []
-    for path in sorted(run_dir.glob("*_SUMMARY.json")):
+    for path in _summary_paths(run_dir):
         payload = _read_json(path)
         summary_files.append(str(path))
         if isinstance(payload, dict):
+            source = path.relative_to(run_dir).as_posix()
+            evaluator = path.stem.removesuffix("_SUMMARY")
+            location = path.parent.relative_to(run_dir).as_posix()
+            location = "run" if location == "." else location
+            phase = payload.get("phase") or location
+            identity_phase = phase if phase == location else f"{location}/{phase}"
+
+            def append(key: str, value: Any, detail: dict | None = None) -> None:
+                # Preserve the full metric key and evaluator/location, matching
+                # the UI's IDs; two evaluators must never overwrite each other.
+                metric_id = f"{evaluator}:{identity_phase}:{key}"
+                context = {**payload, **(detail or {})}
+                metrics[metric_id] = (
+                    value
+                    if type(value) in (int, float) and math.isfinite(value)
+                    else None
+                )
+                metric_details[metric_id] = {
+                    **(detail or {}),
+                    "metric_name": key,
+                    "evaluator": evaluator,
+                    "phase": phase,
+                    "source": source,
+                    **{
+                        name: context.get(name)
+                        for name in (
+                            "protocol_version",
+                            "scoring",
+                            "measurement_kind",
+                            "denominator",
+                            "numerator",
+                            "unit",
+                            "unavailable_reason",
+                        )
+                    },
+                }
+                reason = context.get(f"{key}_unavailable_reason")
+                if reason is not None:
+                    metric_details[metric_id]["unavailable_reason"] = reason
+                elif metrics[metric_id] is not None:
+                    metric_details[metric_id]["unavailable_reason"] = None
+
             nested_metrics = payload.get("metrics")
             if isinstance(nested_metrics, dict):
                 for key, detail in nested_metrics.items():
                     if isinstance(detail, dict):
-                        metrics[key] = detail.get("mean")
-                        metric_details[key] = detail
+                        append(key, detail.get("mean"), detail)
             if isinstance(payload.get("paper_columns"), dict):
                 paper_columns = payload["paper_columns"]
             if isinstance(payload.get("paper_protocol_columns"), dict):
                 paper_protocol_columns = payload["paper_protocol_columns"]
             for key, value in payload.items():
+                if key in {
+                    "protocol_version",
+                    "scoring",
+                    "measurement_kind",
+                    "phase",
+                    "denominator",
+                    "numerator",
+                    "unit",
+                    "unavailable_reason",
+                } or key.endswith("_unavailable_reason"):
+                    continue
                 if isinstance(value, (int, float)) and not isinstance(value, bool):
-                    metrics[key.rsplit(".", 1)[-1]] = value
+                    append(key, value)
                 elif value is None:
-                    metrics.setdefault(key.rsplit(".", 1)[-1], None)
+                    append(key, None)
+                elif isinstance(value, dict) and (
+                    "value" in value or "agg_value" in value
+                ):
+                    append(key, value.get("value", value.get("agg_value")), value)
     local = run_dir / "unlearning_metrics.json"
     explicit_evidence = None
     if local.exists():
@@ -1457,14 +1557,8 @@ def _summary_payload(run_dir: Path) -> dict[str, Any]:
     )
     if trace.get("runtime_seconds") is not None:
         metrics["runtime_seconds"] = trace["runtime_seconds"]
-    core = all(
-        (run_dir / filename).is_file()
-        for filename in (
-            "command.txt",
-            "resolved_config.yaml",
-            "input_manifest.json",
-            "run_trace.json",
-        )
+    evaluation_present = any(
+        key != "runtime_seconds" and value is not None for key, value in metrics.items()
     )
     trace_evidence = trace.get("evidence_level")
     evidence = (
@@ -1473,11 +1567,13 @@ def _summary_payload(run_dir: Path) -> dict[str, Any]:
         else explicit_evidence
         if explicit_evidence in EVIDENCE_LEVELS
         else "verified_smoke"
-        if core and trace.get("status") == "success"
+        if _has_smoke_evidence(run_dir)
         else "local_validation"
         if metrics
         else "configured"
     )
+    if evidence in {"verified_smoke", "verified_result"} and not evaluation_present:
+        evidence = "local_validation"
     manifest = (
         _read_json(run_dir / "input_manifest.json")
         if (run_dir / "input_manifest.json").exists()
@@ -1536,7 +1632,7 @@ def _summary_payload(run_dir: Path) -> dict[str, Any]:
 
 
 def cmd_aggregate(args: argparse.Namespace) -> int:
-    runs = [_summary_payload(_path(path)) for path in args.run_dirs]
+    runs = [_summary_payload(path) for path in _run_inputs(args.run_dirs)]
     output = _write_json(
         _path(args.output),
         {"generated_at": _utc(), "runs": runs, "missing_metrics_are_null": True},
@@ -1546,7 +1642,7 @@ def cmd_aggregate(args: argparse.Namespace) -> int:
 
 
 def cmd_compare(args: argparse.Namespace) -> int:
-    runs = [_summary_payload(_path(path)) for path in args.run_dirs]
+    runs = [_summary_payload(path) for path in _run_inputs(args.run_dirs)]
     keys = sorted(set().union(*(run["metrics"].keys() for run in runs)))
     rows = [
         {
@@ -1578,11 +1674,35 @@ def cmd_compare(args: argparse.Namespace) -> int:
         values = [run["fairness"].get(field) for run in runs]
         fairness[field] = {
             "values": values,
-            "known": all(value not in (None, "") for value in values),
+            "known": all(value not in (None, "", [], {}) for value in values),
             "equal": len({json.dumps(value, sort_keys=True) for value in values}) == 1,
         }
-    comparable = len(runs) >= 2 and all(
-        item["known"] and item["equal"] for item in fairness.values()
+    common = set.intersection(*(set(run["metrics"]) for run in runs)) if runs else set()
+    common.discard("runtime_seconds")
+    alignment = {}
+    for key in sorted(common):
+        contexts = [
+            {
+                field: run["metric_details"].get(key, {}).get(field)
+                for field in ("protocol_version", "scoring", "measurement_kind", "unit")
+            }
+            for run in runs
+        ]
+        alignment[key] = {
+            "values": contexts,
+            "known": all(
+                row["protocol_version"] not in (None, "")
+                or row["scoring"] not in (None, "")
+                for row in contexts
+            ),
+            "equal": len({json.dumps(row, sort_keys=True) for row in contexts}) == 1,
+        }
+    comparable = (
+        len(runs) >= 2
+        and bool(common)
+        and all(run["trace"].get("status") in {"success", "completed"} for run in runs)
+        and all(item["known"] and item["equal"] for item in fairness.values())
+        and all(item["known"] and item["equal"] for item in alignment.values())
     )
     output = _write_json(
         _path(args.output),
@@ -1590,13 +1710,14 @@ def cmd_compare(args: argparse.Namespace) -> int:
             "generated_at": _utc(),
             "comparable": comparable,
             "fairness": fairness,
+            "metric_alignment": alignment,
             "metric_keys": keys,
             "rows": rows,
             "limitations": (
                 []
                 if comparable
                 else [
-                    "Runs are not ranked because one or more fairness fields are missing or differ."
+                    "Runs are not ranked: completed evaluation, shared metrics, matching identities and scoring protocols are required."
                 ]
             ),
         },
@@ -1678,7 +1799,8 @@ def cmd_validate_config(args: argparse.Namespace) -> int:
 def cmd_validate_mm(args: argparse.Namespace) -> int:
     from PIL import Image
 
-    records = _records(_path(args.input))
+    source = _path(args.input)
+    records = _records(source)
     errors = []
     if not records:
         errors.append({"error": "no records"})
@@ -1702,7 +1824,9 @@ def cmd_validate_mm(args: argparse.Namespace) -> int:
                     {"index": index, "error": "image path must be nonempty text"}
                 )
                 continue
-            path = _path(raw)
+            path = Path(raw).expanduser()
+            if not path.is_absolute():
+                path = source.parent / path
             if not path.is_file():
                 errors.append({"index": index, "error": f"image not found: {raw}"})
                 continue
@@ -1735,12 +1859,21 @@ def cmd_sweep(args: argparse.Namespace) -> int:
     for method in plan["methods"]:
         for seed in seeds:
             command = _plan_command(plan, method, preview=False) + [
-                f"trainer.args.seed={seed}"
+                f"++trainer.args.seed={seed}"
             ]
-            command = [
-                f"{arg}_seed{seed}" if arg.startswith("task_name=") else arg
-                for arg in command
-            ]
+            for index, argument in enumerate(command):
+                key, separator, value = argument.partition("=")
+                normalized = key.lstrip("+")
+                if separator and (
+                    normalized == "task_name" or normalized.endswith("output_dir")
+                ):
+                    # Includes ++task_name/++output_dir on multimodal routes and
+                    # explicit output overrides. Preserve quoted Hydra strings.
+                    try:
+                        decoded = json.loads(value)
+                    except json.JSONDecodeError:
+                        decoded = value
+                    command[index] = f"{key}={json.dumps(f'{decoded}_seed{seed}')}"
             command_text = shlex.join(command)
             runs.append(
                 {

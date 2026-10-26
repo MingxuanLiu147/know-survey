@@ -9,6 +9,9 @@ Run `python .claude/skills/aggregate-results/scripts/run.py <run-dir> [<run-dir>
 Inspect each run's command, resolved config, input count, trace and metric files.
 The helper reads supported summary formats and preserves null values; it does
 not infer metrics from console logs or certify a complete benchmark.
+It reads root summaries and the checkpoint selected by the saved final Trainer
+step. Metric keys retain evaluator, phase/location and the full metric name;
+intermediate checkpoints are not silently merged with the final result.
 
 Check scope and metric denominators before interpreting the aggregate. Use
 `compare-methods` for comparability checks; do not mix smoke and full runs in a
