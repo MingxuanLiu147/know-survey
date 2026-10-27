@@ -43,7 +43,7 @@ PROVIDERS = {
         "base_url": "https://api.deepseek.com",
         "base_url_env": "DEEPSEEK_BASE_URL",
         "model_env": "DEEPSEEK_AGENT_MODEL",
-        "default_model": "deepseek-chat",
+        "default_model": "deepseek-flash",
     },
 }
 

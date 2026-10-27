@@ -277,6 +277,8 @@ class JobManager:
             {"status": "running", "message": "Local process started."},
         )
         environment = os.environ.copy()
+        for key in ("OPENAI_API_KEY", "DEEPSEEK_API_KEY"):
+            environment.pop(key, None)
         environment["PYTHONUNBUFFERED"] = "1"
         environment["TOKENIZERS_PARALLELISM"] = "false"
         if record["gpu"] is not None:
