@@ -45,6 +45,27 @@ mappings, required editor checkpoints, and explicitly configured local inputs.
 A valid preview checks these prerequisites; model loading and execution still
 appear as separate run states.
 
+For standard Transformers models, preview resolves a Hugging Face model ID and
+revision to a complete local cache snapshot. The displayed command and execution
+both use that directory with local loading enabled, avoiding online metadata
+requests. Missing or incomplete local weights stop the task before execution;
+download the checkpoint separately or provide its local path. The model registry
+lists configurations, not downloaded weights.
+
+Set `HF_HOME` or `HF_HUB_CACHE` in the backend's environment to use an existing
+Hugging Face cache. A background service needs these settings in its own service
+configuration; it does not inherit variables from a later terminal session.
+`KNOW_SURGERY_MODEL_CACHE_ROOTS` optionally adds cache roots separated by the
+platform path separator. Each cache must retain its repository and revision layout.
+
+AnyEdit's MEMIT strategy also needs the configured statistics corpus when
+`mom2_adjustment=true`. Preview checks the exact Wikipedia or WikiText variant
+in the server's datasets cache (`HF_DATASETS_CACHE`, or `HF_HOME/datasets`).
+Prepare that corpus before starting the task. Precomputed covariance files are
+optional: the method can calculate them from the corpus using its configured
+budget. `max_edits` limits knowledge-edit requests, not the number of corpus rows
+used to estimate covariance; `mom2_n_samples` controls that separate budget.
+
 Open **Parameters and local paths** to edit individual Hydra overrides as a JSON
 object, for example:
 
@@ -93,6 +114,15 @@ predictions are labelled separately from generated answers. Metric details carry
 the evaluator, phase, protocol and scoring information when recorded. Comparison
 checks these settings in addition to the model, dataset and seed; results with
 missing settings are not automatically treated as equivalent.
+
+Sequential-edit history entries identify their method and edit step. When a saved
+history index links a checkpoint to its parent run, shared model, data and seed
+information comes from that run; the sample scope remains the checkpoint's scope.
+Missing checkpoint metadata stays unknown.
+
+Locality can measure whether predictions stay unchanged after editing. In that
+case, a score of 1 means the predictions agree, even if both differ from the
+reference answer. Use reliability or answer accuracy to assess correctness.
 
 ## Custom inputs
 

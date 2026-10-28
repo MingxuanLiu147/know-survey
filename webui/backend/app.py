@@ -338,7 +338,9 @@ def _response_examples() -> list[dict[str, Any]]:
     return result
 
 
-def _compose(request: ComposeRequest) -> dict[str, Any]:
+def _compose(
+    request: ComposeRequest, *, _resolve_sources: bool = True
+) -> dict[str, Any]:
     try:
         argv = catalog.build_argv(request, preview=True)
         command = catalog.command_preview(request)
@@ -370,6 +372,14 @@ def _compose(request: ComposeRequest) -> dict[str, Any]:
     }
     if result["valid"]:
         try:
+            if _resolve_sources:
+                sources = catalog.resolve_cached_sources(
+                    request, result["resolved_config"]
+                )
+                if sources["changes"]:
+                    resolved = _compose(sources["request"], _resolve_sources=False)
+                    resolved["model_sources"] = sources["changes"]
+                    return resolved
             catalog.validate_composed(request, result["resolved_config"])
             result.update(composition_identity(result["resolved_config"], ROOT))
         except CatalogError as exc:
@@ -415,7 +425,7 @@ def _start_configuration(request: RunRequest, *, abort=None) -> dict[str, Any]:
         if abort is not None and abort():
             raise TimeoutError("Session cancelled or time budget exhausted.")
         return jobs.start(
-            argv=catalog.build_argv(compose_request),
+            argv=catalog.build_argv(ComposeRequest.model_validate(composed["request"])),
             operation=request.operation,
             task_name=request.task_name,
             gpu=request.gpu,

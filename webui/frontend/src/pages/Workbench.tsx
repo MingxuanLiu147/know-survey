@@ -50,6 +50,12 @@ import type {
   Skill
 } from "../types";
 
+function configurationError(message: string, language: "en" | "zh"): string {
+  // Catalog validation messages use an English / Chinese pair.
+  const pair = message.match(/^([\s\S]+?) \/ ([\s\S]*[\u3400-\u9fff][\s\S]*)$/);
+  return displayTechnicalText(pair ? pair[language === "zh" ? 2 : 1] : message);
+}
+
 const operationIcons = {
   unlearning: Eraser,
   inject: Syringe,
@@ -1053,8 +1059,19 @@ export function Workbench() {
             </div>
 
             {composeResult && !composeResult.valid && (
-              <InlineError message={composeResult.stderr || (language === "zh" ? "配置未通过校验，请调整参数后重新预览。" : "Configuration validation failed. Update the parameters and preview again.")} />
+              <InlineError message={configurationError(composeResult.stderr, language) || (language === "zh" ? "配置未通过校验，请调整参数后重新预览。" : "Configuration validation failed. Update the parameters and preview again.")} />
             )}
+            {composeResult?.model_sources?.length ? <details className="source-details">
+              <summary>{language === "zh" ? "已匹配本地模型文件" : "Local model files located"}</summary>
+              <p className="section-description">{language === "zh"
+                ? "模型来源已解析为本地目录，预览命令和实际执行使用同一路径。"
+                : "Model sources resolve to local directories. Preview and execution use the same paths."}</p>
+              <dl className="metadata-grid">
+                {composeResult.model_sources.map((source) => <div key={source.component}>
+                  <dt>{({model: language === "zh" ? "模型" : "Model", tokenizer: language === "zh" ? "分词器" : "Tokenizer", processor: language === "zh" ? "处理器" : "Processor"} as Record<string, string>)[source.component] || source.component} · {source.source}</dt><dd className="mono">{source.path}</dd>
+                </div>)}
+              </dl>
+            </details> : null}
             {composeResult ? (
               <div
                 className={
@@ -1087,12 +1104,12 @@ export function Workbench() {
                     {composeResult.valid ? (
                       <>
                         <CheckCircle2 size={15} />
-                        {t("valid")}
+                        {language === "zh" ? "配置检查通过" : "Configuration checked"}
                       </>
                     ) : (
                       <>
                         <CircleAlert size={15} />
-                        {t("invalid")}
+                        {language === "zh" ? "配置需要调整" : "Configuration needs attention"}
                       </>
                     )}
                     <CopyButton

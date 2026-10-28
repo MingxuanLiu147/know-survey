@@ -28,7 +28,7 @@ import {
   SectionHeader,
   StatusBadge
 } from "../components/ui";
-import { displayTechnicalText, resultReasonText, uiErrorMessage, useI18n } from "../i18n";
+import { displayTechnicalText, resultReasonText, uiErrorMessage, useI18n, type Language } from "../i18n";
 import type { ResultDetail, ResultSummary } from "../types";
 
 const chartColors = [
@@ -39,6 +39,17 @@ const chartColors = [
   "var(--chart-green)",
   "var(--chart-pink)"
 ];
+
+function historyDescription(result: ResultSummary, language: Language): string | null {
+  const history = result.metadata.history;
+  if (!history || typeof history !== "object" || Array.isArray(history)) return null;
+  const recorded = history as Record<string, unknown>;
+  const descriptions: string[] = [];
+  if (typeof recorded.step === "number") descriptions.push(language === "zh" ? `步骤 ${recorded.step}` : `Step ${recorded.step}`);
+  if (recorded.reference === "pristine_model") descriptions.push(language === "zh" ? "与原始模型比较" : "Compared with the original model");
+  if (recorded.evaluation_scope === "all_successful_edits_so_far") descriptions.push(language === "zh" ? "评测截至该步骤的全部成功编辑" : "Evaluates all successful edits through this step");
+  return descriptions.join(" · ") || null;
+}
 
 interface Comparison {
   comparable: boolean;
@@ -124,6 +135,8 @@ export function Compare() {
       .map((result, index) => {
         const metric = result.metrics.find((item) => item.id === metricId);
         return {
+          id: result.id,
+          fullName: displayTechnicalText(result.name),
           name: displayTechnicalText(
             result.name.length > 26
               ? result.name.slice(0, 24) + "…"
@@ -240,6 +253,7 @@ export function Compare() {
             {!visible.length ? <p className="section-description">{language === "zh" ? "没有符合条件的结果。完成任务后可在这里选择对比。" : "No matching results. Complete a task to compare its results here."}</p> : null}
             {visible.map((result) => {
               const selected = selectedIds.includes(result.id);
+              const history = historyDescription(result, language);
               return (
                 <button
                   type="button"
@@ -257,6 +271,7 @@ export function Compare() {
                   )}
                   <div>
                     <strong>{displayTechnicalText(result.name)}</strong>
+                    {history ? <span>{history}</span> : null}
                     <span className="mono">
                       {displayTechnicalText(result.path)}
                     </span>
@@ -354,6 +369,9 @@ export function Compare() {
                       </select>
                     </label>
                   </div>
+                  {chartMetrics.length > 0 && chartMetrics.every((metric) => metric.scoring === "pre_post_token_agreement") ? <p className="section-description">{language === "zh"
+                    ? "此指标比较更新前后的逐词预测。100% 表示预测未变，不表示参考答案正确率为 100%。"
+                    : "This metric compares token predictions before and after the update. 100% means unchanged predictions, not 100% reference-answer accuracy."}</p> : null}
                   {chartCompatible ? <figure className="comparison-chart">
                     <ResponsiveContainer width="100%" height={300}>
                       <BarChart
@@ -387,6 +405,7 @@ export function Compare() {
                           tickLine={false}
                         />
                         <Tooltip
+                          labelFormatter={(_label, payload) => payload[0]?.payload?.fullName || _label}
                           formatter={(_value, _name, item) => [
                             item.payload.formatted,
                             metricLabel(metricId)
@@ -404,7 +423,7 @@ export function Compare() {
                           maxBarSize={54}
                         >
                           {chartData.map((item) => (
-                            <Cell key={item.name} fill={item.color} />
+                            <Cell key={item.id} fill={item.color} />
                           ))}
                         </Bar>
                       </BarChart>
@@ -426,6 +445,7 @@ export function Compare() {
                           <tr key={result.id}>
                             <td>
                               <strong>{displayTechnicalText(result.name)}</strong>
+                              {historyDescription(result, language) ? <p className="muted">{historyDescription(result, language)}</p> : null}
                               <StatusBadge
                                 level={result.evidence_level}
                                 compact

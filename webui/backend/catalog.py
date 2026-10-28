@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
 import sys
 from pathlib import Path, PurePosixPath
 from typing import Any
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -536,6 +538,7 @@ class RepositoryCatalog:
                 )
         if request.operation != "edit":
             return
+        self._validate_statistics_corpus(handler, method)
         checkpoint_field = None
         if handler == "MENDEditor" and method.get("require_pretrained", True):
             checkpoint_field = "edit_network_path"
@@ -584,6 +587,254 @@ class RepositoryCatalog:
                     "编辑层映射与所选模型不匹配，请使用对应模型的实验配置或修改层映射。"
                 )
 
+    @staticmethod
+    def _validate_statistics_corpus(handler: str, method: dict[str, Any]) -> None:
+        """Reject missing known AnyEdit corpora without collecting statistics."""
+        if (
+            handler != "AnyEditEditor"
+            or not method.get("mom2_adjustment", True)
+            or method.get("strategy", "memit") not in {"memit", "memit_are"}
+        ):
+            return
+        corpus = method.get("mom2_dataset", "wikipedia")
+        defaults = {
+            "wikipedia": "20220301.en",
+            "wikitext": "wikitext-103-raw-v1",
+        }
+        if corpus not in defaults:
+            return  # Custom dataset loaders have their own input contracts.
+        dataset_config = method.get("mom2_dataset_config") or defaults[corpus]
+        hf_home = Path(
+            os.getenv("HF_HOME")
+            or Path(os.getenv("XDG_CACHE_HOME") or Path.home() / ".cache")
+            / "huggingface"
+        ).expanduser()
+        cache = Path(
+            os.getenv("HF_DATASETS_CACHE") or hf_home / "datasets"
+        ).expanduser()
+        # Prepared HF datasets record their exact configuration and train shard
+        # layout here. Lock files, other configurations and old mom2 .npz files
+        # are not evidence that the requested corpus is locally available.
+        if isinstance(dataset_config, str) and PurePosixPath(dataset_config).parts == (
+            dataset_config,
+        ):
+            for info_path in (cache / corpus / dataset_config).glob(
+                "*/*/dataset_info.json"
+            ):
+                try:
+                    info = json.loads(info_path.read_text())
+                    train = info.get("splits", {}).get("train", {})
+                    if (
+                        info.get("config_name") != dataset_config
+                        or train.get("num_examples", 0) <= 0
+                    ):
+                        continue
+                    from datasets.naming import filenames_for_dataset_split
+
+                    files = filenames_for_dataset_split(
+                        str(info_path.parent),
+                        info.get("dataset_name") or info.get("builder_name") or corpus,
+                        "train",
+                        filetype_suffix="arrow",
+                        shard_lengths=train.get("shard_lengths"),
+                    )
+                    if files and all(
+                        Path(file).is_file() and Path(file).stat().st_size > 0
+                        for file in files
+                    ):
+                        return
+                except (OSError, ValueError, TypeError, AttributeError):
+                    continue
+        raise CatalogError(
+            f"AnyEdit needs the {corpus}/{dataset_config} statistics corpus. "
+            "Prepare its complete train split in the server's Hugging Face datasets cache first. "
+            "max_edits limits edited cases, not covariance corpus collection. / "
+            f"AnyEdit 需要 {corpus}/{dataset_config} 统计语料，请先准备服务端 "
+            "Hugging Face 数据缓存中的完整 train 数据。max_edits 只限制编辑数，"
+            "不限制协方差语料；无需提前生成协方差统计。"
+        )
+
+    @staticmethod
+    def _model_cache_roots(args: dict[str, Any]) -> list[Path]:
+        """Return configured Hugging Face caches, without machine-specific defaults."""
+        hf_home = Path(
+            os.getenv("HF_HOME")
+            or Path(os.getenv("XDG_CACHE_HOME") or Path.home() / ".cache")
+            / "huggingface"
+        ).expanduser()
+        candidates = [
+            args.get("cache_dir"),
+            os.getenv("HF_HUB_CACHE"),
+            os.getenv("HUGGINGFACE_HUB_CACHE"),
+            os.getenv("TRANSFORMERS_CACHE"),
+            hf_home / "hub",
+            hf_home,
+        ]
+        for value in os.getenv("KNOW_SURGERY_MODEL_CACHE_ROOTS", "").split(os.pathsep):
+            if value:
+                candidates.extend([Path(value), Path(value) / "hub"])
+        return list(
+            dict.fromkeys(Path(value).expanduser() for value in candidates if value)
+        )
+
+    @staticmethod
+    def _has_tokenizer_files(path: Path) -> bool:
+        def exists(name):
+            file = path / name
+            return file.is_file() and file.stat().st_size > 0
+
+        return any(
+            exists(name)
+            for name in (
+                "tokenizer.json",
+                "tokenizer.model",
+                "spiece.model",
+                "vocab.txt",
+            )
+        ) or (exists("vocab.json") and exists("merges.txt"))
+
+    def resolve_cached_sources(
+        self, request: ComposeRequest, resolved_config: str
+    ) -> dict[str, Any]:
+        """Pin standard model/tokenizer sources to complete, exact local HF snapshots.
+
+        This is a filesystem-only preflight. It neither downloads weights nor
+        chooses a different repository/revision when the requested one is absent.
+        The caller must recompose the returned request and execute that request.
+        """
+        from huggingface_hub import try_to_load_from_cache
+
+        config = yaml.safe_load(resolved_config)
+        model = config.get("model") or {}
+        handler = model.get("model_handler", "AutoModelForCausalLM")
+        args = model.get("model_args") or model
+        if handler not in {
+            "AutoModelForCausalLM",
+            "ProbedLlamaForCausalLM",
+        } or args.get("trust_remote_code"):
+            return {"request": request, "changes": []}
+        if model.get("model_args"):
+            components = [
+                ("model", "model.model_args", "pretrained_model_name_or_path", args),
+                (
+                    "tokenizer",
+                    "model.tokenizer_args",
+                    "pretrained_model_name_or_path",
+                    model.get("tokenizer_args") or {},
+                ),
+            ]
+        else:
+            components = [
+                ("model", "model", "model_path", model),
+                ("processor", "model", "processor_path", model),
+            ]
+        overrides = dict(request.overrides)
+        changes = []
+        for component, prefix, source_key, component_args in components:
+            source = component_args.get(source_key)
+            if component == "processor" and not source:
+                source = model.get("model_path")
+            if not isinstance(source, str) or not source:
+                continue
+            if "${" in source:
+                raise CatalogError(
+                    f"Resolve the {component} source before execution. / 请先明确模型或分词器的实际路径。"
+                )
+            local = self.root / Path(source).expanduser()
+            if source.startswith(("/", "./", "../", "~/")) or local.exists():
+                continue
+            revision = str(component_args.get("revision") or "main")
+            subfolder = str(component_args.get("subfolder") or "")
+            if (
+                urlsplit(source).scheme
+                or ".." in PurePosixPath(revision).parts
+                or ".." in PurePosixPath(subfolder).parts
+            ):
+                raise CatalogError(
+                    f"Use an existing local directory or a cached Hugging Face ID for {component}. / "
+                    "请选择本地完整目录或已缓存的 Hugging Face 标识。"
+                )
+            selected = None
+            filenames = (
+                ["config.json"]
+                if component == "model"
+                else ["tokenizer_config.json", "config.json", "tokenizer.json"]
+            )
+            for cache in self._model_cache_roots(component_args):
+                for filename in filenames:
+                    cached = try_to_load_from_cache(
+                        source,
+                        str(PurePosixPath(subfolder) / filename),
+                        cache_dir=cache,
+                        revision=revision,
+                    )
+                    if not isinstance(cached, str):
+                        continue
+                    directory = Path(cached).parent
+                    snapshot = directory
+                    for _ in PurePosixPath(subfolder).parts:
+                        snapshot = snapshot.parent
+                    if component == "model":
+                        local_model = dict(model)
+                        if model.get("model_args"):
+                            local_model["model_args"] = {
+                                **args,
+                                source_key: str(snapshot),
+                            }
+                        else:
+                            local_model[source_key] = str(snapshot)
+                        try:
+                            self._validate_local_model_weights(local_model)
+                        except CatalogError:
+                            continue
+                    elif not self._has_tokenizer_files(directory):
+                        continue
+                    if component == "processor" and not any(
+                        (directory / name).is_file()
+                        for name in (
+                            "processor_config.json",
+                            "preprocessor_config.json",
+                        )
+                    ):
+                        continue
+                    selected = snapshot
+                    break
+                if selected is not None:
+                    break
+            if selected is None:
+                raise CatalogError(
+                    f"No complete local {component} cache for {source}@{revision}. "
+                    "Select a complete local directory or prepare this exact model in a configured HF cache; "
+                    "the workbench does not download model files when launching a run. / "
+                    f"未找到 {source}@{revision} 的完整本地模型或分词器缓存。"
+                    "请填写完整本地路径，或先准备对应版本的缓存；启动任务时不会自动下载模型。"
+                )
+            # Replace existing spellings of the same Hydra override rather than
+            # retaining a stale explicit source before the newly pinned one.
+            fields = {
+                f"{prefix}.{source_key}": str(selected),
+                f"{prefix}.local_files_only": True,
+            }
+            for key, value in fields.items():
+                overrides = {
+                    old: item
+                    for old, item in overrides.items()
+                    if old.lstrip("+") != key
+                }
+                overrides[f"++{key}"] = value
+            changes.append(
+                {
+                    "component": component,
+                    "source": source,
+                    "path": str(selected),
+                    "revision": selected.name,
+                }
+            )
+        updated = (
+            request.model_copy(update={"overrides": overrides}) if changes else request
+        )
+        return {"request": updated, "changes": changes}
+
     def _validate_local_model_weights(self, model: dict[str, Any]) -> None:
         """Check explicit local Transformers sources without downloading weights."""
         handler = model.get("model_handler", "AutoModelForCausalLM")
@@ -612,45 +863,57 @@ class RepositoryCatalog:
             raise CatalogError(
                 "Local model directory does not exist. / 本地模型目录不存在，请检查模型路径。"
             )
-        names = {
-            "model.safetensors",
-            "pytorch_model.bin",
-            "tf_model.h5",
-            "model.ckpt.index",
-            "flax_model.msgpack",
-        }
         variant = args.get("variant")
-        if variant:
-            names.update(
-                {f"model.{variant}.safetensors", f"pytorch_model.{variant}.bin"}
-            )
+
+        def weight_name(name: str) -> str:
+            # Match Transformers' variant placement, including index.fp16.json.
+            stem, suffix = name.rsplit(".", 1)
+            return f"{stem}.{variant}.{suffix}" if variant is not None else name
+
+        names, indexes = set(), set()
         if args.get("gguf_file"):
             names.add(str(args["gguf_file"]))
-        if (path / "adapter_config.json").is_file():
-            names.update({"adapter_model.safetensors", "adapter_model.bin"})
+        elif args.get("from_tf"):
+            names.update({"tf_model.h5", "model.ckpt.index"})
+        elif args.get("from_flax"):
+            names.add("flax_model.msgpack")
+        else:
+            use_safetensors = args.get("use_safetensors")
+            if use_safetensors is not False:
+                names.add(weight_name("model.safetensors"))
+                indexes.add(weight_name("model.safetensors.index.json"))
+            if not use_safetensors:
+                names.add(weight_name("pytorch_model.bin"))
+                indexes.add(weight_name("pytorch_model.bin.index.json"))
+            if (path / "adapter_config.json").is_file():
+                if use_safetensors is not False:
+                    names.add("adapter_model.safetensors")
+                if not use_safetensors:
+                    names.add("adapter_model.bin")
         if any(
             (path / name).is_file() and (path / name).stat().st_size for name in names
         ):
             return
-        for pattern in ("model*.index*.json", "pytorch_model*.index*.json"):
-            for index in path.glob(pattern):
-                try:
-                    shards = set(
-                        json.loads(index.read_text()).get("weight_map", {}).values()
-                    )
-                except (OSError, ValueError, TypeError, AttributeError):
-                    continue
-                if shards and all(
-                    isinstance(shard, str)
-                    and (path / shard).is_file()
-                    and (path / shard).stat().st_size
-                    for shard in shards
-                ):
-                    return
+        for name in indexes:
+            index = path / name
+            try:
+                shards = set(
+                    json.loads(index.read_text()).get("weight_map", {}).values()
+                )
+            except (OSError, ValueError, TypeError, AttributeError):
+                continue
+            if shards and all(
+                isinstance(shard, str)
+                and (path / shard).is_file()
+                and (path / shard).stat().st_size
+                for shard in shards
+            ):
+                return
         raise CatalogError(
-            "Local model directory has no complete model weights or adapter weights; "
-            "config/tokenizer files alone cannot load a model. Select a complete checkpoint. / "
-            "本地模型目录缺少完整权重，只有配置或分词器文件无法加载模型，请选择已完整保存的模型。"
+            "Local model directory has no complete weights matching the requested variant/format; "
+            "check variant, use_safetensors, from_tf/from_flax and checkpoint files. / "
+            "本地模型目录缺少与所选版本和格式匹配的完整权重，请检查 variant、"
+            "use_safetensors、from_tf/from_flax 与权重文件；只有配置或分词器文件无法加载模型。"
         )
 
     @staticmethod

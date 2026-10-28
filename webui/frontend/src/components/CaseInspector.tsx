@@ -96,11 +96,16 @@ export function CaseInspector({ results, metricId }: { results: ResultSummary[];
           {page.cases.map((item, index) => {
             const teacherForced = item.measurement_kind?.startsWith("teacher_forced") === true;
             const metric = activeResult?.metrics.find((candidate) => candidate.id === item.metric_id);
+            const predictionAgreement = (item.scoring ?? metric?.scoring) === "pre_post_token_agreement";
             const nll = item.measurement_kind === "target_token_nll" || metric?.unit === "nll";
             const hasText = [item.prompt, item.expected, item.before, item.after].some((value) => typeof value === "string");
             const hasScore = [item.before_score, item.after_score, item.score].some((value) => value !== null && value !== undefined);
             const pairedScores = item.before_score !== null && item.before_score !== undefined && item.after_score !== null && item.after_score !== undefined;
-            const scoreColumns = pairedScores
+            const agreementScore = item.score ?? item.after_score;
+            const scoreColumns = predictionAgreement
+              ? (agreementScore !== null && agreementScore !== undefined
+                ? [{ label: zh ? "前后预测一致率" : "Prediction agreement", value: agreementScore, change: false }] : [])
+              : pairedScores
               ? [
                 { label: zh ? "更新前" : "Before", value: item.before_score!, change: false },
                 { label: zh ? "更新后" : "After", value: item.after_score!, change: false },
@@ -112,10 +117,14 @@ export function CaseInspector({ results, metricId }: { results: ResultSummary[];
                 ...(item.after_score !== null && item.after_score !== undefined || item.score !== null && item.score !== undefined
                   ? [{ label: zh ? "样本指标" : "Score", value: (item.after_score ?? item.score)!, change: false }] : [])
               ];
-            const scoreLabel = nll
+            const scoreLabel = predictionAgreement
+              ? (zh ? "局部性 · 更新前后预测一致率" : "Locality · prediction agreement before and after")
+              : nll
               ? (item.group === "retain" ? (zh ? "保留集 · 目标答案 NLL" : "Retain set · target NLL") : item.group === "forget" ? (zh ? "遗忘集 · 目标答案 NLL" : "Forget set · target NLL") : (zh ? "目标答案 NLL" : "Target NLL"))
               : metric ? metricDisplayLabel(metric, activeResult?.metrics || [], language) : displayTechnicalText(item.metric_id);
-            const scoreDirection = nll && item.group === "retain"
+            const scoreDirection = predictionAgreement
+              ? (zh ? "1 表示前后逐词预测完全一致，0 表示没有一致词元；即使两次预测都不正确，也可能得到 1。" : "1 means all token predictions stayed the same; 0 means none matched. Two incorrect predictions can still score 1 if they are unchanged.")
+              : nll && item.group === "retain"
               ? (zh ? "保留集：更新后接近更新前为宜；NLL 上升表示参考答案的概率下降。" : "Retain set: prefer little change; a higher NLL means a lower probability for the reference answer.")
               : nll && item.group === "forget"
                 ? (zh ? "遗忘集：NLL 上升表示参考答案的概率下降；同时查看保留集变化。" : "Forget set: a higher NLL means a lower probability for the reference answer; also inspect changes on the retain set.")
@@ -129,10 +138,12 @@ export function CaseInspector({ results, metricId }: { results: ResultSummary[];
             return <article className="case-record" key={item.id}>
               <div className="subsection-title">
                 <h4>{zh ? "样本" : "Example"} {offset + index + 1}</h4>
-                <span className="muted">{({correct: zh ? "正确" : "Correct", incorrect: zh ? "不正确" : "Incorrect", measured: zh ? "已计算指标" : "Measured", recorded: zh ? "已记录输出" : "Recorded", unavailable: zh ? "结果不可用" : "Unavailable"} as Record<string, string>)[item.status] || ""}</span>
+                <span className="muted">{predictionAgreement && agreementScore !== null && agreementScore !== undefined
+                  ? (agreementScore === 1 ? (zh ? "预测未变" : "Predictions unchanged") : (zh ? "预测有变化" : "Predictions changed"))
+                  : ({correct: zh ? "正确" : "Correct", incorrect: zh ? "不正确" : "Incorrect", measured: zh ? "已计算指标" : "Measured", recorded: zh ? "已记录输出" : "Recorded", unavailable: zh ? "结果不可用" : "Unavailable"} as Record<string, string>)[item.status] || ""}</span>
               </div>
               {typeof item.prompt === "string" ? <div className="case-prompt"><strong>{zh ? "输入" : "Input"}</strong><p>{item.prompt || (zh ? "（空文本）" : "(Empty text)")}</p></div> : null}
-              {typeof item.expected === "string" ? <div className="case-prompt"><strong>{zh ? "参考答案" : "Reference answer"}</strong><p>{item.expected || (zh ? "（空文本）" : "(Empty text)")}</p></div> : null}
+              {typeof item.expected === "string" ? <div className="case-prompt"><strong>{predictionAgreement ? (zh ? "参考答案（用于逐词评测）" : "Reference answer (for token evaluation)") : (zh ? "参考答案" : "Reference answer")}</strong><p>{item.expected || (zh ? "（空文本）" : "(Empty text)")}</p></div> : null}
               {teacherForced && (typeof item.before === "string" || typeof item.after === "string") ? <p className="section-description">{zh ? "逐词预测使用给定的参考上下文，与自由生成回答分别统计。" : "Token predictions use the provided reference context and are measured separately from free generation."}</p> : null}
               {typeof item.before === "string" || typeof item.after === "string" ? <div className="answer-grid">{renderAnswer(item.before, true)}{renderAnswer(item.after, false)}</div> : null}
               {hasScore ? <>

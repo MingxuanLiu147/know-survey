@@ -81,12 +81,13 @@ def get_model(model_cfg: DictConfig):
     with open_dict(model_args):
         # 模型路径单独取出，不与通用 kwargs 混在一起。
         model_path = model_args.pop("pretrained_model_name_or_path", None)
+        cache_dir = model_args.pop("cache_dir", hf_home)
     try:
         model = model_cls.from_pretrained(
             pretrained_model_name_or_path=model_path,
             torch_dtype=torch_dtype,
             **model_args,
-            cache_dir=hf_home,
+            cache_dir=cache_dir,
         )
     except Exception as e:
         logger.warning(f"Model {model_path} requested with {model_cfg.model_args}")
@@ -118,8 +119,10 @@ def _add_or_replace_eos_token(tokenizer, eos_token: str) -> None:
 
 def get_tokenizer(tokenizer_cfg: DictConfig):
     """加载分词器，并补齐最基本的特殊 token 安全默认值。"""
+    tokenizer_args = dict(tokenizer_cfg)
+    cache_dir = tokenizer_args.pop("cache_dir", hf_home)
     try:
-        tokenizer = AutoTokenizer.from_pretrained(**tokenizer_cfg, cache_dir=hf_home)
+        tokenizer = AutoTokenizer.from_pretrained(**tokenizer_args, cache_dir=cache_dir)
     except Exception as e:
         error_message = (
             f"{'--' * 40}\n"

@@ -108,6 +108,12 @@ export interface ComposePayload {
 
 export interface ComposeResult {
   preview_hash?: string;
+  model_sources?: Array<{
+    component: string;
+    source: string;
+    path: string;
+    revision?: string | null;
+  }>;
   valid: boolean;
   returncode: number;
   command: string;

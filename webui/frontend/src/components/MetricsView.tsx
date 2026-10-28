@@ -81,7 +81,7 @@ export function metricDisplayLabel(metric: Metric, metrics: Metric[], language: 
     run_trace: { en: "Run measurements", zh: "运行测量" }
   };
   const phases: Record<string, { en: string; zh: string }> = {
-    run: { en: "This run", zh: "本次运行" },
+    run: { en: "Run summary", zh: "运行汇总" },
     before: { en: "Before", zh: "更新前" },
     after: { en: "After", zh: "更新后" },
     pre: { en: "Before", zh: "更新前" },
@@ -89,8 +89,9 @@ export function metricDisplayLabel(metric: Metric, metrics: Metric[], language: 
   };
   const evaluator = metric.evaluator ? evaluators[metric.evaluator]?.[language] || metric.evaluator : (language === "zh" ? "来源未记录" : "Source not recorded");
   const phase = metric.phase ? phases[metric.phase]?.[language] || metric.phase : (language === "zh" ? "阶段未记录" : "Phase not recorded");
+  const distinguishPhase = new Set(matching.map((item) => item.phase)).size > 1;
   const sameSource = matching.some((item) => item.id !== metric.id && item.evaluator === metric.evaluator && item.phase === metric.phase);
-  return displayTechnicalText(`${label} · ${evaluator} / ${phase}${sameSource ? ` · ${metric.id}` : ""}`);
+  return displayTechnicalText(`${label} · ${evaluator}${distinguishPhase ? ` / ${phase}` : ""}${sameSource ? ` · ${metric.id}` : ""}`);
 }
 
 export function MetricsView({
@@ -141,6 +142,9 @@ export function MetricsView({
               <Direction metric={metric} />
               <span>{t(metric.category)}</span>
             </div>
+            {metric.scoring === "pre_post_token_agreement" ? <p className="section-description">{language === "zh"
+              ? "衡量更新前后预测是否一致；保持不变不等于回答正确。"
+              : "Measures whether predictions stay unchanged, not whether the answers are correct."}</p> : null}
             {metric.unavailable_reason ? <details className="source-details">
               <summary>{language === "zh" ? "查看原因" : "View reason"}</summary>
               <p>{resultReasonText(metric.unavailable_reason, language)}</p>

@@ -227,16 +227,106 @@ def _candidate_dirs(root: Path) -> list[Path]:
     )
 
 
+def _history_link(run_dir: Path) -> tuple[Path, dict[str, Any]] | None:
+    """Link a saved evaluation to its parent only through a matching history index."""
+    history_dir = run_dir.parent
+    if (
+        history_dir.name != "history"
+        or run_dir.resolve().parent != history_dir.resolve()
+    ):
+        return None
+    index_path = history_dir / "index.json"
+    if index_path.resolve().parent != history_dir.resolve():
+        return None
+    index = _read_json(index_path)
+    records = index.get("checkpoints")
+    if index.get("schema_version") != 1 or not isinstance(records, list):
+        return None
+    matches = [
+        record
+        for record in records
+        if isinstance(record, dict) and record.get("artifacts_dir") == run_dir.name
+    ]
+    if len(matches) != 1:
+        return None
+    record = matches[0]
+    step, indices = record.get("step"), record.get("evaluated_request_indices")
+    if (
+        type(step) is not int
+        or step <= 0
+        or not isinstance(indices, list)
+        or not indices
+        or len(indices) > step
+        or any(
+            type(value) is not int or value < 0 or value >= step for value in indices
+        )
+        or len(set(indices)) != len(indices)
+        or not isinstance(record.get("evaluation_scope"), str)
+        or not record["evaluation_scope"]
+    ):
+        return None
+    summary_path = run_dir / "edit_SUMMARY.json"
+    if summary_path.resolve().parent != run_dir.resolve():
+        return None
+    summary = _read_json(summary_path)
+    if not summary or summary != record.get("summary"):
+        return None
+    return history_dir.parent, {
+        "step": step,
+        "reference": index.get("reference"),
+        "evaluation_scope": record["evaluation_scope"],
+        "evaluated_request_indices": indices,
+        "parent_run": history_dir.parent.name,
+        "index_source": "history/index.json",
+    }
+
+
 def _resolved_metadata(run_dir: Path) -> dict[str, Any]:
+    config_name = "resolved_config.yaml"
     config = _read_yaml(run_dir / "resolved_config.yaml")
     if not config:
+        config_name = ".hydra/config.yaml"
         config = _read_yaml(run_dir / ".hydra" / "config.yaml")
+    history_link = _history_link(run_dir)
+    source_dir = run_dir
+    if history_link and not config:
+        source_dir = history_link[0]
+        config_name = "resolved_config.yaml"
+        config = _read_yaml(source_dir / "resolved_config.yaml")
+        if not config:
+            config_name = ".hydra/config.yaml"
+            config = _read_yaml(source_dir / ".hydra" / "config.yaml")
     model = config.get("model") if isinstance(config.get("model"), dict) else {}
     model_args = (
         model.get("model_args") if isinstance(model.get("model_args"), dict) else {}
     )
     trainer = config.get("trainer") if isinstance(config.get("trainer"), dict) else {}
     data = config.get("data") if isinstance(config.get("data"), dict) else {}
+    comparison = _comparison_metadata(source_dir, config)
+    if history_link:
+        history = history_link[1]
+        comparison.update(
+            {
+                "scope": {
+                    key: history[key]
+                    for key in (
+                        "step",
+                        "reference",
+                        "evaluation_scope",
+                        "evaluated_request_indices",
+                    )
+                },
+                "request_count": len(history["evaluated_request_indices"]),
+                "budget": {
+                    "edits_applied": history["step"],
+                    **(comparison.get("budget") or {}),
+                },
+                # A completed parent does not turn a prefix into its final benchmark.
+                "complete_benchmark": _read_json(run_dir / "input_manifest.json").get(
+                    "complete_benchmark"
+                ),
+            }
+        )
     return {
         "model": model_args.get("pretrained_model_name_or_path")
         or model.get("name")
@@ -252,13 +342,27 @@ def _resolved_metadata(run_dir: Path) -> dict[str, Any]:
             for name in datasets
         )
         or None,
-        "task_name": config.get("task_name") or run_dir.name,
+        "task_name": run_dir.name
+        if history_link
+        else config.get("task_name") or run_dir.name,
         "seed": (
             trainer.get("args", {}).get("seed")
             if isinstance(trainer.get("args"), dict)
             else None
         ),
-        "comparison": _comparison_metadata(run_dir, config),
+        "comparison": comparison,
+        **(
+            {
+                "history": history_link[1],
+                "metadata_source": (
+                    ("../../" if source_dir != run_dir else "") + config_name
+                )
+                if config
+                else None,
+            }
+            if history_link
+            else {}
+        ),
     }
 
 
@@ -631,6 +735,41 @@ def _metric_context(
             result["measurement_kind"] = "generation"
         elif "value_by_index" in context:
             result["measurement_kind"] = "per_example_score"
+    if (
+        key == "locality"
+        and not result["scoring"]
+        and isinstance(examples, list)
+        and examples
+    ):
+
+        def records_token_agreement(item: Any) -> bool:
+            if not isinstance(item, dict):
+                return False
+            before = item.get("pre_prediction_token_ids")
+            after = item.get("post_prediction_token_ids")
+            if (
+                not isinstance(before, list)
+                or not before
+                or not isinstance(after, list)
+            ):
+                return False
+            if any(type(token) is not int for token in before + after):
+                return False
+            matches = sum(left == right for left, right in zip(before, after))
+            score = item.get("score")
+            return (
+                type(item.get("matching_tokens")) is int
+                and item["matching_tokens"] == matches
+                and type(item.get("total_pre_edit_tokens")) is int
+                and item["total_pre_edit_tokens"] == len(before)
+                and type(score) in (int, float)
+                and math.isclose(
+                    score, matches / len(before), rel_tol=1e-6, abs_tol=1e-8
+                )
+            )
+
+        if all(records_token_agreement(item) for item in examples):
+            result["scoring"] = "pre_post_token_agreement"
     if result["protocol_version"] == "inject-v2":
         counts = {
             "task_accuracy": ("correct", "total"),
@@ -894,7 +1033,9 @@ def _run_status(run_dir: Path) -> str:
             or artifact.get("status") in {"failed", "error", "interrupted", "stopped"}
         ):
             return "failed"
-    return trace.get("status") or "configured"
+    return trace.get("status") or (
+        "completed" if _history_link(run_dir) else "configured"
+    )
 
 
 def run_evidence(run_dir: Path, metrics: list[dict[str, Any]] | None = None) -> str:
@@ -926,20 +1067,22 @@ def run_evidence(run_dir: Path, metrics: list[dict[str, Any]] | None = None) -> 
 def _timeline(run_dir: Path, metrics: list[dict[str, Any]]) -> list[dict[str, Any]]:
     status = _run_status(run_dir)
     execution_success = status in {"success", "completed"}
+    history_link = _history_link(run_dir)
+    metadata_dir = history_link[0] if history_link else run_dir
     return [
         {
             "id": "input",
             "label": {"en": "Input manifest", "zh": "输入清单"},
             "status": "completed"
-            if (run_dir / "input_manifest.json").is_file()
+            if (metadata_dir / "input_manifest.json").is_file()
             else "missing",
         },
         {
             "id": "compose",
             "label": {"en": "Resolved config", "zh": "配置解析"},
             "status": "completed"
-            if (run_dir / "resolved_config.yaml").is_file()
-            or (run_dir / ".hydra" / "config.yaml").is_file()
+            if (metadata_dir / "resolved_config.yaml").is_file()
+            or (metadata_dir / ".hydra" / "config.yaml").is_file()
             else "missing",
         },
         {
@@ -977,6 +1120,12 @@ class ResultStore:
     def detail_for_path(self, run_dir: Path) -> dict[str, Any]:
         relative = _relative(run_dir, self.root)
         metrics = _scalar_metrics(run_dir)
+        metadata = _resolved_metadata(run_dir)
+        history = metadata.get("history")
+        name = run_dir.name
+        if history:
+            method = metadata.get("trainer") or history["parent_run"]
+            name = f"{str(method).removesuffix('Editor')} · step {history['step']}"
         trace = _read_json(run_dir / "run_trace.json")
         unlearning = _read_json(run_dir / "unlearning_metrics.json")
         files = sorted(
@@ -1001,15 +1150,17 @@ class ResultStore:
             warnings.append("Some metrics do not record protocol or scoring metadata.")
         return {
             "id": _result_id(relative),
-            "name": run_dir.name,
+            "name": name,
             "path": relative,
             "operation": _operation(relative),
             "evidence_level": run_evidence(run_dir, metrics),
             "status": _run_status(run_dir),
             "updated_at": run_dir.stat().st_mtime,
             "metadata": {
-                **_resolved_metadata(run_dir),
-                "scope": unlearning.get("scope"),
+                **metadata,
+                "scope": history["evaluation_scope"]
+                if history
+                else unlearning.get("scope"),
                 "finished_at": trace.get("finished_at_utc"),
             },
             "metrics": metrics,
