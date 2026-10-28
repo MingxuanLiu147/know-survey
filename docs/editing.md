@@ -4,6 +4,21 @@
 
 All commands below are run from the repository root. Replace `/path/to/...` with your own model and data paths. Start with `--cfg job`; remove it only after the inputs and method parameters are ready. Choose an available GPU with `CUDA_VISIBLE_DEVICES`.
 
+Locality evaluation keeps a pristine reference model on CPU by default
+(`edit_reference_device=cpu`). When the editing model uses FlashAttention, the CPU
+copy switches to eager attention; the editing model retains its original attention
+implementation. Models that cannot switch attention dynamically require a compatible
+model implementation or an explicit CUDA reference device, such as
+`edit_reference_device=cuda:1`.
+
+Independent multimodal runs with `resume_independent=true` reuse cases only when
+the configuration, loaded checkpoint, processor and request contents match
+`independent_identity.json`. Image checks include pixels in edit, rephrase and
+locality probes, so replacing an image or checkpoint at the same path invalidates
+the resume. The checkpoint is hashed once per invocation, before editing. Use a
+new output directory for changed inputs or older runs without this content identity;
+their existing results are preserved.
+
 ## Choose a method
 
 | Method / trainer | Required preparation | Typical use |
@@ -23,7 +38,7 @@ The same dataset can be reused through its adapter. Supported modes and model ma
 
 ## ROME, MEMIT and AlphaEdit
 
-The default trainer configurations use `implementation_variant=native_adapted`. Explicit reference profiles are `ROME_Official`, `MEMIT_Official` and `AlphaEdit_Official`. They select method-specific target optimization, context generation and update formulas. Model adapters remain necessary.
+For new ROME/MEMIT reproductions, select `ROME_Official` or `MEMIT_Official`. These profiles implement the original authors' target optimization, context generation and update formulas. `AlphaEdit_Official` supplies the corresponding AlphaEdit profile. The default trainer configurations retain `implementation_variant=native_adapted` for existing experiments; select the reference profile explicitly. Model adapters remain necessary.
 
 The complete GPT-2 and GPT-2-XL experiments are under `configs/experiment/edit/official/`:
 
@@ -36,6 +51,33 @@ know-surgery operation=edit experiment=edit/official/gpt2_rome \
 ```
 
 Change the experiment to `edit/official/gpt2_memit` or `edit/official/gpt2_alphaedit` for the corresponding method. Select `edit_type=batch` for one method call with multiple requests, or `edit_type=sequential` for cumulative updates. Reference profiles describe mechanisms, not a guarantee of published benchmark scores.
+
+The `gpt2-xl_rome` and `gpt2-xl_memit` experiments load weights in FP32, matching the original authors' model-loading precision. Their smaller `gpt2_*` counterparts adapt the same algorithms to GPT-2. When a subject appears more than once, use a prompt such as `Paris and {} are different` with `subject=Paris` to identify the intended occurrence. The inserted subject is used consistently for target optimization and key extraction, including when generated context also mentions it. Plain prompts without `{}` retain first-occurrence selection.
+
+CounterFact adapters retain this template automatically. Canonical records can also provide an expanded `prompt` plus a matching `prompt_template`; displayed questions and evaluation continue to use the expanded prompt.
+
+### Qwen2.5-3B on zsRE
+
+Use `edit/zsre/qwen25_3b/rome` or `edit/zsre/qwen25_3b/memit`. These existing recipe names now select `ROME_Official` and `MEMIT_Official` directly; they do not inherit the Qwen7B experiments. Leave `trainer` unset in direct CLI commands so the experiment selects its reference implementation. Skill and WebUI plans selecting ROME or MEMIT for this model/dataset use the same recipes and reference profiles.
+
+Both recipes use the same Qwen2.5-3B-Instruct checkpoint, BF16/eager attention, seed 42, zsRE test split, 1,301 independent edits, and `edit_benchmark` evaluator (Reliability, Generalization, Locality and Portability). Each edit restores the original model. The editable layers remain ROME `[5]` and MEMIT `[4,5,6,7,8]`; the loss readout is configured at block 35 for Qwen3B's 36-block architecture. ROME evaluates final logits, while MEMIT uses the reference intermediate readout.
+
+The reference profiles supply target optimization (20 steps, learning rate 0.5, weight decay 0.5), edited-to-base KL, generated contexts, and real Wikipedia `20200501.en` second moments from 100,000 sampled texts (statistics seed 1). MEMIT uses preservation weight 20,000 and clamp factor 0.75. These are the reference algorithms adapted to Qwen, not published Qwen3B benchmark scores from the original authors.
+
+Preview the exact configuration before execution:
+
+```bash
+know-surgery operation=edit experiment=edit/zsre/qwen25_3b/rome \
+  task_name=qwen3b_zsre_rome_reference \
+  model.model_args.pretrained_model_name_or_path=/path/to/Qwen2.5-3B-Instruct \
+  model.tokenizer_args.pretrained_model_name_or_path=/path/to/Qwen2.5-3B-Instruct \
+  data.edit.ZSRE_edit.args.data_path=/path/to/zsre-test-1301.json \
+  --cfg job
+```
+
+Use `edit/zsre/qwen25_3b/memit` and a new task name for MEMIT. The dataset must contain 1,301 normalized cases and match SHA256 `0e0214dda853a906ef02bef58c7ce2978af5a962e91fc4a10827e0125459905c`, the zsRE snapshot used by this benchmark. The loader rejects changed or short example files instead of silently evaluating fewer cases. To use another dataset, explicitly update `expected_sha256` and `expected_num_samples` and report it as a different setting.
+
+Keep the same model and dataset snapshots across methods. Existing results retain their saved configuration; changing a recipe does not update their metrics. Report new results only after a complete run, using its saved `resolved_config.yaml`, input manifest and per-case metrics.
 
 Important `trainer.method_args` settings:
 

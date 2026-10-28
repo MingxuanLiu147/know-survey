@@ -1,10 +1,45 @@
 # @package _global_
-# Qwen2.5-3B-Instruct full benchmark; inherits the adapted MEMIT protocol.
+# Qwen2.5-3B-Instruct + reference MEMIT, zsRE independent-1301 benchmark.
+# Keep this recipe independent of the Qwen7B adapted experiments.
 
 defaults:
-  - /experiment/edit/zsre/qwen25_7b/memit
   - override /model: Qwen2.5-3B-Instruct
+  - override /trainer: edit/MEMIT_Official
+  - override /data: edit
+  - override /data/datasets@data.edit: ZSRE_edit
+  - override /eval: edit_benchmark
   - _self_
 
 task_name: qwen25_3b_zsre_memit_independent1301
+edit_type: independent
 max_edits: 1301
+save_edit_summary: true
+save_edited_model: false
+
+model:
+  model_args:
+    attn_implementation: eager
+    torch_dtype: bfloat16
+
+trainer:
+  args:
+    output_dir: ${paths.output_dir}
+    do_eval: true
+    bf16: true
+    seed: 42
+  method_args:
+    layers: [4, 5, 6, 7, 8]
+    # Read the last of Qwen2.5-3B's 36 blocks, not Qwen7B's block 27.
+    v_loss_layer: 35
+    mom2_adjustment: true
+
+data:
+  edit:
+    ZSRE_edit:
+      handler: ZSREDataset
+      args:
+        data_path: data/edit/zsre/ZsRE-test-all.json
+        expected_sha256: 0e0214dda853a906ef02bef58c7ce2978af5a962e91fc4a10827e0125459905c
+        expected_num_samples: 1301
+        split: test
+        max_length: 512

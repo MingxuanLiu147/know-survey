@@ -163,8 +163,9 @@ class ROMEEditor(EditTrainer):
         model, tok = self.model, self.tokenizer
         rewrite_name = self.rewrite_module_tmp.format(layer_idx)
         weight = get_parameter(model, f"{rewrite_name}.weight")
+        request_prompt = request.prompt_template or request.prompt
         req_dict = {
-            "prompt": request.prompt,
+            "prompt": request_prompt,
             "subject": request.subject,
             "target_new": request.target_new,
         }
@@ -198,7 +199,7 @@ class ROMEEditor(EditTrainer):
             ),
         )
 
-        prompts, subjects = [request.prompt], [request.subject]
+        prompts, subjects = [request_prompt], [request.subject]
         keys, _ = get_module_input_output_at_words(
             model,
             tok,

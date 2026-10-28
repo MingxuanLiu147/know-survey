@@ -377,7 +377,8 @@ def _experiments(
             for row in rows:
                 if (operation is None or row.get("operation") == operation) and (
                     Path(row.get("model", "")).stem == model
-                    and Path(row.get("method", "")).stem == method
+                    and Path(row.get("method", "")).stem
+                    in {method, f"{method}_Official"}
                     and any(
                         Path(value).stem == dataset
                         for value in row.get("datasets", {}).values()
@@ -968,6 +969,8 @@ def _bind_plan_cases(plan: dict[str, Any], source: Path, plan_path: Path) -> Non
 
 
 def _plan_command(plan: dict[str, Any], method: str, *, preview: bool) -> list[str]:
+    from know_surgery.resources import reference_trainer_for_experiment
+
     operation = plan["operation"]
     modality = plan.get("modality", "text")
     if modality not in {"text", "multimodal"}:
@@ -977,6 +980,9 @@ def _plan_command(plan: dict[str, Any], method: str, *, preview: bool) -> list[s
     trainer = (
         "inject/" if operation == "inject" else "edit/" if operation == "edit" else ""
     ) + method
+    trainer = reference_trainer_for_experiment(
+        plan.get("experiments", {}).get(method), trainer
+    )
     for kind, value in (
         ("model", plan["model_id"]),
         ("trainer", trainer),
@@ -1000,6 +1006,26 @@ def _plan_command(plan: dict[str, Any], method: str, *, preview: bool) -> list[s
     command.extend([f"model={plan['model_id']}", f"trainer={trainer}"])
     inputs = plan.get("inputs")
     if inputs:
+        if experiment:
+            from surgery import _compose_config
+
+            recipe, _ = _compose_config(
+                [
+                    f"operation={operation}",
+                    f"modality={modality}",
+                    f"experiment={experiment}",
+                ]
+            )
+            edit_datasets = recipe.get("data", {}).get("edit", {})
+            if any(
+                dataset.get("args", {}).get("expected_sha256")
+                for dataset in edit_datasets.values()
+            ):
+                raise ValueError(
+                    "This experiment pins a benchmark snapshot and cannot be combined "
+                    "with bound custom cases. Use the benchmark data_path override or "
+                    "select a custom-data experiment. / 固定基准配置不能混入自定义样本。"
+                )
         roles = (
             {"forget", "retain"}
             if operation == "unlearning"

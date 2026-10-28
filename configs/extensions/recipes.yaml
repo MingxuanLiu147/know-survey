@@ -1,6 +1,46 @@
 # Know-Surgery method catalog.
 schema_version: '1.0'
 recipes:
+- id: builtin-zsre-rome-qwen25-3b
+  operation: edit
+  modality: text
+  experiment: edit/zsre/qwen25_3b/rome
+  model: configs/model/Qwen2.5-3B-Instruct.yaml
+  method: configs/trainer/edit/ROME_Official.yaml
+  datasets:
+    edit: configs/data/datasets/ZSRE_edit.yaml
+  evaluation: configs/eval/edit_benchmark.yaml
+  model_family: qwen2
+  knowledge_types: [fact]
+  model_hparams: null
+  argv:
+    - python
+    - src/surgery.py
+    - --config-name=surgery.yaml
+    - operation=edit
+    - experiment=edit/zsre/qwen25_3b/rome
+    - max_edits=1
+
+- id: builtin-zsre-memit-qwen25-3b
+  operation: edit
+  modality: text
+  experiment: edit/zsre/qwen25_3b/memit
+  model: configs/model/Qwen2.5-3B-Instruct.yaml
+  method: configs/trainer/edit/MEMIT_Official.yaml
+  datasets:
+    edit: configs/data/datasets/ZSRE_edit.yaml
+  evaluation: configs/eval/edit_benchmark.yaml
+  model_family: qwen2
+  knowledge_types: [fact]
+  model_hparams: null
+  argv:
+    - python
+    - src/surgery.py
+    - --config-name=surgery.yaml
+    - operation=edit
+    - experiment=edit/zsre/qwen25_3b/memit
+    - max_edits=1
+
 - id: builtin-tofu-grad-ascent-gpt2
   operation: unlearning
   modality: text
