@@ -1,0 +1,32 @@
+# @package _global_
+# RuleTaker train questions, held-out test questions, and unrelated factual probes.
+
+defaults:
+  - /experiment/inject/ruletaker/default
+  - override /model: Qwen2.5-1.5B
+  - override /trainer: inject/LoRA
+  - _self_
+
+max_train_samples: 40
+
+model:
+  model_args:
+    attn_implementation: sdpa
+
+trainer:
+  args:
+    max_steps: 20
+    warmup_ratio: 0.0
+    do_eval: true
+    save_strategy: "no"
+    report_to: none
+
+eval:
+  inject_metrics:
+    task_accuracy:
+      eval_data_path: ${paths.root_dir}/demos/inject/basic/data/rule_ruletaker.json
+    knowledge_retention:
+      benchmark_data_path: ${paths.root_dir}/demos/inject/basic/data/retention_benchmark.json
+      original_model_path: ${model.model_args.pretrained_model_name_or_path}
+
+task_name: ruletaker_lora_workbench

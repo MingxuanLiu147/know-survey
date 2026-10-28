@@ -22,8 +22,7 @@ recipes:
   - operation=unlearning
   - experiment=unlearn/tofu/gpt2_quickstart
   - task_name=curated_tofu_grad_ascent_gpt2
-  - eval=tofu
-  - trainer.args.max_steps=1
+  - trainer.args.max_steps=20
 - id: builtin-alpaca-lora-qwen25
   operation: inject
   modality: text
@@ -65,6 +64,26 @@ recipes:
   - operation=edit
   - experiment=edit/model_coverage/qwen25_7b_ft_counterfact
   - max_edits=1
+- id: builtin-counterfact-ft-gpt2-workbench
+  operation: edit
+  modality: text
+  experiment: edit/counterfact/workbench
+  model: configs/model/gpt2.yaml
+  method: configs/trainer/edit/FT.yaml
+  datasets:
+    edit: configs/data/datasets/CounterFact_edit.yaml
+  evaluation: configs/eval/edit.yaml
+  model_family: gpt2
+  knowledge_types:
+  - fact
+  model_hparams: null
+  argv:
+  - python
+  - src/surgery.py
+  - --config-name=surgery.yaml
+  - operation=edit
+  - experiment=edit/counterfact/workbench
+  - task_name=counterfact_ft_workbench
 - id: builtin-counterfact-ft-gpt2
   operation: edit
   modality: text
@@ -288,6 +307,27 @@ recipes:
   - operation=unlearning
   - experiment=unlearn/wmdp/default
   - trainer.args.max_steps=1
+- id: builtin-ruletaker-lora-qwen25-1-5b-workbench
+  operation: inject
+  modality: text
+  experiment: inject/ruletaker/workbench
+  model: configs/model/Qwen2.5-1.5B.yaml
+  method: configs/trainer/inject/LoRA.yaml
+  datasets:
+    train: configs/data/datasets/RuleTaker_train_inject.yaml
+  evaluation: configs/eval/inject.yaml
+  model_family: qwen2
+  knowledge_types:
+  - rule
+  model_hparams: null
+  argv:
+  - python
+  - src/surgery.py
+  - --config-name=surgery.yaml
+  - operation=inject
+  - experiment=inject/ruletaker/workbench
+  - trainer=inject/LoRA
+  - task_name=ruletaker_lora_workbench
 - id: builtin-ruletaker-lora-qwen25-3b
   operation: inject
   modality: text

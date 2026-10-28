@@ -64,32 +64,36 @@ const operationIcons = {
 
 const operationHelp = {
   en: {
-    unlearning: "Reduce target knowledge while measuring retention.",
-    inject: "Add knowledge with parameter-efficient adaptation.",
-    edit: "Replace facts with localized model interventions."
+    unlearning: "Reduce knowledge in the forget set and evaluate what the model retains.",
+    inject: "Learn new facts, rules or text and measure target performance and retained knowledge.",
+    edit: "Change selected knowledge and inspect target answers, generalization and side effects."
   },
   zh: {
-    unlearning: "降低目标知识，同时测量保留能力。",
-    inject: "通过参数高效适配增加知识。",
-    edit: "用局部模型干预替换已有事实。"
+    unlearning: "降低遗忘集知识的可提取性，同时检验保留集表现。",
+    inject: "学习新增事实、规则或文本，同时评估目标效果与已有知识的保持。",
+    edit: "修改指定知识，查看目标答案、泛化表现与无关知识的变化。"
   }
 };
 
 const DEFAULT_OPERATION: Operation = "unlearning";
-const STARTER_RECIPE_ID = "builtin-tofu-grad-ascent-gpt2";
+const STARTER_RECIPE_IDS: Record<Operation, string> = {
+  unlearning: "builtin-tofu-grad-ascent-gpt2",
+  inject: "builtin-ruletaker-lora-qwen25-1-5b-workbench",
+  edit: "builtin-counterfact-ft-gpt2-workbench"
+};
 
 const defaultIntents = {
   en: {
     unlearning:
-      "Unlearn TOFU on GPT-2 with GradAscent for 1 training step and check retention.",
+      "Use GradAscent on GPT-2 to unlearn the configured TOFU forget set for 20 training steps, keeping its separate retain set. Use all available records: the supplied files contain twenty forget and twenty retain questions. Evaluate target-answer probabilities on both sets and inspect per-example results. Save the configuration and metrics, and show the equivalent CLI command before execution.",
     inject:
-      "Inject RuleTaker into GPT-2 with LoRA for 1 training step and check retention.",
-    edit: "Edit 1 CounterFact fact on GPT-2 with ROME and evaluate locality."
+      "Inject rule knowledge into Qwen2.5-1.5B base with LoRA using 40 samples from RuleTaker_train_inject for 20 training steps. Evaluate accuracy on twenty separate RuleTaker test questions and retained knowledge on five unrelated factual questions, comparing the base model with the trained model. Show per-example predictions, save the adapter and metrics, and preview the equivalent CLI command.",
+    edit: "Edit 4 CounterFact_edit facts on GPT-2 with FT. For each example, start from the original model and use 25 parameter updates to replace its original answer with the specified target. Evaluate target-answer reliability, rephrased questions and locality on available probes. Show per-example inputs and predictions before and after editing, save configuration and metrics, and preview the equivalent CLI command."
   },
   zh: {
-    unlearning: "使用 GradAscent 在 GPT-2 上对 TOFU 执行 1 个遗忘训练步，并检查保留能力。",
-    inject: "使用 LoRA 在 GPT-2 上对 RuleTaker 执行 1 个注入训练步，并检查保留能力。",
-    edit: "使用 ROME 在 GPT-2 上编辑 1 条 CounterFact 事实，并评估局部性。"
+    unlearning: "使用 GradAscent 在 GPT-2 上对已配置的 TOFU 遗忘集运行 20 个训练步，并使用独立保留集。读取两份文件中的全部记录，当前提供二十个遗忘问题和二十个保留问题。评估两组目标答案概率并查看逐例结果，保存配置与指标，执行前展示等价 CLI 命令。",
+    inject: "使用 LoRA 将 40 条 RuleTaker_train_inject 规则样本注入 Qwen2.5-1.5B base 基础模型，运行 20 个训练步。用独立的二十个 RuleTaker 测试问题评估目标准确率，用五个无关事实问题比较原始模型与训练后的知识保持。查看逐例预测，保存适配器、配置和指标，执行前展示等价 CLI 命令。",
+    edit: "使用 FT 在 GPT-2 上编辑 4 条 CounterFact_edit 事实。每个样本都从原始模型开始，执行 25 次参数更新，将原答案替换为数据中的目标答案。用已有探针评估目标可靠性、问题改写泛化与局部性，查看逐例输入及编辑前后预测，保存配置与指标，执行前展示等价 CLI 命令。"
   }
 };
 
@@ -109,15 +113,15 @@ const multimodalIntents = {
 const longTextIntents = {
   en: {
     inject:
-      "Inject this long-form knowledge into a suitable 7B model with representation fine-tuning, then evaluate target efficacy and retention.",
+      "Inject long-form knowledge into Qwen2.5-7B-Instruct with LoReFT using the registered Alpaca_inject recipe. Review local training data and provide separate target and retain questions for evaluation. Preview the configuration and equivalent CLI command before execution.",
     edit:
-      "Edit this long-form knowledge on a suitable 7B model with AnyEdit, then evaluate reliability, generalization, locality, and portability."
+      "Edit 1 UnKE_edit long-form record on Qwen2.5-7B-Instruct with AnyEdit. Use its registered window-based recipe with the Wikipedia 20200501.en statistics corpus and a two-hundred-row covariance budget. Evaluate target answers, paraphrases and available locality and portability probes. Inspect per-example predictions, save configuration and metrics, and preview the equivalent CLI command."
   },
   zh: {
     inject:
-      "将这段长文本知识注入合适的 7B 模型，使用表示微调方法，并评估目标效果与知识保留。",
+      "使用 LoReFT 和已注册的 Alpaca_inject 配方，在 Qwen2.5-7B-Instruct 上注入长文本知识。核对本地训练数据，并为评估提供独立的目标问答与保留问题；执行前展示配置和等价 CLI 命令。",
     edit:
-      "在合适的 7B 模型上使用 AnyEdit 编辑这段长文本知识，并评估可靠性、泛化性、局部性与迁移性。"
+      "使用 AnyEdit 在 Qwen2.5-7B-Instruct 上编辑 1 条 UnKE_edit 长文本知识。采用已注册的滑窗编辑配方，统计语料为 Wikipedia 20200501.en，协方差预算为两百行。评估目标答案、问题改写以及可用的局部性和迁移探针，查看逐例预测，保存配置与指标，执行前展示等价 CLI 命令。"
   }
 };
 
@@ -144,9 +148,9 @@ function defaultTaskName(operation: Operation): string {
 }
 
 function defaultRecipe(catalog: Catalog, operation: Operation, modality: Modality = "text") {
-  if (operation === DEFAULT_OPERATION && modality === "text") {
+  if (modality === "text") {
     const starter = catalog.recipes.find(
-      (item) => item.id === STARTER_RECIPE_ID && item.default_runnable
+      (item) => item.id === STARTER_RECIPE_IDS[operation] && item.default_runnable
     );
     if (starter) return starter;
   }
@@ -307,6 +311,7 @@ export function Workbench() {
     setOverrides({});
     setBaseSelections({});
     setPlan(null);
+    setSmoke(modality === "multimodal");
     const firstRecipe = defaultRecipe(catalog, operation, modality);
     setRecipeId(firstRecipe?.id || "");
     setExperiment(modality === "multimodal" && operation === "unlearning" ? catalog.experiments.find((item) => item.id === "unlearn/multimodal/smoke_qwen25vl3b_mllmu")?.id || "" : "");
@@ -314,21 +319,23 @@ export function Workbench() {
       catalog.models.find(
         (item) => item.modality === modality && item.id === (modality === "text" ? "gpt2" : "Qwen2.5-VL-3B")
       ) || catalog.models.find((item) => item.modality === modality);
-    setModel(firstModel?.id || "");
-    setTrainer(catalog.trainers[operation].find((item) => item.modality === modality)?.id || "");
+    setModel(firstRecipe?.model || firstModel?.id || "");
+    setTrainer(firstRecipe?.trainer || catalog.trainers[operation].find((item) => item.modality === modality)?.id || "");
     setEvaluation(
-      modality === "multimodal" ? (operation === "edit" ? "mm_edit" : "") : catalog.evaluations.includes(
+      firstRecipe?.evaluation || (modality === "multimodal" ? (operation === "edit" ? "mm_edit" : "") : catalog.evaluations.includes(
         operation === "unlearning" ? "tofu" : operation
       )
         ? operation === "unlearning"
           ? "tofu"
           : operation
-        : catalog.evaluations[0] || ""
+        : catalog.evaluations[0] || "")
     );
     const operationDatasets = catalog.datasets.filter((item) =>
       item.operations.includes(operation) && item.modality === modality
     );
-    if (operation === "unlearning") {
+    if (firstRecipe) {
+      setDatasets(firstRecipe.datasets);
+    } else if (operation === "unlearning") {
       setDatasets({
         forget:
           operationDatasets.find((item) =>
@@ -446,6 +453,29 @@ export function Workbench() {
     setOverrides(value.overrides || {});
     setBaseSelections({ model: value.model, trainer: value.trainer, datasets: value.datasets, evaluation: value.evaluation });
     setComposeSnapshot(null); setCurrentRun(null);
+  };
+
+  const applyLongTextPreset = (nextOperation: "inject" | "edit") => {
+    const presetId = nextOperation === "edit"
+      ? "builtin-unke-anyedit-qwen25-7b"
+      : "builtin-alpaca-loreft-qwen25-7b";
+    const preset = catalog?.recipes.find((item) => item.id === presetId && item.default_runnable);
+    if (!preset) return;
+    applyConfiguration({
+      operation: nextOperation,
+      modality: "text",
+      recipe_id: preset.id,
+      model: preset.model,
+      trainer: preset.trainer,
+      datasets: preset.datasets,
+      evaluation: preset.evaluation,
+      task_name: defaultTaskName(nextOperation),
+      seed,
+      smoke: false,
+      overrides: nextOperation === "edit" ? { max_edits: 1 } : {}
+    });
+    setIntent(longTextIntents[language][nextOperation]);
+    setPlan(null);
   };
 
   const generatePlan = async () => {
@@ -645,33 +675,21 @@ export function Workbench() {
             <textarea
               className="intent-input"
               value={intent}
-              rows={4}
+              rows={6}
               placeholder={t("intentPlaceholder")}
               onChange={(event) => { setIntent(event.target.value); setPlan(null); }}
             />
             <div className="intent-presets" aria-label={t("intentPresets")}>
               <button
                 type="button"
-                onClick={() => {
-                  setOperation("inject");
-                  setModality("text");
-                  setIntent(longTextIntents[language].inject);
-                  setPlan(null);
-                  setComposeSnapshot(null);
-                }}
+                onClick={() => applyLongTextPreset("inject")}
               >
                 <Syringe size={14} />
                 {t("longTextInjectionPreset")}
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  setOperation("edit");
-                  setModality("text");
-                  setIntent(longTextIntents[language].edit);
-                  setPlan(null);
-                  setComposeSnapshot(null);
-                }}
+                onClick={() => applyLongTextPreset("edit")}
               >
                 <PencilLine size={14} />
                 {t("longTextEditingPreset")}
@@ -833,17 +851,6 @@ export function Workbench() {
                     </div>
                   ))}
                 </div>
-                {plan.warnings.length ? (
-                  <div className="plan-warnings">
-                    <CircleAlert size={17} />
-                    <div>
-                      <strong>{t("warnings")}</strong>
-                      {plan.warnings.map((warning) => (
-                        <p key={warning}>{displayTechnicalText(warning)}</p>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
               </div>
             ) : null}
           </section>

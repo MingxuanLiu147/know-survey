@@ -64,6 +64,38 @@ def _resolve_max_length(config) -> int:
     return 2048
 
 
+def _load_statistics_split(dataset_name: str, dataset_config: str):
+    """Read prepared common corpora before consulting the Hub.
+
+    The datasets cache builder preserves the original Arrow fingerprint and
+    avoids both a Hub metadata request and process-wide offline settings.
+    Missing caches retain the normal CLI download behavior; unreadable or
+    damaged caches must remain visible to the caller.
+    """
+    if dataset_name in {"wikipedia", "wikitext"}:
+        try:
+            from datasets.packaged_modules.cache.cache import Cache
+        except ImportError:
+            pass  # Older datasets versions may not provide this cache reader.
+        else:
+            try:
+                builder = Cache(
+                    repo_id=dataset_name,
+                    dataset_name=dataset_name,
+                    config_name=dataset_config,
+                    version="auto",
+                    hash="auto",
+                )
+            except ValueError as exc:
+                # Cache's exact-config lookup uses ValueError for a miss. Do
+                # not hide JSONDecodeError or other corrupt-cache failures.
+                if not str(exc).startswith(f"Couldn't find cache for {dataset_name}"):
+                    raise
+            else:
+                return builder.as_dataset(split="train")
+    return load_dataset(dataset_name, dataset_config)["train"]
+
+
 def _validated_stats(payload, *, source):
     if not isinstance(payload, Mapping):
         raise RuntimeError(
@@ -194,7 +226,7 @@ def layer_stats(
         "wikitext": "wikitext-103-raw-v1",
         "wikipedia": "20220301.en",
     }.get(ds_name, ds_name)
-    split = load_dataset(ds_name, dataset_config)["train"]
+    split = _load_statistics_split(ds_name, dataset_config)
     columns = getattr(split, "column_names", None) or ["text"]
     text_key = "text" if "text" in columns else columns[0]
     metadata = {

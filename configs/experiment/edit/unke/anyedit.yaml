@@ -1,5 +1,6 @@
 # @package _global_
-# AnyEdit paper benchmark: UnKEBench with MEMIT+AnyEdit.
+# Native AnyEdit on UnKEBench with Wikipedia 20200501.en statistics.
+# Official-reference experiments keep their own corpus and sampling budgets.
 
 defaults:
   - override /model: Qwen2.5-7B-Instruct
@@ -8,11 +9,20 @@ defaults:
   - override /data/datasets@data.edit: UnKE_edit
   - override /eval: edit
 
+model:
+  model_args:
+    attn_implementation: sdpa
+
 trainer:
   method_args:
     strategy: memit_are
     window_size: 50
     overlap: 0
+    mom2_dataset: wikipedia
+    mom2_dataset_config: "20200501.en"
+    mom2_n_samples: 200
+    mom2_max_length: 512
+    mom2_batch_tokens: 512
 
 data:
   edit:

@@ -158,7 +158,7 @@ export function CaseInspector({ results, metricId }: { results: ResultSummary[];
                 </table></div>
                 {scoreDirection ? <p className="section-description">{scoreDirection}</p> : null}
               </> : null}
-              {!hasText ? <p className="section-description">{zh ? "此记录仅保存逐例指标，未保存输入、参考答案或模型回答。" : "This record contains example metrics only; input, reference and model response text were not saved."}</p> : item.unavailable_reason ? <p className="section-description">{resultReasonText(item.unavailable_reason, language)}</p> : null}
+              {hasText && item.unavailable_reason ? <p className="section-description">{resultReasonText(item.unavailable_reason, language)}</p> : null}
               <details className="source-details"><summary>{zh ? "查看来源与评测设置" : "Source and evaluation settings"}</summary>
                 <dl className="metadata-grid">
                   <div><dt>{zh ? "来源" : "Source"}</dt><dd className="mono">{item.source}{item.source_pointer ? ` · ${item.source_pointer}` : ""}</dd></div>

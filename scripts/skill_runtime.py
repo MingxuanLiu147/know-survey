@@ -196,6 +196,8 @@ def _model_from_intent(text: str) -> str:
     if "zephyr" in lowered and "7b" in lowered:
         return "zephyr-7b-beta"
     if "qwen2.5-1.5b" in lowered or "qwen25-1.5b" in lowered:
+        if re.search(r"qwen(?:2\.5|25)-1\.5b\s+base\b", lowered):
+            return "Qwen2.5-1.5B"
         return "Qwen2.5-1.5B-Instruct"
     if "qwen2.5-3b" in lowered or "qwen25-3b" in lowered:
         return "Qwen2.5-3B-Instruct"
@@ -329,7 +331,7 @@ def _experiments(
                 experiment = "edit/model_coverage/qwen25_1_5b_ft_counterfact"
         elif dataset == "CounterFact_edit" and model == "gpt2":
             candidates = {
-                "FT": "edit/model_coverage/gpt2_ft_counterfact",
+                "FT": "edit/counterfact/workbench",
                 "ROME": "edit/counterfact/gpt2_rome_real",
                 "MEMIT": "edit/counterfact/gpt2_memit_real",
                 "IKE": "edit/model_coverage/gpt2_ike_counterfact",

@@ -39,7 +39,7 @@ interface TaskDraft {
 const initialDraft: TaskDraft = {
   initialized: false, operation: "unlearning", modality: "text", intent: "", provider: "local",
   plan: null, recipeId: "", experiment: "", model: "", trainer: "", datasets: {}, evaluation: "",
-  taskName: "", seed: 42, smoke: true, overrides: {}, overridesDraft: null, baseSelections: {}, composeSnapshot: null, currentRun: null, agentTrace: null
+  taskName: "", seed: 42, smoke: false, overrides: {}, overridesDraft: null, baseSelections: {}, composeSnapshot: null, currentRun: null, agentTrace: null
 };
 type DraftUpdate = (draft: TaskDraft) => TaskDraft;
 const DraftContext = createContext<{ draft: TaskDraft; update: (update: DraftUpdate) => void } | null>(null);

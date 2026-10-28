@@ -37,6 +37,27 @@ Preview composes the configuration without loading model weights. Execution need
 the configured inputs, dependencies and compute. The one-edit/one-step switch
 sets exactly that limit; turn it off to use the configuration's full budget.
 
+Text tasks open with a complete example request and the matching recipe. The
+one-edit/one-step limit starts off, so preview uses the recipe's stated budget.
+The examples describe the input data, update method, evaluation and saved outputs;
+changing the operation loads its corresponding defaults.
+
+- **Unlearning** — `unlearn/tofu/gpt2_quickstart`: GPT-2 with GradAscent for
+  20 training steps. The local example has 20 forget and 20 retain questions;
+  both sets are evaluated for target-answer probability.
+- **Injection** — `inject/ruletaker/workbench`: Qwen2.5-1.5B (base) with LoRA
+  for 20 training steps on 40 RuleTaker training records, with 20 separate test questions and five
+  unrelated factual probes for comparison with the base model. The trained
+  adapter, configuration and evaluation outputs are saved.
+- **Editing** — `edit/counterfact/workbench`: GPT-2 with FT on four CounterFact
+  requests, up to 25 update steps per request. Each edit starts from the same
+  original weights. Target reliability, paraphrase generalization and locality
+  are evaluated separately for every request; no combined edited model is saved.
+
+Prepare the referenced local training data and model weights before execution.
+The stated record counts describe these examples, not the full source datasets.
+Long-text preset buttons also apply their registered recipe and parameters.
+
 ## Configure a task
 
 The dataset and evaluation choices follow the selected operation. Unlearning uses
@@ -65,6 +86,15 @@ Prepare that corpus before starting the task. Precomputed covariance files are
 optional: the method can calculate them from the corpus using its configured
 budget. `max_edits` limits knowledge-edit requests, not the number of corpus rows
 used to estimate covariance; `mom2_n_samples` controls that separate budget.
+
+The `edit/unke/anyedit` recipe uses Wikipedia `20200501.en` for covariance
+statistics: 200 rows, at most 512 tokens per row and 512 padded tokens per batch.
+Its editing inputs remain UnKEBench; the model remains Qwen2.5-7B-Instruct, with
+covariance adjustment enabled on all five configured layers. These settings are
+visible in the resolved configuration. Official-reference recipes retain their
+own corpora and sampling budgets. Prepared statistics corpora are read directly
+from the local datasets cache, without an online metadata check. This recipe uses
+PyTorch SDPA attention and does not require FlashAttention.
 
 Open **Parameters and local paths** to edit individual Hydra overrides as a JSON
 object, for example:

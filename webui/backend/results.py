@@ -188,11 +188,50 @@ def _operation(relative_path: str) -> str:
     }.get(lane, "unknown")
 
 
+def _independent_cases(run_dir: Path) -> list[tuple[int, Path]]:
+    """Follow only cases explicitly indexed by this independent edit run."""
+    index_path = run_dir / "independent_results.json"
+    if index_path.resolve().parent != run_dir.resolve():
+        return []
+    index = _read_json(index_path)
+    records = index.get("cases")
+    if index.get("edit_type") != "independent" or not isinstance(records, list):
+        return []
+    indices = [item.get("case_index") for item in records if isinstance(item, dict)]
+    if (
+        len(indices) != len(records)
+        or any(type(value) is not int or value < 0 for value in indices)
+        or len(set(indices)) != len(indices)
+    ):
+        return []
+    paths = []
+    for record in records:
+        case_index = record["case_index"]
+        relative = Path("independent_cases") / f"{case_index:05d}"
+        recorded = record.get("output_dir")
+        # Stored paths can contain the original checkout prefix. Rebase only
+        # this fixed indexed suffix, never follow an arbitrary saved pathname.
+        if not isinstance(recorded, str) or Path(recorded).parts[-2:] != relative.parts:
+            continue
+        case_dir = run_dir / relative
+        if case_dir.resolve() != run_dir.resolve() / relative:
+            continue
+        summary_path = case_dir / "edit_SUMMARY.json"
+        if summary_path.resolve().parent != case_dir.resolve():
+            continue
+        summary = _read_json(summary_path)
+        if not summary or summary != record.get("summary"):
+            continue
+        paths.append((case_index, case_dir))
+    return paths
+
+
 def _candidate_dirs(root: Path) -> list[Path]:
     saves = root / "saves"
     if not saves.exists():
         return []
     directories: set[Path] = set()
+    indexed_cases: dict[Path, set[Path]] = {}
     patterns = (
         "run_trace.json",
         "*_SUMMARY.json",
@@ -219,6 +258,14 @@ def _candidate_dirs(root: Path) -> list[Path]:
                 )
             ):
                 directory = checkpoint.parent
+            if directory.parent.name == "independent_cases":
+                parent = directory.parent.parent
+                if parent not in indexed_cases:
+                    indexed_cases[parent] = {
+                        path for _, path in _independent_cases(parent)
+                    }
+                if directory in indexed_cases[parent]:
+                    directory = parent
             directories.add(directory)
     return sorted(
         directories,
@@ -873,18 +920,56 @@ def _scalar_metrics(run_dir: Path) -> list[dict[str, Any]]:
             and context.get("protocol_version") == "inject-v2"
         ):
             definition["unit"] = "multiplier"
-        rows.append(
-            {
-                **_metric_identity(source, key, context),
-                "value": value,
-                "source": source,
-                **definition,
-                **{field: context.get(field) for field in METRIC_CONTEXT_FIELDS},
-            }
-        )
+        row = {
+            **_metric_identity(source, key, context),
+            "value": value,
+            "source": source,
+            **definition,
+            **{field: context.get(field) for field in METRIC_CONTEXT_FIELDS},
+        }
+        rows.append(row)
+        return row
 
     for path in _summary_paths(run_dir):
         summary = _read_json(path)
+        if path.name == "independent_SUMMARY.json":
+            recorded = _read_json(run_dir / "independent_results.json")
+            if recorded.get("aggregate") != summary or not isinstance(
+                summary.get("metrics"), dict
+            ):
+                continue
+            children = [
+                (
+                    _read_json(case / "edit_SUMMARY.json"),
+                    _read_json(case / "edit_EVAL.json"),
+                )
+                for _, case in _independent_cases(run_dir)
+                if (case / "edit_EVAL.json").resolve().parent == case.resolve()
+            ]
+            for key, item in summary["metrics"].items():
+                if not isinstance(item, dict) or "mean" not in item:
+                    continue
+                contexts = [
+                    _metric_context(key, child_summary, child_detail)
+                    for child_summary, child_detail in children
+                    if child_summary.get(key) is not None
+                ]
+                context = {
+                    field: contexts[0].get(field)
+                    if contexts
+                    and all(
+                        row.get(field) == contexts[0].get(field) for row in contexts
+                    )
+                    else None
+                    for field in METRIC_CONTEXT_FIELDS
+                }
+                context["denominator"] = item.get("available_cases")
+                append(key, item["mean"], path.name, context).update(
+                    aggregation="mean_over_available_cases",
+                    available_cases=item.get("available_cases"),
+                    missing_cases=item.get("missing_cases"),
+                )
+            continue
         detail_path = path.with_name(path.name.replace("_SUMMARY.json", "_EVAL.json"))
         detailed = (
             _read_json(detail_path)
@@ -1140,6 +1225,15 @@ class ResultStore:
                 for path in sorted(checkpoint_eval.glob("*.json"))
                 if path.is_file()
             )
+        for _, case_dir in _independent_cases(run_dir):
+            files.extend(
+                path.relative_to(run_dir).as_posix()
+                for path in (
+                    case_dir / "edit_SUMMARY.json",
+                    case_dir / "edit_EVAL.json",
+                )
+                if path.is_file() and path.resolve().parent == case_dir.resolve()
+            )
         warnings = []
         if not _has_evaluation(metrics):
             warnings.append("This run has no completed evaluation metrics.")
@@ -1251,11 +1345,49 @@ class ResultStore:
         from .cases import read_cases
 
         run_dir = self.path(result_id)
+        metrics = _scalar_metrics(run_dir)
         rows, warnings = read_cases(
             run_dir,
-            _scalar_metrics(run_dir),
+            metrics,
             checkpoint_eval=_checkpoint_eval_dir(run_dir),
         )
+        aggregate_metrics = {
+            metric["metric_name"]: metric
+            for metric in metrics
+            if metric["source"] == "independent_SUMMARY.json"
+        }
+        for case_index, case_dir in _independent_cases(run_dir):
+            child_metrics = _scalar_metrics(case_dir)
+            child_by_id = {metric["id"]: metric for metric in child_metrics}
+            child_rows, child_warnings = read_cases(case_dir, child_metrics)
+            prefix = case_dir.relative_to(run_dir).as_posix()
+            warnings.extend(f"{prefix}: {warning}" for warning in child_warnings)
+            for row in child_rows:
+                child_metric = child_by_id[row["metric_id"]]
+                metric = aggregate_metrics.get(child_metric["metric_name"])
+                if metric is None:
+                    continue
+                source = f"{prefix}/{row['source']}"
+                rows.append(
+                    {
+                        **row,
+                        "id": hashlib.sha256(
+                            f"{source}#{row['source_pointer']}".encode()
+                        ).hexdigest()[:20],
+                        "metric_id": metric["id"],
+                        "evaluator": metric["evaluator"],
+                        "phase": metric["phase"],
+                        "case_index": case_index,
+                        "source": source,
+                    }
+                )
+        if rows:
+            warnings = [
+                warning
+                for warning in warnings
+                if warning
+                != "No supported per-example records were saved for this result."
+            ]
         if metric_id is not None:
             rows = [row for row in rows if row["metric_id"] == metric_id]
         return {
