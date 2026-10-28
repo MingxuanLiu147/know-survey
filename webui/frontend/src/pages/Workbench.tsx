@@ -76,24 +76,25 @@ const operationHelp = {
 };
 
 const DEFAULT_OPERATION: Operation = "unlearning";
+const DEFAULT_TEXT_MODEL = "Llama-3.2-1B-Instruct";
 const STARTER_RECIPE_IDS: Record<Operation, string> = {
-  unlearning: "builtin-tofu-grad-ascent-gpt2",
-  inject: "builtin-ruletaker-lora-qwen25-1-5b-workbench",
-  edit: "builtin-counterfact-ft-gpt2-workbench"
+  unlearning: "builtin-tofu-graddiff-llama32-1b-workbench",
+  inject: "builtin-ruletaker-lora-llama32-1b-workbench",
+  edit: "builtin-counterfact-memit-llama32-1b-workbench"
 };
 
 const defaultIntents = {
   en: {
     unlearning:
-      "Use GradAscent on GPT-2 to unlearn the configured TOFU forget set for 20 training steps, keeping its separate retain set. Use all available records: the supplied files contain twenty forget and twenty retain questions. Evaluate target-answer probabilities on both sets and inspect per-example results. Save the configuration and metrics, and show the equivalent CLI command before execution.",
+      "Use GradDiff on the TOFU-trained Llama-3.2-1B-Instruct checkpoint to unlearn 50 records from TOFU_workbench_forget, with fifty separate TOFU_workbench_retain records, for 50 training steps. Evaluate target-answer probabilities on both sets and inspect per-example results. Save the configuration and metrics, and show the equivalent CLI command before execution.",
     inject:
-      "Inject rule knowledge into Qwen2.5-1.5B base with LoRA using 40 samples from RuleTaker_train_inject for 20 training steps. Evaluate accuracy on twenty separate RuleTaker test questions and retained knowledge on five unrelated factual questions, comparing the base model with the trained model. Show per-example predictions, save the adapter and metrics, and preview the equivalent CLI command.",
-    edit: "Edit 4 CounterFact_edit facts on GPT-2 with FT. For each example, start from the original model and use 25 parameter updates to replace its original answer with the specified target. Evaluate target-answer reliability, rephrased questions and locality on available probes. Show per-example inputs and predictions before and after editing, save configuration and metrics, and preview the equivalent CLI command."
+      "Inject rule knowledge into Llama-3.2-1B-Instruct with LoRA using 50 samples from RuleTaker_workbench_inject for 50 training steps. Evaluate accuracy on fifty separate RuleTaker test questions and retained knowledge on five unrelated factual questions, comparing the base model with the trained model. Show per-example predictions, save the adapter and metrics, and preview the equivalent CLI command.",
+    edit: "Batch-edit 50 CounterFact_workbench_edit facts on Llama-3.2-1B-Instruct with MEMIT, using 25 target-vector optimization updates to replace the original answers with the specified targets. Evaluate target-answer reliability, rephrased questions and locality on available probes. Show per-example inputs and predictions before and after editing, save configuration and metrics, and preview the equivalent CLI command."
   },
   zh: {
-    unlearning: "使用 GradAscent 在 GPT-2 上对已配置的 TOFU 遗忘集运行 20 个训练步，并使用独立保留集。读取两份文件中的全部记录，当前提供二十个遗忘问题和二十个保留问题。评估两组目标答案概率并查看逐例结果，保存配置与指标，执行前展示等价 CLI 命令。",
-    inject: "使用 LoRA 将 40 条 RuleTaker_train_inject 规则样本注入 Qwen2.5-1.5B base 基础模型，运行 20 个训练步。用独立的二十个 RuleTaker 测试问题评估目标准确率，用五个无关事实问题比较原始模型与训练后的知识保持。查看逐例预测，保存适配器、配置和指标，执行前展示等价 CLI 命令。",
-    edit: "使用 FT 在 GPT-2 上编辑 4 条 CounterFact_edit 事实。每个样本都从原始模型开始，执行 25 次参数更新，将原答案替换为数据中的目标答案。用已有探针评估目标可靠性、问题改写泛化与局部性，查看逐例输入及编辑前后预测，保存配置与指标，执行前展示等价 CLI 命令。"
+    unlearning: "使用 GradDiff 在已学习 TOFU 的 Llama-3.2-1B-Instruct 权重上遗忘 50 条 TOFU_workbench_forget 记录，配合五十条独立的 TOFU_workbench_retain 保留记录，运行 50 个训练步。评估两组目标答案概率并查看逐例结果，保存配置与指标，执行前展示等价 CLI 命令。",
+    inject: "使用 LoRA 将 50 条 RuleTaker_workbench_inject 规则样本注入 Llama-3.2-1B-Instruct，运行 50 个训练步。用独立的五十个 RuleTaker 测试问题评估目标准确率，用五个无关事实问题比较原始模型与训练后的知识保持。查看逐例预测，保存适配器、配置和指标，执行前展示等价 CLI 命令。",
+    edit: "使用 MEMIT 在 Llama-3.2-1B-Instruct 上批量编辑 50 条 CounterFact_workbench_edit 事实，执行 25 次目标向量优化更新，将原答案替换为数据中的目标答案。用已有探针评估目标可靠性、问题改写泛化与局部性，查看逐例输入及编辑前后预测，保存配置与指标，执行前展示等价 CLI 命令。"
   }
 };
 
@@ -144,7 +145,7 @@ function isDefaultIntent(value: string): boolean {
 function defaultTaskName(operation: Operation): string {
   if (operation !== DEFAULT_OPERATION) return `webui_${operation}_quick_run`;
   const timestamp = new Date().toISOString().replace(/\D/g, "").slice(0, 14);
-  return `starter_tofu_gpt2_${timestamp}`;
+  return `starter_tofu_llama32_1b_${timestamp}`;
 }
 
 function defaultRecipe(catalog: Catalog, operation: Operation, modality: Modality = "text") {
@@ -317,7 +318,7 @@ export function Workbench() {
     setExperiment(modality === "multimodal" && operation === "unlearning" ? catalog.experiments.find((item) => item.id === "unlearn/multimodal/smoke_qwen25vl3b_mllmu")?.id || "" : "");
     const firstModel =
       catalog.models.find(
-        (item) => item.modality === modality && item.id === (modality === "text" ? "gpt2" : "Qwen2.5-VL-3B")
+        (item) => item.modality === modality && item.id === (modality === "text" ? DEFAULT_TEXT_MODEL : "Qwen2.5-VL-3B")
       ) || catalog.models.find((item) => item.modality === modality);
     setModel(firstRecipe?.model || firstModel?.id || "");
     setTrainer(firstRecipe?.trainer || catalog.trainers[operation].find((item) => item.modality === modality)?.id || "");
@@ -484,7 +485,20 @@ export function Workbench() {
     setPlanning(true);
     setError("");
     try {
-      const value = await api.plan({ intent, provider, language, modality });
+      const starter = modality === "text" && Object.values(defaultIntents).some((byOperation) => byOperation[operation] === intent)
+        ? catalog?.recipes.find((item) => item.id === STARTER_RECIPE_IDS[operation] && item.default_runnable)
+        : undefined;
+      const role = { unlearning: "forget", inject: "train", edit: "edit" }[operation];
+      const value = await api.plan({
+        intent, provider, language, modality,
+        ...(starter ? {
+          operation,
+          model_id: starter.model,
+          dataset_id: starter.datasets[role],
+          methods: [starter.trainer.split("/").at(-1)!],
+          num_cases: 50
+        } : {})
+      });
       if (!mounted.current || sequence !== planSequence.current || JSON.stringify(latest.current) !== context) return;
       setPlan(value);
       if (value.configuration) applyConfiguration(value.configuration);

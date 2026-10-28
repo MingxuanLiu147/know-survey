@@ -42,21 +42,85 @@ one-edit/one-step limit starts off, so preview uses the recipe's stated budget.
 The examples describe the input data, update method, evaluation and saved outputs;
 changing the operation loads its corresponding defaults.
 
-- **Unlearning** — `unlearn/tofu/gpt2_quickstart`: GPT-2 with GradAscent for
-  20 training steps. The local example has 20 forget and 20 retain questions;
-  both sets are evaluated for target-answer probability.
-- **Injection** — `inject/ruletaker/workbench`: Qwen2.5-1.5B (base) with LoRA
-  for 20 training steps on 40 RuleTaker training records, with 20 separate test questions and five
-  unrelated factual probes for comparison with the base model. The trained
-  adapter, configuration and evaluation outputs are saved.
-- **Editing** — `edit/counterfact/workbench`: GPT-2 with FT on four CounterFact
-  requests, up to 25 update steps per request. Each edit starts from the same
-  original weights. Target reliability, paraphrase generalization and locality
-  are evaluated separately for every request; no combined edited model is saved.
+- **Unlearning** — `unlearn/tofu/llama32_1b_workbench`: GradDiff starts from
+  `open-unlearning/tofu_Llama-3.2-1B-Instruct_full`, a TOFU-trained checkpoint.
+  It uses 50 forget and 50 retain questions for 50 training steps, and evaluates
+  target-answer probability on both sets before and after training.
+- **Injection** — `inject/ruletaker/llama32_1b_workbench`: Llama-3.2-1B-Instruct
+  with LoRA for 50 training steps on 50 RuleTaker records. Target accuracy uses
+  50 separate test questions; knowledge retention compares five unrelated factual
+  probes against the original model. The adapter, configuration and evaluation
+  outputs are saved.
+- **Editing** — `edit/counterfact/llama32_1b_memit_workbench`: MEMIT applies
+  50 CounterFact replacements together to Llama-3.2-1B-Instruct. It optimizes
+  each request's target representation for up to 25 steps and applies the batch
+  update to layers 4, 5 and 6. Evaluation covers target reliability, paraphrase
+  generalization, locality and the supplied portability probes. Predictions,
+  configuration and metrics are saved; this recipe does not export model weights.
 
-Prepare the referenced local training data and model weights before execution.
-The stated record counts describe these examples, not the full source datasets.
+Prepare the local inputs and model weights using the instructions below.
 Long-text preset buttons also apply their registered recipe and parameters.
+
+## Prepare the default examples
+
+Run the following command from the repository root with existing local source
+files. The preparation script does not download datasets.
+
+```bash
+python scripts/prepare_workbench_data.py \
+  --counterfact-test /path/to/KnowEdit/counterfact_test.json \
+  --ruletaker-train /path/to/ruletaker/train.parquet \
+  --ruletaker-test /path/to/ruletaker/test.parquet \
+  --tofu-forget /path/to/TOFU/forget10.json \
+  --tofu-retain /path/to/TOFU/retain90.json \
+  --count 50 \
+  --output-root data/workbench
+```
+
+Use the CounterFact test split in KnowEdit format, with `subject`, `prompt`,
+`target_new`, `ground_truth`, `rephrase` and labeled `locality` probes. RuleTaker
+inputs use the original `context`, `question`, `label` and `config` fields from
+its separate train and test splits; Parquet and JSON are accepted. TOFU inputs
+come from the official `forget10` and `retain90` scopes and contain `question`
+and `answer`; JSON arrays and JSONL are accepted, including JSONL files named
+with a `.json` extension.
+
+The script selects 50 distinct valid records per file in source order. It excludes
+training contexts from RuleTaker evaluation and overlapping questions from the
+TOFU retain selection. An insufficient source stops preparation. Repeating the
+same command preserves identical outputs; different existing outputs require a
+new output directory.
+
+| Generated file under `data/workbench/` | Configuration or use |
+| --- | --- |
+| `edit/counterfact.json` | `CounterFact_workbench_edit` |
+| `inject/ruletaker_train.json` | `RuleTaker_workbench_inject` |
+| `inject/ruletaker_eval.json` | Injection target evaluation |
+| `unlearning/tofu_forget.json` | `TOFU_workbench_forget` |
+| `unlearning/tofu_retain.json` | `TOFU_workbench_retain` |
+
+The local `manifest.json` records source hashes, splits, selected row indices and
+output hashes. Injection retention uses the bundled
+`demos/inject/basic/data/retention_benchmark.json` with five factual questions.
+
+For existing local checkpoints, set these optional variables **before starting
+the backend**:
+
+```bash
+export KNOW_SURGERY_LLAMA_MODEL_PATH=/path/to/Llama-3.2-1B-Instruct
+export KNOW_SURGERY_TOFU_MODEL_PATH=/path/to/tofu_Llama-3.2-1B-Instruct_full
+```
+
+The first variable supplies both weights and tokenizer for editing and injection.
+The second selects the TOFU-trained checkpoint for unlearning. When unset, the
+recipes use `meta-llama/Llama-3.2-1B-Instruct` and
+`open-unlearning/tofu_Llama-3.2-1B-Instruct_full`, respectively, resolved from the
+server's Hugging Face cache. All three default recipes use PyTorch SDPA attention.
+
+MEMIT also uses the locally prepared Wikipedia `20200501.en` train corpus for
+covariance statistics: 200 rows, up to 512 tokens per row and 512 padded tokens
+per batch. Put this corpus in the server's datasets cache before execution.
+This statistics budget is separate from the 50 CounterFact editing requests.
 
 ## Configure a task
 
@@ -113,8 +177,8 @@ configuration. Operation, model/trainer selection, task name, seed and output
 location remain managed by the task fields. Parameters use the same keys in both
 languages and appear in the equivalent command.
 
-The GPT-2 TOFU starter evaluates answer probability on its forget and retain
-inputs after training. Uploaded injection data needs separate evaluation inputs
+The TOFU default evaluates answer probability on its forget and retain inputs
+before and after training. Uploaded injection data needs separate evaluation inputs
 for target accuracy and retention; configure these paths and enable
 `trainer.args.do_eval` when those probes are available.
 

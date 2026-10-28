@@ -703,8 +703,11 @@ class RepositoryCatalog:
         The caller must recompose the returned request and execute that request.
         """
         from huggingface_hub import try_to_load_from_cache
+        from omegaconf import OmegaConf
+        from omegaconf.errors import OmegaConfBaseException
 
         config = yaml.safe_load(resolved_config)
+        interpolation_config = OmegaConf.create(config)
         model = config.get("model") or {}
         handler = model.get("model_handler", "AutoModelForCausalLM")
         args = model.get("model_args") or model
@@ -731,9 +734,47 @@ class RepositoryCatalog:
         overrides = dict(request.overrides)
         changes = []
         for component, prefix, source_key, component_args in components:
+            component_args = dict(component_args)
+            resolved_fields = {}
+            # Resolve only loading arguments: unrelated Hydra runtime fields
+            # are unavailable during the standalone composition preview.
+            for key in (
+                source_key,
+                "revision",
+                "subfolder",
+                "cache_dir",
+                "variant",
+                "use_safetensors",
+                "from_tf",
+                "from_flax",
+                "gguf_file",
+            ):
+                value = component_args.get(key)
+                if isinstance(value, str) and ("${" in value or value == "???"):
+                    try:
+                        value = OmegaConf.select(
+                            interpolation_config,
+                            f"{prefix}.{key}",
+                            throw_on_missing=True,
+                        )
+                    except OmegaConfBaseException:
+                        raise CatalogError(
+                            f"Cannot resolve {prefix}.{key}; check its environment variables "
+                            "and configuration references. / 无法解析模型加载配置，请检查"
+                            "对应环境变量、缺失字段或循环引用。"
+                        ) from None
+                    component_args[key] = value
+                    resolved_fields[f"{prefix}.{key}"] = value
             source = component_args.get(source_key)
             if component == "processor" and not source:
-                source = model.get("model_path")
+                try:
+                    source = OmegaConf.select(
+                        interpolation_config, "model.model_path", throw_on_missing=True
+                    )
+                except OmegaConfBaseException:
+                    raise CatalogError(
+                        "Cannot resolve the processor source. / 无法解析处理器路径，请检查模型路径配置。"
+                    ) from None
             if not isinstance(source, str) or not source:
                 continue
             if "${" in source:
@@ -741,8 +782,24 @@ class RepositoryCatalog:
                     f"Resolve the {component} source before execution. / 请先明确模型或分词器的实际路径。"
                 )
             local = self.root / Path(source).expanduser()
+            selected = None
+            selected_revision = None
             if source.startswith(("/", "./", "../", "~/")) or local.exists():
-                continue
+                local_model = dict(model)
+                if model.get("model_args"):
+                    local_model["model_args"] = component_args
+                else:
+                    local_model.update(component_args)
+                if component == "model":
+                    self._validate_local_model_weights(local_model)
+                elif not self._has_tokenizer_files(
+                    local / str(component_args.get("subfolder") or "")
+                ):
+                    raise CatalogError(
+                        f"Local {component} directory has no complete tokenizer files. / "
+                        "本地分词器或处理器目录缺少完整分词器文件，请检查实际路径。"
+                    )
+                selected = local.resolve()
             revision = str(component_args.get("revision") or "main")
             subfolder = str(component_args.get("subfolder") or "")
             if (
@@ -754,13 +811,14 @@ class RepositoryCatalog:
                     f"Use an existing local directory or a cached Hugging Face ID for {component}. / "
                     "请选择本地完整目录或已缓存的 Hugging Face 标识。"
                 )
-            selected = None
             filenames = (
                 ["config.json"]
                 if component == "model"
                 else ["tokenizer_config.json", "config.json", "tokenizer.json"]
             )
             for cache in self._model_cache_roots(component_args):
+                if selected is not None:
+                    break
                 for filename in filenames:
                     cached = try_to_load_from_cache(
                         source,
@@ -778,7 +836,7 @@ class RepositoryCatalog:
                         local_model = dict(model)
                         if model.get("model_args"):
                             local_model["model_args"] = {
-                                **args,
+                                **component_args,
                                 source_key: str(snapshot),
                             }
                         else:
@@ -798,6 +856,7 @@ class RepositoryCatalog:
                     ):
                         continue
                     selected = snapshot
+                    selected_revision = snapshot.name
                     break
                 if selected is not None:
                     break
@@ -812,6 +871,7 @@ class RepositoryCatalog:
             # Replace existing spellings of the same Hydra override rather than
             # retaining a stale explicit source before the newly pinned one.
             fields = {
+                **resolved_fields,
                 f"{prefix}.{source_key}": str(selected),
                 f"{prefix}.local_files_only": True,
             }
@@ -827,7 +887,7 @@ class RepositoryCatalog:
                     "component": component,
                     "source": source,
                     "path": str(selected),
-                    "revision": selected.name,
+                    "revision": selected_revision,
                 }
             )
         updated = (

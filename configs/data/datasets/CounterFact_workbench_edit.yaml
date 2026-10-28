@@ -1,0 +1,6 @@
+CounterFact_workbench_edit:
+  handler: CounterFactDataset
+  args:
+    data_path: ${paths.root_dir}/data/workbench/edit/counterfact.json
+    split: test
+    max_length: 512

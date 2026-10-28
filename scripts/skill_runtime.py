@@ -176,6 +176,16 @@ def _operation_from_intent(text: str) -> str:
 
 def _model_from_intent(text: str) -> str:
     lowered = text.lower().replace("_", "-")
+    # Honor explicit registered Llama IDs before size/family fallbacks.
+    for path in sorted(
+        (ROOT / "configs/model").glob("Llama*.yaml"),
+        key=lambda path: (-len(path.stem), path.stem),
+    ):
+        if re.search(
+            r"(?<![a-z0-9])" + re.escape(path.stem.lower()) + r"(?![a-z0-9])",
+            lowered,
+        ):
+            return path.stem
     for model in (
         "Qwen2.5-VL-3B",
         "Qwen2VL-2B",
@@ -217,6 +227,14 @@ def _is_long_text(text: str) -> bool:
 
 def _dataset_from_intent(text: str, operation: str) -> tuple[str, str]:
     lowered = text.lower()
+    workbench_datasets = {
+        "unlearning": ("TOFU_workbench_forget", "fact"),
+        "inject": ("RuleTaker_workbench_inject", "rule"),
+        "edit": ("CounterFact_workbench_edit", "fact"),
+    }
+    dataset_id, knowledge_type = workbench_datasets[operation]
+    if dataset_id.lower() in lowered:
+        return dataset_id, knowledge_type
     if operation == "edit" and "zsre" in lowered:
         return (
             ("LEME_zsre_edit", "free_text")
@@ -287,7 +305,7 @@ def _methods_from_intent(text: str, operation: str) -> list[str]:
 
 def _num_cases(text: str) -> int:
     match = re.search(
-        r"\b(\d+)\s*(?:edits?|cases?|samples?|records?|facts?|条)\b",
+        r"(?<!\d)(\d+)\s*(?:(?:edits?|cases?|samples?|records?|facts?)\b|条|个\s*(?:样本|记录|事实))",
         text,
         flags=re.I,
     )

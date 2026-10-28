@@ -1,0 +1,39 @@
+# @package _global_
+# Fifty factual replacements applied together to a Llama 3.2 1B checkpoint.
+# Set KNOW_SURGERY_LLAMA_MODEL_PATH to use an existing local checkpoint.
+
+defaults:
+  - override /model: Llama-3.2-1B-Instruct
+  - override /trainer: edit/MEMIT
+  - override /data: edit
+  - override /data/datasets@data.edit: CounterFact_workbench_edit
+  - override /eval: edit
+  - _self_
+
+task_name: counterfact_llama32_1b_memit_workbench
+edit_type: batch
+max_edits: 50
+save_edit_summary: true
+save_edited_model: false
+edit_reference_device: cuda:0
+
+model:
+  model_args:
+    pretrained_model_name_or_path: ${oc.env:KNOW_SURGERY_LLAMA_MODEL_PATH,meta-llama/Llama-3.2-1B-Instruct}
+    attn_implementation: sdpa
+  tokenizer_args:
+    pretrained_model_name_or_path: ${oc.env:KNOW_SURGERY_LLAMA_MODEL_PATH,meta-llama/Llama-3.2-1B-Instruct}
+
+trainer:
+  args:
+    do_eval: true
+  method_args:
+    layers: [4, 5, 6]
+    v_loss_layer: 15
+    v_num_grad_steps: 25
+    mom2_adjustment: true
+    mom2_dataset: wikipedia
+    mom2_dataset_config: 20200501.en
+    mom2_n_samples: 200
+    mom2_max_length: 512
+    mom2_batch_tokens: 512

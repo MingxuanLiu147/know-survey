@@ -81,6 +81,7 @@ class MEMITEditor(EditTrainer):
         mom2_dataset_config: str | None = None,
         mom2_sample_seed: int = 1,
         mom2_batch_tokens: int | None = None,
+        mom2_max_length: int | None = None,
         *args,
         **kwargs,
     ):
@@ -122,6 +123,7 @@ class MEMITEditor(EditTrainer):
         )
         self.mom2_sample_seed = mom2_sample_seed
         self.mom2_batch_tokens = mom2_batch_tokens
+        self.mom2_max_length = mom2_max_length
         validate_reference_profile(self, "MEMIT")
         self._cov_cache: Dict[str, torch.Tensor] = {}
 
@@ -340,6 +342,16 @@ class MEMITEditor(EditTrainer):
         """Return fixed preservation statistics for this rewrite module."""
         cache_key = rewrite_name
         if cache_key not in self._cov_cache:
+            stats_kwargs = reference_stats_kwargs(self)
+            # Explicit corpus and length choices also apply to the native
+            # profile; unset options preserve its existing cache identity.
+            for key, value in (
+                ("dataset_config", self.mom2_dataset_config),
+                ("batch_tokens", self.mom2_batch_tokens),
+                ("max_length", self.mom2_max_length),
+            ):
+                if value is not None:
+                    stats_kwargs[key] = value
             stats = layer_stats(
                 self.model,
                 self.tokenizer,
@@ -348,7 +360,7 @@ class MEMITEditor(EditTrainer):
                 ds_name=self.mom2_dataset,
                 sample_size=self.mom2_n_samples,
                 precision=self.mom2_dtype,
-                **reference_stats_kwargs(self),
+                **stats_kwargs,
             )
             covariance = stats.get("mom2")
             if covariance is None:
