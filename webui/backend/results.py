@@ -394,6 +394,53 @@ def _evaluation_settings(value: Any) -> Any:
     return value
 
 
+def _recorded_sha256(value: Any) -> str | None:
+    if (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdefABCDEF" for character in value)
+    ):
+        return value.lower()
+    return None
+
+
+def _unlearning_settings(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Recover explicit settings from the saved target-NLL evaluator format."""
+    boundary = payload.get("boundary_contract")
+    if not isinstance(boundary, dict) or not all(
+        isinstance(boundary.get(key), str) and boundary[key]
+        for key in (
+            "version",
+            "prompt_encoding",
+            "target_encoding",
+            "concatenation",
+            "labels",
+            "truncation",
+        )
+    ):
+        return None
+    if type(payload.get("max_length")) is not int or payload["max_length"] <= 0:
+        return None
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        return None
+    recorded = {}
+    for role in ("forget", "retain"):
+        item = data.get(role)
+        if not isinstance(item, dict):
+            return None
+        digest = _recorded_sha256(item.get("sha256"))
+        count = item.get("records")
+        if digest is None or type(count) is not int or count <= 0:
+            return None
+        recorded[role] = {"sha256": digest, "records": count}
+    return {
+        "boundary_contract": boundary,
+        "max_length": payload["max_length"],
+        "data": recorded,
+    }
+
+
 def _comparison_metadata(run_dir: Path, config: dict[str, Any]) -> dict[str, Any]:
     """Align with Skill comparison fields, adding data-role, evaluator and budget checks.
 
@@ -403,6 +450,10 @@ def _comparison_metadata(run_dir: Path, config: dict[str, Any]) -> dict[str, Any
     trace = _read_json(run_dir / "run_trace.json")
     manifest = _read_json(run_dir / "input_manifest.json")
     environment = _read_json(run_dir / "environment.json")
+    unlearning = _read_json(run_dir / "unlearning_metrics.json")
+    saved_evaluation = _unlearning_settings(unlearning)
+    model_identity = unlearning.get("base_model_identity")
+    boundary = unlearning.get("boundary_contract")
     model = config.get("model") if isinstance(config.get("model"), dict) else {}
     model_args = (
         model.get("model_args") if isinstance(model.get("model_args"), dict) else {}
@@ -444,6 +495,8 @@ def _comparison_metadata(run_dir: Path, config: dict[str, Any]) -> dict[str, Any
         )
     scope = trace.get("scope") or manifest.get("used_samples")
     count = manifest.get("request_count")
+    if count is None and isinstance(manifest.get("used_samples"), dict):
+        count = manifest["used_samples"].get("train")
     if not scope and type(count) is int and count > 0:
         scope = {"request_count": count}
     gpu = environment.get("gpu_name") or environment.get("cuda_devices")
@@ -455,14 +508,27 @@ def _comparison_metadata(run_dir: Path, config: dict[str, Any]) -> dict[str, Any
         or model.get("model_path"),
         "model_revision": trace.get("model_revision")
         or environment.get("model_revision")
-        or model_args.get("revision"),
+        or model_args.get("revision")
+        or (
+            _recorded_sha256(model_identity.get("identity_sha256"))
+            if isinstance(model_identity, dict)
+            else None
+        ),
         "dataset": _data_identity(manifest, data, config.get("eval"))
         if isinstance(data, dict)
         else None,
         "scope": scope,
         "request_count": count if type(count) is int and count > 0 else None,
-        "protocol": trace.get("protocol"),
-        "evaluation": _fingerprint(_evaluation_settings(config.get("eval"))),
+        "protocol": trace.get("protocol")
+        or (boundary.get("version") if isinstance(boundary, dict) else None),
+        "evaluation": _fingerprint(
+            {
+                "configured": _evaluation_settings(config.get("eval")),
+                "saved": saved_evaluation,
+            }
+            if saved_evaluation
+            else _evaluation_settings(config.get("eval"))
+        ),
         "budget": budget,
         "seed": args.get("seed"),
         "environment": {
@@ -590,6 +656,61 @@ def _metric_context(
     }
 
 
+def _unlearning_metric_context(payload: dict[str, Any], key: str) -> dict[str, Any]:
+    """Read schema-v2 NLL semantics only when its saved sums reproduce the mean."""
+    context = {**payload, "measurement_kind": "target_token_nll"}
+    settings = _unlearning_settings(payload)
+    if payload.get("schema_version") != 2 or settings is None:
+        return context
+    split = "retain" if "retain" in key else "forget"
+    values = {}
+    for phase in ("base", "edited"):
+        groups = payload.get(phase)
+        entry = groups.get(split) if isinstance(groups, dict) else None
+        if not isinstance(entry, dict):
+            return context
+        total, tokens, mean = (
+            entry.get("target_nll_sum"),
+            entry.get("target_tokens"),
+            entry.get("mean_target_nll"),
+        )
+        if (
+            type(total) not in (int, float)
+            or not math.isfinite(total)
+            or type(tokens) is not int
+            or tokens <= 0
+            or type(mean) not in (int, float)
+            or not math.isfinite(mean)
+            or not math.isclose(total / tokens, mean, rel_tol=1e-6, abs_tol=1e-8)
+        ):
+            return context
+        values[phase] = entry
+    change = key.endswith("_change")
+    phase = "base" if key.startswith("base_") else "edited"
+    expected = (
+        values["edited"]["mean_target_nll"] - values["base"]["mean_target_nll"]
+        if change
+        else values[phase]["mean_target_nll"]
+    )
+    recorded = payload.get(key)
+    if type(recorded) not in (int, float) or not math.isclose(
+        recorded, expected, rel_tol=1e-6, abs_tol=1e-8
+    ):
+        return context
+    if not context.get("protocol_version"):
+        context["protocol_version"] = settings["boundary_contract"]["version"]
+    if not context.get("scoring"):
+        context["scoring"] = (
+            "edited minus base target-token-weighted mean NLL"
+            if change
+            else "target_nll_sum / target_tokens"
+        )
+    if not change:
+        context.setdefault("numerator", values[phase]["target_nll_sum"])
+        context.setdefault("denominator", values[phase]["target_tokens"])
+    return context
+
+
 def _scalar_metrics(run_dir: Path) -> list[dict[str, Any]]:
     rows = []
 
@@ -665,7 +786,7 @@ def _scalar_metrics(run_dir: Path) -> list[dict[str, Any]]:
                 key,
                 unlearning[key],
                 "unlearning_metrics.json",
-                {**unlearning, "measurement_kind": "target_token_nll"},
+                _unlearning_metric_context(unlearning, key),
             )
     target_nll = _read_json(run_dir / "target_nll.json")
     if target_nll:

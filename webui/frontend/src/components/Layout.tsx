@@ -113,12 +113,12 @@ export function Layout() {
 
   const navigation = (
     <>
-      <div className="brand">
+      <div className="brand notranslate" translate="no">
         <div className="brand-symbol" aria-hidden="true">
           <img src="/know-surgery-workbench.png" alt="" width={64} height={64} />
         </div>
         <div className="brand-copy">
-          <strong>Know-Surgery</strong>
+          <strong title="Know-Surgery">Know-Surgery</strong>
         </div>
       </div>
       <nav className="primary-nav" aria-label={t("primaryNavigation")}>
@@ -176,14 +176,15 @@ export function Layout() {
   );
 
   return (
-    <div className={"app-shell " + (collapsed ? "sidebar-collapsed" : "")}>
+    <div className={"app-shell notranslate " + (collapsed ? "sidebar-collapsed" : "")} translate="no">
       <a className="skip-link" href="#main-content">
         {t("skipToContent")}
       </a>
       <aside className="sidebar">{navigation}</aside>
       <header className="mobile-header">
         <button
-          className="mobile-brand"
+          className="mobile-brand notranslate"
+          translate="no"
           onClick={() => setMobileOpen(true)}
           aria-label={t("openNavigation")}
           aria-expanded={mobileOpen}

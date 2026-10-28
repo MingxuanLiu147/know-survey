@@ -102,14 +102,80 @@ def _local_plan(request: PlanRequest) -> dict[str, Any]:
     plan["plan_id"] = output.stem
     plan["provider"] = "local"
     plan["reasoning"] = _local_reasoning(plan, request.language)
-    if request.language == "zh":
-        for step in plan.get("steps", []):
-            step["reason"] = "根据目标选择对应步骤。"
+    for step in plan.get("steps", []):
+        step["reason"] = _step_reason(step["skill"], request.language)
     plan["warnings"] = [
         _localize_warning(warning, request.language)
         for warning in plan.get("warnings", [])
     ]
     return plan
+
+
+def _step_reason(skill: str, language: str) -> str:
+    """Describe suggested workflow steps without implying tool execution."""
+    descriptions = {
+        "plan-surgery": (
+            "根据目标生成可修改的模型、方法、数据和评估配置。",
+            "Propose editable model, method, data and evaluation settings.",
+        ),
+        "inspect-repo": (
+            "核对所选模型、方法和数据是否已注册。",
+            "Check that the selected model, method and dataset are registered.",
+        ),
+        "normalize-knowledge": (
+            "导入原始数据时统一字段；已规范化的数据可跳过。",
+            "Normalize fields when importing raw data; skip for normalized data.",
+        ),
+        "build-cases": (
+            "需要时构造任务样本与评估探针；已有可用样本可跳过。",
+            "Build task cases and evaluation probes when needed; reuse ready cases.",
+        ),
+        "smoke-test": (
+            "预览配置并核对输入；需要时检查不超过 2 条样本。",
+            "Preview the configuration and inputs; optionally check up to 2 cases.",
+        ),
+        "run-edit": (
+            "执行确认后的编辑配置，并保存输出与评估结果。",
+            "Run the reviewed editing configuration and save outputs and metrics.",
+        ),
+        "run-inject": (
+            "执行确认后的注入配置，并保存输出与评估结果。",
+            "Run the reviewed injection configuration and save outputs and metrics.",
+        ),
+        "run-unlearn": (
+            "执行确认后的遗忘配置，并检查遗忘集和保留集。",
+            "Run the reviewed unlearning configuration and evaluate forget and retain sets.",
+        ),
+        "aggregate-results": (
+            "有多次运行时汇总已保存的指标。",
+            "Collect saved metrics when there are multiple runs.",
+        ),
+        "compare-methods": (
+            "需要比较方法时，核对运行条件后比较指标。",
+            "Compare methods when requested, after checking their run settings.",
+        ),
+        "generate-report": (
+            "按需将已有运行结果整理成报告。",
+            "Optionally turn existing run results into a report.",
+        ),
+        "reproduce-run": (
+            "按需提取已保存运行的命令和配置，供再次运行。",
+            "Optionally recover a saved run's command and configuration for reuse.",
+        ),
+        "add-multimodal-case": (
+            "使用图文数据时检查图像路径与样本字段。",
+            "Check image paths and case fields when using image-text data.",
+        ),
+        "add-dataset": (
+            "使用新数据集时注册其配置和字段映射。",
+            "Register the configuration and field mapping when adding a dataset.",
+        ),
+    }
+    fallback = (
+        "按任务需要使用此工作流步骤。",
+        "Use this workflow step when the task requires it.",
+    )
+    return descriptions.get(skill, fallback)[0 if language == "zh" else 1]
 
 
 def _localize_warning(warning: str, language: str = "zh") -> str:
@@ -249,6 +315,7 @@ def _validate_remote_choice(
     choice: dict[str, Any],
     baseline: dict[str, Any],
     catalog: RepositoryCatalog,
+    language: str = "en",
 ) -> dict[str, Any]:
     snapshot = catalog.snapshot()
     modality = choice.get("modality", baseline.get("modality", "text"))
@@ -309,6 +376,7 @@ def _validate_remote_choice(
     rebuilt = _local_plan(
         PlanRequest(
             intent=baseline["intent"],
+            language=language,
             operation=operation,
             modality=modality,
             model_id=model,
@@ -319,6 +387,7 @@ def _validate_remote_choice(
     )
     for key in ("experiments", "evaluators", "steps", "knowledge_type"):
         baseline[key] = rebuilt[key]
+    baseline["reasoning"] = choice.get("reasoning") or rebuilt["reasoning"]
     baseline["warnings"] = list(
         dict.fromkeys(
             [*rebuilt["warnings"], *[str(item) for item in choice.get("warnings", [])]]
@@ -366,7 +435,14 @@ def _remote_plan(
         "listed in the supplied registry. Keep public operation names exactly "
         "unlearning, inject, or edit. Include target efficacy and side-effect "
         "evaluation. Return operation, modality, model_id, dataset_id, methods, num_cases, "
-        "reasoning (array of field/reason objects), and warnings."
+        "reasoning (array of field/reason objects), and warnings. "
+        "Use operation, model, dataset, methods, evaluation and num_cases as reasoning "
+        "field keys; keep registry IDs and field keys unchanged. "
+        "Describe sample counts and training steps concretely. Do not use labels such as "
+        "smoke test, 冒烟测试, 冒烟, 极小试运行 or 不代表正式评测. "
+        "The baseline steps are suggested workflow definitions, not a mandatory sequence "
+        "or a record of completed tool calls. Raw-data preparation is needed only for "
+        "unprepared inputs; reporting and reproduction are optional."
     )
     system += (
         " Write all explanatory reasons and warnings in Simplified Chinese."
@@ -434,6 +510,7 @@ def _remote_plan(
         choice,
         baseline,
         catalog,
+        language=request.language,
     )
     plan["provider"] = provider
     return plan
@@ -449,6 +526,7 @@ def create_plan(
         if request.provider == "local"
         else _remote_plan(request.provider, request, baseline, catalog)
     )
+    plan["language"] = request.language
     step_match = re.search(
         r"(\d+)\s*(?:(?:个|次)?\s*训练步|(?:training\s+)?steps?\b)",
         request.intent,

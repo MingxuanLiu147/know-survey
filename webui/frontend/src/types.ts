@@ -64,6 +64,7 @@ export interface Recipe {
 
 export interface Plan {
   plan_id: string;
+  language?: "en" | "zh";
   configuration?: ComposePayload | null;
   configuration_limits?: { max_samples: number | null; max_steps: number | null };
   configurations?: Record<string, ComposePayload>;

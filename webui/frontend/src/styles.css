@@ -1183,12 +1183,12 @@ textarea::placeholder {
 
 .skill-timeline small {
   display: block;
-  overflow: hidden;
   margin-top: 2px;
   color: var(--text-muted);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .skill-timeline svg {

@@ -1,7 +1,6 @@
 import {
   ArrowRight,
   Bot,
-  Check,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
@@ -37,6 +36,7 @@ import {
 import {
   displayTechnicalText,
   localizedSkillDescription,
+  localizedSkillName,
   uiErrorMessage,
   useI18n
 } from "../i18n";
@@ -521,8 +521,14 @@ export function Workbench() {
   const planFieldLabels: Record<string, string> = {
     operation: t("operation"),
     model: t("model"),
+    model_id: t("model"),
+    dataset: t("dataset"),
+    dataset_id: t("dataset"),
+    method: t("method"),
     methods: t("method"),
-    evaluation: t("evaluation")
+    evaluation: t("evaluation"),
+    evaluators: t("evaluation"),
+    num_cases: language === "zh" ? "样本数" : "Sample count"
   };
   const runStatusLabels: Record<string, string> = {
     queued: t("queued"),
@@ -722,8 +728,8 @@ export function Workbench() {
                 </Link>
               </div>
               {showSkills && <p className="section-description">{language === "zh"
-                ? "这些是项目共享的工作流定义；Agent 可调用的工具随执行模式而定。"
-                : "These are shared workflow definitions. The tools available to the Agent depend on its execution mode."}</p>}
+                ? "高亮项对应下面的建议流程；实际调用会显示在 Agent 执行记录中。"
+                : "Highlighted skills belong to the suggested workflow below. Actual calls appear in the Agent execution trace."}</p>}
               {showSkills ? (
                 <div className="planner-skill-list" role="list">
                   {skills.map((skill) => {
@@ -733,14 +739,13 @@ export function Workbench() {
                         role="listitem"
                         className={selected ? "is-selected" : ""}
                         key={skill.id}
-                        title={localizedSkillDescription(
+                        title={`${displayTechnicalText(skill.id)}: ${localizedSkillDescription(
                           skill.id,
                           language,
                           skill.description
-                        )}
+                        )}`}
                       >
-                        {selected ? <Check size={11} /> : null}
-                        {displayTechnicalText(skill.id)}
+                        {localizedSkillName(skill.id, language)}
                       </span>
                     );
                   })}
@@ -750,6 +755,9 @@ export function Workbench() {
 
             {plan ? (
               <div className="agent-plan">
+                {plan.language && plan.language !== language ? <p className="section-description" role="status">{language === "zh"
+                  ? "这份计划的说明以英文生成。配置已保留；如需中文说明，请重新生成计划。"
+                  : "This plan's explanations were generated in Chinese. Its configuration is retained; generate a new plan for English explanations."}</p> : null}
                 <div className="plan-summary">
                   <div>
                     <Bot size={18} />
@@ -792,6 +800,10 @@ export function Workbench() {
                     </div>
                   </div>
                 ) : null}
+                <h3>{language === "zh" ? "建议流程" : "Suggested workflow"}</h3>
+                <p className="section-description">{language === "zh"
+                  ? "按任务需要选择步骤，并非每项都要调用。已有可用样本时可跳过数据整理与构造，报告和复现命令按需生成。"
+                  : "Use the steps needed for this task. Ready-to-use cases can skip data preparation; reports and reproduction commands are optional."}</p>
                 <ol className="skill-timeline">
                   {plan.steps.map((step, index) => (
                     <li key={step.skill}>
@@ -799,8 +811,8 @@ export function Workbench() {
                         {String(index + 1).padStart(2, "0")}
                       </span>
                       <div>
-                        <strong>{displayTechnicalText(step.skill)}</strong>
-                        <small>{step.reason}</small>
+                        <strong title={displayTechnicalText(step.skill)}>{localizedSkillName(step.skill, language)}</strong>
+                        {step.reason ? <small>{displayTechnicalText(step.reason)}</small> : null}
                       </div>
                       <ChevronRight size={15} />
                     </li>
@@ -810,8 +822,8 @@ export function Workbench() {
                   <h3>{t("rationale")}</h3>
                   {plan.reasoning.map((item) => (
                     <div key={item.field}>
-                      <span>{planFieldLabels[item.field] || item.field}</span>
-                      <p>{item.reason}</p>
+                      <span>{planFieldLabels[item.field.toLowerCase()] || item.field}</span>
+                      <p>{displayTechnicalText(item.reason)}</p>
                     </div>
                   ))}
                 </div>
@@ -821,7 +833,7 @@ export function Workbench() {
                     <div>
                       <strong>{t("warnings")}</strong>
                       {plan.warnings.map((warning) => (
-                        <p key={warning}>{warning}</p>
+                        <p key={warning}>{displayTechnicalText(warning)}</p>
                       ))}
                     </div>
                   </div>

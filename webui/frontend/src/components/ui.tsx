@@ -95,9 +95,10 @@ export function OperationBadge({
 }: {
   operation: Operation | "evaluation" | "unknown";
 }) {
+  const { t } = useI18n();
   return (
-    <span className={"operation-badge operation-" + operation}>
-      {operation}
+    <span className={"operation-badge operation-" + operation} title={operation}>
+      {t(operation)}
     </span>
   );
 }
@@ -182,4 +183,3 @@ export function EmptyState({
     </div>
   );
 }
-

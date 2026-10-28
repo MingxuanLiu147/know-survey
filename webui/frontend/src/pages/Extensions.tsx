@@ -222,7 +222,7 @@ export function Extensions() {
                 </div>
                 <div className="skill-card-body">
                   <div>
-                    <strong>{displayTechnicalText(skill.id)}</strong>
+                    <strong className="notranslate" translate="no">{displayTechnicalText(skill.id)}</strong>
                     <span>{categoryLabels[skill.category] || skill.category}</span>
                   </div>
                   <p>
@@ -249,6 +249,11 @@ export function Extensions() {
 
       {tab === "models" ? (
         <section className="registry-table-section">
+          <p className="muted">
+            {language === "zh"
+              ? "已配置表示项目提供了配置文件；运行前仍需检查本地权重和所选方法的兼容性。此列表不检查模型是否已下载。"
+              : "Configured means a configuration file is provided. Check local weights and compatibility with the selected method before running. This list does not check whether weights are downloaded."}
+          </p>
           <div className="table-scroll">
             <table className="data-table registry-table">
               <thead>
@@ -264,18 +269,22 @@ export function Extensions() {
                 {filteredModels.map((item) => (
                   <tr key={item.id}>
                     <td>
-                          <strong>{displayTechnicalText(item.id)}</strong>
+                      <strong className="notranslate" translate="no" title={item.id}>{displayTechnicalText(item.id)}</strong>
                     </td>
                     <td>
                       {item.modality === "text"
                         ? t("textModality")
                         : t("multimodalModality")}
                     </td>
-                    <td className="mono truncate-cell">
-                      {item.source || t("processorPathContract")}
+                    <td>
+                      {item.source ? (
+                        <span className="mono notranslate" translate="no" title={item.source}>{item.source}</span>
+                      ) : t("processorPathContract")}
                     </td>
                     <td>
-                      {item.local ? t("localPath") : t("registryReference")}
+                      {!item.source
+                        ? (language === "zh" ? "未列出" : "Not listed")
+                        : item.local ? t("localPath") : t("registryReference")}
                     </td>
                     <td>
                       <StatusBadge level={item.status} compact />
@@ -304,9 +313,9 @@ export function Extensions() {
                 {filteredDatasets.map((item) => (
                   <tr key={item.id}>
                     <td>
-                      <strong>{displayTechnicalText(item.id)}</strong>
+                      <strong className="notranslate" translate="no">{displayTechnicalText(item.id)}</strong>
                     </td>
-                    <td className="mono">{item.handlers.join(", ") || "N/A"}</td>
+                    <td className="mono notranslate" translate="no">{item.handlers.join(", ") || "N/A"}</td>
                     <td>
                       <div className="operation-list">
                         {item.operations.map((operation) => (
@@ -346,7 +355,7 @@ export function Extensions() {
                 {filteredMethods.map((item) => (
                   <tr key={item.operation + item.id}>
                     <td>
-                      <strong>{item.id.split("/").at(-1)}</strong>
+                      <strong className="notranslate" translate="no">{item.id.split("/").at(-1)}</strong>
                     </td>
                     <td>
                       <span
@@ -357,7 +366,7 @@ export function Extensions() {
                         {item.operation}
                       </span>
                     </td>
-                    <td className="mono">configs/trainer/{item.id}.yaml</td>
+                    <td className="mono notranslate" translate="no">configs/trainer/{item.id}.yaml</td>
                     <td>
                       <StatusBadge level={item.status} compact />
                     </td>

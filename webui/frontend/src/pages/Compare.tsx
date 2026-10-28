@@ -189,8 +189,10 @@ export function Compare() {
     if (text === "Compares recorded inputs, model revision, record counts, evaluation settings, run limits and environment.") return "按已记录的输入、模型版本、样本数、评测设置、运行设置和环境比较。";
     if (text === "Compares recorded inputs, model revision, record counts, evaluation settings, run limits, environment, metric protocols and scoring semantics. Unmatched results remain side by side without a ranking.") return "按已记录的输入、模型版本、样本数、评测与运行设置、环境、指标协议和评分方式比较。条件不匹配的结果仅并列展示，不作排名。";
     if (text === "Check that both runs have completed evaluation, share quality metrics, and use matching comparison settings.") return "请检查各运行是否完成评测、具有相同效果指标，并采用一致的比较条件。";
+    if (text === "Metric protocols or scoring semantics are missing or different.") return "部分指标的评测协议或评分方式未记录，或各运行采用的方式不同。";
     return displayTechnicalText(text);
   };
+  const unmatchedConditions = Object.entries(comparison?.fairness || {}).filter(([, item]) => !item.known || !item.equal);
 
   return (
     <div className="page compare-page">
@@ -228,7 +230,7 @@ export function Compare() {
                     className={operation === value ? "active" : ""}
                     onClick={() => setOperation(value)}
                   >
-                    {value === "all" ? t("all") : value}
+                    {value === "all" ? t("all") : language === "zh" ? ({ unlearning: "遗忘", inject: "注入", edit: "编辑", evaluation: "评测" } as Record<string, string>)[value] : ({ unlearning: "Unlearning", inject: "Injection", edit: "Editing", evaluation: "Evaluation" } as Record<string, string>)[value]}
                   </button>
                 )
               )}
@@ -299,7 +301,11 @@ export function Compare() {
               {comparison.warnings.length ? <div className="comparison-notes" role="note">
                 {comparison.warnings.map((warning, index) => <p key={index}>{comparisonNote(warning)}</p>)}
               </div> : null}
-              <div className="fairness-grid">
+              <details className="source-details">
+                <summary>{language === "zh" ? "查看比较条件" : "View comparison conditions"} · {unmatchedConditions.length
+                  ? (language === "zh" ? `${unmatchedConditions.length} 项缺失或不同` : `${unmatchedConditions.length} missing or different`)
+                  : (language === "zh" ? "已记录条件一致" : "Recorded conditions match")}</summary>
+                <div className="fairness-grid">
                 {Object.entries(comparison.fairness).map(([key, item]) => (
                   <div
                     className={
@@ -324,7 +330,8 @@ export function Compare() {
                     </details>
                   </div>
                 ))}
-              </div>
+                </div>
+              </details>
 
               {comparison.metric_ids.length ? (
                 <>
@@ -382,7 +389,7 @@ export function Compare() {
                         <Tooltip
                           formatter={(_value, _name, item) => [
                             item.payload.formatted,
-                            metricId
+                            metricLabel(metricId)
                           ]}
                           contentStyle={{
                             background: "var(--surface-raised)",
