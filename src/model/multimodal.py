@@ -6,6 +6,7 @@
 
 import json
 import logging
+import re
 from pathlib import Path
 from typing import List, Set
 
@@ -47,6 +48,40 @@ def _get_torch_dtype(dtype_str: str) -> torch.dtype:
     return mapping.get(dtype_str, torch.bfloat16)
 
 
+def _language_lora_targets(model, configured_targets) -> str:
+    """Resolve projection names inside the text decoder to an exact PEFT regex.
+
+    Qwen's vision MLP shares ``up_proj``/``down_proj``/``gate_proj`` suffixes
+    with its text MLP. Passing those suffixes directly to PEFT edits both.
+    ``get_decoder`` identifies the text backbone across supported HF versions.
+    """
+    get_decoder = getattr(model, "get_decoder", None)
+    if get_decoder is None or not configured_targets:
+        raise ValueError(
+            "explicit-language-projections requires a text decoder and target_modules"
+        )
+    decoder = get_decoder()
+    decoder_modules = {id(module) for module in decoder.modules()}
+    targets = []
+    for name, module in model.named_modules():
+        if id(module) not in decoder_modules or not isinstance(module, torch.nn.Linear):
+            continue
+        matches = (
+            re.fullmatch(configured_targets, name) is not None
+            if isinstance(configured_targets, str)
+            else any(
+                name == target or name.endswith("." + target)
+                for target in configured_targets
+            )
+        )
+        if matches:
+            targets.append(name)
+    if not targets:
+        raise ValueError("No text decoder projections matched LoRA target_modules")
+    # A regex full match avoids PEFT's suffix matching against another subtree.
+    return "(?:" + "|".join(re.escape(name) for name in sorted(targets)) + ")"
+
+
 def get_mm_model(model_cfg: DictConfig, *, for_training: bool = True):
     """加载多模态模型和 processor。
 
@@ -58,13 +93,6 @@ def get_mm_model(model_cfg: DictConfig, *, for_training: bool = True):
         (model, processor) 二元组。
     """
     model_path = str(model_cfg.model_path)
-    processor_path = str(model_cfg.get("processor_path") or model_path)
-    use_saved_processor = not for_training and any(
-        (Path(model_path) / name).is_file()
-        for name in ("preprocessor_config.json", "processor_config.json")
-    )
-    if use_saved_processor:
-        processor_path = model_path
     torch_dtype = _get_torch_dtype(model_cfg.get("torch_dtype", "bfloat16"))
     attn_impl = model_cfg.get("attn_implementation", None)
     trust_remote_code = bool(model_cfg.get("trust_remote_code", False))
@@ -87,7 +115,9 @@ def get_mm_model(model_cfg: DictConfig, *, for_training: bool = True):
     lora_cfg = model_cfg.get("lora", None)
     if for_training and lora_cfg and lora_cfg.get("enabled", False):
         configured_targets = lora_cfg.get("target_modules", None)
-        if isinstance(configured_targets, str):
+        if lora_cfg.get("target_policy") == "explicit-language-projections":
+            target_modules = _language_lora_targets(model, configured_targets)
+        elif isinstance(configured_targets, str):
             # PEFT treats a string as a regex; keep it intact for model-specific
             # language-backbone targeting (for example LLaVA).
             target_modules = configured_targets
@@ -102,7 +132,7 @@ def get_mm_model(model_cfg: DictConfig, *, for_training: bool = True):
             lora_alpha=lora_cfg.get("alpha", 16),
             lora_dropout=lora_cfg.get("dropout", 0.05),
             target_modules=target_modules,
-            init_lora_weights="gaussian",
+            init_lora_weights=lora_cfg.get("init_lora_weights", "gaussian"),
             use_dora=bool(lora_cfg.get("use_dora", False)),
         )
         model = get_peft_model(model, lora_config)
@@ -110,8 +140,29 @@ def get_mm_model(model_cfg: DictConfig, *, for_training: bool = True):
             model.enable_input_require_grads()
         model.print_trainable_parameters()
 
+    processor = get_mm_processor(model_cfg, for_training=for_training)
+
+    model.eval()
+
+    return model, processor
+
+
+def get_mm_processor(model_cfg: DictConfig, *, for_training: bool = False):
+    """Load the checkpoint's processor without allocating its model weights."""
+    model_path = str(model_cfg.model_path)
+    processor_path = str(model_cfg.get("processor_path") or model_path)
+    use_saved_processor = bool(
+        model_cfg.get("preserve_saved_processor", not for_training)
+    ) and any(
+        (Path(model_path) / name).is_file()
+        for name in ("preprocessor_config.json", "processor_config.json")
+    )
+    if use_saved_processor:
+        processor_path = model_path
+    trust_remote_code = bool(model_cfg.get("trust_remote_code", False))
+    local_files_only = bool(model_cfg.get("local_files_only", False))
     # Saved image geometry and preprocessing belong to the checkpoint. Inherited
-    # base-model processor arguments must not silently replace them at evaluation.
+    # base-model processor arguments must not replace them during training or eval.
     processor_kwargs = (
         {} if use_saved_processor else dict(model_cfg.get("processor_args", {}))
     )
@@ -143,6 +194,4 @@ def get_mm_model(model_cfg: DictConfig, *, for_training: bool = True):
             )
         tokenizer.pad_token = eos_token
 
-    model.eval()
-
-    return model, processor
+    return processor

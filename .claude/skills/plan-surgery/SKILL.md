@@ -7,7 +7,7 @@ description: Turn a natural-language unlearning, injection or editing request in
 
 Run `python .claude/skills/plan-surgery/scripts/run.py --intent "Edit one CounterFact fact with GPT2 and FT"`.
 Optional overrides are `--operation`, `--model-id`, `--dataset-id`, `--methods FT,ROME`,
-`--num-cases` and `--output <plan.json>`. Public operations are exactly
+`--num-cases`, `--modality text|multimodal` and `--output <plan.json>`. Public operations are exactly
 `unlearning`, `inject` and `edit`.
 
 For custom data, normalize and build cases first, then pass `--cases <cases.jsonl>`.
@@ -19,6 +19,12 @@ experiment recipes, sample budget, inputs and warnings. A missing exact recipe
 needs a checked compose preview, not an invented registration. The helper only
 plans. Use the appropriate run skill to preview, and execute only when the user's
 request authorizes the actual run. Existing authorization need not be requested again.
+
+For image-text injection, select `--modality multimodal --model-id Qwen2.5-VL-3B
+--methods MM_LoRA --dataset-id Canonical_MM_inject --cases <cases.jsonl>`.
+Cases require `prompt`, `target_new`, and `image` or `images`; relative image paths
+resolve from the cases file. Planning validates and binds these image paths.
+Existing plans without `modality` keep the text route.
 
 The plan schema is [surgery-plan.schema.json](../_shared/references/surgery-plan.schema.json).
 

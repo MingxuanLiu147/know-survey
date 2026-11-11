@@ -6,6 +6,8 @@ handler: InjectTrainer
 args:
   output_dir: ${paths.output_dir}
   do_train: true
+  # Resume a full Trainer checkpoint, not a final inference adapter directory.
+  resume_from_checkpoint: null
   # Enable only after setting explicit held-out eval_data_path and
   # benchmark_data_path (plus original_model_path for retention ratios).
   do_eval: false

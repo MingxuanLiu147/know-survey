@@ -12,6 +12,7 @@ Knowledge Editing 数据集
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -21,6 +22,17 @@ from typing import Any, Dict, Iterable, List, Optional, Union
 
 from datasets import load_dataset
 from torch.utils.data import Dataset
+
+from know_surgery.edit_data import (
+    EDITING_DATA_DEFAULTS,
+    default_edit_data_path,
+    EditingRecordNormalizer,
+    ZSRE_LOCAL_FILES,
+    resolve_data_path,
+    zsre_fields,
+    read_records,
+    validate_scope_sidecar,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,9 +54,10 @@ class EditingSample:
     multimodal_locality_inputs: Optional[Dict[str, Any]] = None
     scope_training_prompts: Optional[List[str]] = None
     scope_training_negatives: Optional[List[str]] = None
+    prompt_template: Optional[str] = None
 
 
-class EditingDataset(Dataset):
+class EditingDataset(EditingRecordNormalizer, Dataset):
     """知识编辑数据集基类。"""
 
     def __init__(
@@ -60,6 +73,10 @@ class EditingDataset(Dataset):
         template_args: Optional[Dict[str, Any]] = None,
         apply_chat_template: bool = False,
         split: Optional[str] = None,
+        expected_sha256: Optional[str] = None,
+        expected_num_samples: Optional[int] = None,
+        data_roots: Optional[List[str]] = None,
+        scope_training_path: Optional[str] = None,
         **kwargs,
     ):
         self.tokenizer = tokenizer
@@ -72,8 +89,34 @@ class EditingDataset(Dataset):
         self.target_old_key = target_old_key
         self.split = split
         self.extra_args = kwargs
+        self.data_roots = data_roots
+        self.explicit_data_path = bool(data_path)
+        self.scope_training_path = (
+            resolve_data_path(scope_training_path, None, root=self.project_root())
+            if scope_training_path
+            else None
+        )
         self.data_path = self._resolve_data_path(data_path, split)
+        if expected_sha256 is not None:
+            # A pinned benchmark must never fall back to a different HF dataset.
+            if self.data_path is None or not self.data_path.is_file():
+                raise FileNotFoundError(
+                    "Pinned editing data is missing. Set data_path to the benchmark "
+                    "JSON/JSONL matching expected_sha256. / 请指定与基准校验值一致的数据文件。"
+                )
+            actual_sha256 = hashlib.sha256(self.data_path.read_bytes()).hexdigest()
+            if actual_sha256 != expected_sha256:
+                raise ValueError(
+                    f"Editing dataset SHA256 mismatch: expected {expected_sha256}, "
+                    f"got {actual_sha256}. Set data_path to the matching benchmark "
+                    "snapshot. / 数据文件与实验配置不一致，请使用对应的完整基准数据。"
+                )
         self.data = self._load_data(hf_args)
+        if expected_num_samples is not None and len(self.data) != expected_num_samples:
+            raise ValueError(
+                f"Editing dataset requires {expected_num_samples} normalized samples, "
+                f"got {len(self.data)}. / 规范化后的样本数与实验配置不一致。"
+            )
         logger.info(
             "%s loaded with %d samples from %s",
             self.__class__.__name__,
@@ -95,13 +138,12 @@ class EditingDataset(Dataset):
     def _resolve_data_path(
         self, data_path: Optional[str], split: Optional[str]
     ) -> Optional[Path]:
-        candidate = data_path or self._default_data_path(split)
-        if candidate is None:
-            return None
-        path = Path(candidate).expanduser()
-        if not path.is_absolute():
-            path = self.project_root() / path
-        return path
+        return resolve_data_path(
+            data_path,
+            self._default_data_path(split),
+            root=self.project_root(),
+            data_roots=self.data_roots,
+        )
 
     def _load_raw_data(self, hf_args: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if self.data_path is not None:
@@ -121,7 +163,7 @@ class EditingDataset(Dataset):
                     data = data["data"]
                 return list(data)
 
-            if not hf_args:
+            if self.explicit_data_path or not hf_args:
                 raise FileNotFoundError(
                     f"Editing dataset file not found: {self.data_path}. "
                     "Set data_path to an existing JSON/JSONL file or provide hf_args."
@@ -147,6 +189,23 @@ class EditingDataset(Dataset):
 
     def _load_data(self, hf_args: Optional[Dict[str, Any]]) -> List[EditingSample]:
         raw_data = self._load_raw_data(hf_args)
+        if self.scope_training_path:
+            training = read_records(self.scope_training_path)
+            validate_scope_sidecar(raw_data, training)
+            raw_data = [
+                {
+                    **row,
+                    **{
+                        key: entry[key]
+                        for key in (
+                            "scope_training_prompts",
+                            "scope_training_negatives",
+                        )
+                        if key in entry
+                    },
+                }
+                for row, entry in zip(raw_data, training)
+            ]
         samples: List[EditingSample] = []
         for index, item in enumerate(raw_data):
             normalized = self.normalize_record(item, index)
@@ -185,6 +244,7 @@ class EditingDataset(Dataset):
             ),
             locality_inputs=item.get("locality_inputs", item.get("locality")),
             portability_inputs=item.get("portability_inputs", item.get("portability")),
+            prompt_template=item.get("prompt_template"),
         )
 
     def _build_sample(
@@ -196,15 +256,25 @@ class EditingDataset(Dataset):
         rephrase_prompts: Any = None,
         locality_inputs: Any = None,
         portability_inputs: Any = None,
+        prompt_template: Any = None,
     ) -> Optional[EditingSample]:
         prompt_text = self._flatten_text(prompt).strip()
         target_new_text = self._flatten_text(target_new).strip()
         if not prompt_text or not target_new_text:
             return None
 
-        subject_text = self._flatten_text(
-            subject
-        ).strip() or self._infer_subject_from_prompt(prompt_text)
+        explicit_subject = self._flatten_text(subject).strip()
+        subject_text = explicit_subject or self._infer_subject_from_prompt(prompt_text)
+        template_text = self._flatten_text(prompt_template).strip() or None
+        if template_text is None and explicit_subject and "{}" in prompt_text:
+            template_text = prompt_text
+        if template_text is not None:
+            if template_text.count("{}") != 1 or not subject_text:
+                raise ValueError("prompt_template requires one {} and a subject")
+            rendered = template_text.format(subject_text)
+            if prompt_text not in (template_text, rendered):
+                raise ValueError("prompt_template does not match the supplied prompt")
+            prompt_text = rendered
         if subject_text and subject_text not in prompt_text:
             prompt_text = f"Subject: {subject_text}\n{prompt_text}"
 
@@ -218,6 +288,9 @@ class EditingDataset(Dataset):
             prompt=prompt_text,
             subject=subject_text or prompt_text,
             target_new=target_new_text,
+            prompt_template=(
+                self._format_model_prompt(template_text) if template_text else None
+            ),
             target_old=self._flatten_text(target_old).strip() or None,
             rephrase_prompts=normalized_rephrases or None,
             locality_inputs=self._normalize_eval_groups(locality_inputs, "locality"),
@@ -251,148 +324,6 @@ class EditingDataset(Dataset):
             add_generation_prompt=True,
         )
 
-    def _normalize_prompt_list(self, value: Any) -> List[str]:
-        from know_surgery.data_contract import rephrase_prompts
-
-        return rephrase_prompts(value)
-
-    def _flatten_text(self, value: Any) -> str:
-        if value is None:
-            return ""
-        if isinstance(value, str):
-            return value
-        if isinstance(value, (int, float, bool)):
-            return str(value)
-        if isinstance(value, list):
-            for item in value:
-                flattened = self._flatten_text(item).strip()
-                if flattened:
-                    return flattened
-            return ""
-        if isinstance(value, dict):
-            for key in ("str", "text", "name", "answer", "target", "value", "label"):
-                if key in value:
-                    flattened = self._flatten_text(value[key]).strip()
-                    if flattened:
-                        return flattened
-            return ""
-        return str(value)
-
-    def _expected_from_item(
-        self, item: Dict[str, Any], default_target: Any = None
-    ) -> str:
-        for key in (
-            "ground_truth",
-            "expected",
-            "answer",
-            "target",
-            "target_new",
-            "target_true",
-        ):
-            if key in item:
-                value = self._flatten_text(item[key]).strip()
-                if value:
-                    return value
-        return self._flatten_text(default_target).strip()
-
-    def _make_eval_item(self, prompt: Any, target: Any) -> Optional[Dict[str, str]]:
-        prompt_text = self._flatten_text(prompt).strip()
-        target_text = self._flatten_text(target).strip()
-        if not prompt_text or not target_text:
-            return None
-        return {
-            "prompt": self._format_model_prompt(prompt_text),
-            "ground_truth": target_text,
-        }
-
-    def _coerce_eval_entries(
-        self, payload: Any, default_target: Any = None
-    ) -> List[Dict[str, str]]:
-        entries: List[Dict[str, str]] = []
-
-        if payload is None:
-            return entries
-
-        if isinstance(payload, str):
-            item = self._make_eval_item(payload, default_target)
-            return [item] if item else []
-
-        if isinstance(payload, dict):
-            if any(key in payload for key in ("prompt", "question")) and not isinstance(
-                payload.get("prompt", payload.get("question")), list
-            ):
-                item = self._make_eval_item(
-                    payload.get("prompt", payload.get("question")),
-                    self._expected_from_item(payload, default_target),
-                )
-                return [item] if item else []
-
-            prompts = payload.get("prompt", payload.get("question"))
-            targets = payload.get(
-                "ground_truth",
-                payload.get(
-                    "expected",
-                    payload.get("answer", payload.get("target", default_target)),
-                ),
-            )
-            if prompts is not None:
-                if isinstance(prompts, str):
-                    prompts = [prompts]
-                if isinstance(targets, str):
-                    targets = [targets] * len(prompts)
-                elif not isinstance(targets, list):
-                    targets = [targets] * len(prompts)
-                if len(prompts) != len(targets):
-                    raise ValueError("Probe prompt and target counts differ.")
-                for prompt, target in zip(prompts, targets):
-                    item = self._make_eval_item(prompt, target)
-                    if item:
-                        entries.append(item)
-                return entries
-
-        if isinstance(payload, list):
-            for item in payload:
-                if isinstance(item, dict):
-                    entry = self._make_eval_item(
-                        item.get("prompt", item.get("question")),
-                        self._expected_from_item(item, default_target),
-                    )
-                else:
-                    entry = self._make_eval_item(item, default_target)
-                if entry:
-                    entries.append(entry)
-
-        return entries
-
-    def _normalize_eval_groups(
-        self, raw_inputs: Any, default_group: str
-    ) -> Optional[Dict[str, List[Dict[str, str]]]]:
-        if raw_inputs is None:
-            return None
-
-        grouped: Dict[str, List[Dict[str, str]]] = {}
-        if isinstance(raw_inputs, dict) and not any(
-            key in raw_inputs
-            for key in (
-                "prompt",
-                "question",
-                "ground_truth",
-                "expected",
-                "answer",
-                "target",
-            )
-        ):
-            for group, payload in raw_inputs.items():
-                entries = self._coerce_eval_entries(payload)
-                if entries:
-                    grouped[str(group)] = entries
-            return grouped or None
-
-        entries = self._coerce_eval_entries(raw_inputs)
-        if entries:
-            grouped[default_group] = entries
-        return grouped or None
-
     def _format_subject_prompt(self, prompt_template: str, subject: str) -> str:
         prompt_template = self._flatten_text(prompt_template).strip()
         if "{}" in prompt_template:
@@ -407,9 +338,7 @@ class EditingDataset(Dataset):
         portability_inputs: Any = None,
     ) -> Optional[EditingSample]:
         subject = self._flatten_text(requested_rewrite.get("subject")).strip()
-        prompt = self._format_subject_prompt(
-            requested_rewrite.get("prompt", ""), subject
-        )
+        prompt = requested_rewrite.get("prompt", "")
         target_new = requested_rewrite.get("target_new")
         target_old = requested_rewrite.get(
             "target_true", requested_rewrite.get("target_old")
@@ -495,6 +424,7 @@ class EditingDataset(Dataset):
                 multimodal_locality_inputs=sample.multimodal_locality_inputs,
                 scope_training_prompts=sample.scope_training_prompts,
                 scope_training_negatives=sample.scope_training_negatives,
+                prompt_template=sample.prompt_template,
             )
             for sample in samples
         ]
@@ -503,11 +433,7 @@ class EditingDataset(Dataset):
 class ZSREDataset(EditingDataset):
     """ZSRE 数据集。"""
 
-    LOCAL_FILES = {
-        "train": "data/edit/zsre/zsre_mend_train.json",
-        "test": "data/edit/zsre/ZsRE-test-all.json",
-        "all": "data/edit/zsre/ZsRE-test-all.json",
-    }
+    LOCAL_FILES = ZSRE_LOCAL_FILES
 
     def __init__(
         self,
@@ -540,34 +466,13 @@ class ZSREDataset(EditingDataset):
     def normalize_record(
         self, item: Dict[str, Any], index: int
     ) -> Optional[Union[EditingSample, List[EditingSample]]]:
-        if "src" in item and "alt" in item:
-            locality_inputs = None
-            loc_prompt = self._flatten_text(item.get("loc")).strip()
-            loc_answer = self._flatten_text(item.get("loc_ans")).strip()
-            if loc_prompt and loc_answer:
-                locality_inputs = {
-                    "Relation_Specificity": [
-                        {"prompt": loc_prompt, "ground_truth": loc_answer}
-                    ]
-                }
-            return self._build_sample(
-                prompt=item.get("src", ""),
-                subject=item.get("subject", ""),
-                target_new=item.get("alt", ""),
-                target_old=item.get("answers") or item.get("pred"),
-                rephrase_prompts=item.get("rephrase"),
-                locality_inputs=locality_inputs,
-            )
-        return super().normalize_record(item, index)
+        return self._build_sample(**zsre_fields(item))
 
 
 class CounterFactDataset(EditingDataset):
     """CounterFact 数据集。"""
 
-    LOCAL_FILES = {
-        "train": "data/edit/counterfact/counterfact_train.json",
-        "test": "data/edit/counterfact/counterfact_test.json",
-    }
+    LOCAL_FILES = EDITING_DATA_DEFAULTS["CounterFactDataset"][2]
 
     def __init__(
         self,
@@ -633,10 +538,7 @@ class CounterFactDataset(EditingDataset):
 class ELKENDataset(EditingDataset):
     """ELKEN 事件级知识编辑数据集。"""
 
-    LOCAL_FILES = {
-        "train": "data/edit/elken/train.json",
-        "test": "data/edit/elken/test_repaired_drop_incomplete_tail.json",
-    }
+    LOCAL_FILES = EDITING_DATA_DEFAULTS["ELKENDataset"][2]
 
     def __init__(
         self,
@@ -713,10 +615,7 @@ class ELKENDataset(EditingDataset):
 class UnKEDataset(EditingDataset):
     """UnKE / UnKEBench 数据集。"""
 
-    VERSION_FILES = {
-        "v2": "data/edit/unke/final_data_v2.json",
-        "v3": "data/edit/unke/final_data_v3.json",
-    }
+    VERSION_FILES = EDITING_DATA_DEFAULTS["UnKEDataset"][2]
 
     def __init__(
         self,
@@ -808,7 +707,7 @@ class ConceptEditDataset(EditingDataset):
         super().__init__(tokenizer=tokenizer, data_path=data_path, **kwargs)
 
     def _default_data_path(self, split: Optional[str]) -> Optional[str]:
-        return "data/edit/conceptedit/concept_data.json"
+        return default_edit_data_path("ConceptEditDataset", {"variant": self.variant})
 
     def normalize_record(
         self, item: Dict[str, Any], index: int
@@ -840,11 +739,7 @@ class ConceptEditDataset(EditingDataset):
 class AKEWDataset(EditingDataset):
     """AKEW 数据集适配器。"""
 
-    SUBSET_FILES = {
-        "counterfact": "data/edit/akew/CounterFact.json",
-        "mquake-cf": "data/edit/akew/MQuAKE-CF.json",
-        "wikiupdate": "data/edit/akew/WikiUpdate.json",
-    }
+    SUBSET_FILES = EDITING_DATA_DEFAULTS["AKEWDataset"][2]
 
     def __init__(
         self,
@@ -982,10 +877,7 @@ class AKEWDataset(EditingDataset):
 class LEMEDataset(EditingDataset):
     """LEME 数据集适配器。"""
 
-    SUBSET_FILES = {
-        "counterfact": "data/edit/leme/counterfact_with_coupled_entities.json",
-        "zsre": "data/edit/leme/zsre_mend_eval_with_coupled_entities.json",
-    }
+    SUBSET_FILES = EDITING_DATA_DEFAULTS["LEMEDataset"][2]
 
     def __init__(
         self,
@@ -1048,7 +940,7 @@ class EditEveryDataset(EditingDataset):
         super().__init__(tokenizer=tokenizer, data_path=data_path, **kwargs)
 
     def _default_data_path(self, split: Optional[str]) -> Optional[str]:
-        return "data/edit/editevery/editevery.json"
+        return default_edit_data_path("EditEveryDataset", {"split": split})
 
     def normalize_record(
         self, item: Dict[str, Any], index: int

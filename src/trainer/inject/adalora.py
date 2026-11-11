@@ -15,9 +15,9 @@ https://arxiv.org/abs/2303.10512
 """
 
 import logging
-import math
 from typing import Optional, List
 
+import torch
 from transformers import TrainerCallback
 
 from trainer.inject.base import InjectTrainer
@@ -54,7 +54,7 @@ class AdaLoRATrainer(InjectTrainer):
         init_r: 初始秩（训练开始时的秩）
         target_r: 目标秩（训练结束时的秩）
         tinit: 秩调整的初始训练步数
-        tfinal: 秩调整的结束训练步数
+        tfinal: 训练末尾固定秩微调的步数
         deltaT: 秩更新的间隔步数
     """
 
@@ -64,7 +64,7 @@ class AdaLoRATrainer(InjectTrainer):
         target_r: int = 8,
         lora_alpha: int = 32,
         lora_dropout: float = 0.05,
-        target_modules: Optional[List[str]] = None,
+        target_modules: Optional[List[str] | str] = None,
         tinit: int = 0,
         tfinal: int = 0,
         deltaT: int = 1,
@@ -85,7 +85,7 @@ class AdaLoRATrainer(InjectTrainer):
             lora_dropout: Dropout 比例
             target_modules: 应用 AdaLoRA 的模块
             tinit: 开始调整秩的训练步数
-            tfinal: 停止调整秩的训练步数
+            tfinal: 训练末尾固定秩微调的步数（不是绝对结束步号）
             deltaT: 秩更新间隔
             beta1: 重要性得分的 EMA 系数（奇异值）
             beta2: 重要性得分的 EMA 系数（敏感度）
@@ -98,7 +98,9 @@ class AdaLoRATrainer(InjectTrainer):
         self.lora_alpha = lora_alpha
         self.lora_dropout = lora_dropout
         self.target_modules = (
-            list(target_modules)
+            target_modules
+            if isinstance(target_modules, str)
+            else list(target_modules)
             if target_modules
             else ["q_proj", "v_proj", "k_proj", "o_proj"]
         )
@@ -111,6 +113,14 @@ class AdaLoRATrainer(InjectTrainer):
         self.bias = bias
         self.task_type = task_type
 
+        for name, value, minimum in (
+            ("tinit", tinit, 0),
+            ("tfinal", tfinal, 0),
+            ("deltaT", deltaT, 1),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+                raise ValueError(f"{name} must be an integer >= {minimum}.")
+
         super().__init__(*args, **kwargs)
 
         # 应用 AdaLoRA 配置
@@ -118,7 +128,7 @@ class AdaLoRATrainer(InjectTrainer):
         self.add_callback(_AdaLoraRankCallback())
 
     def _get_total_training_steps(self) -> int:
-        """为 AdaLoRA 推导总训练步数。"""
+        """Use Trainer's actual dataloader and epoch rounding for rank scheduling."""
         if getattr(self.args, "max_steps", -1) and self.args.max_steps > 0:
             return self.args.max_steps
 
@@ -128,14 +138,32 @@ class AdaLoRATrainer(InjectTrainer):
                 "`total_step`."
             )
 
-        world_size = max(getattr(self.args, "world_size", 1), 1)
-        effective_batch = (
-            self.args.per_device_train_batch_size
-            * self.args.gradient_accumulation_steps
-            * world_size
+        # Dataset length alone misses dropped tails, sampler length, and the
+        # effective batch size used by DataParallel. Construct but do not iterate
+        # the same prepared dataloader that Trainer uses to determine max_steps.
+        training_values = self.set_initial_training_values(
+            self.args,
+            self.get_train_dataloader(),
+            self.get_total_train_batch_size(self.args),
         )
-        steps_per_epoch = max(math.ceil(len(self.train_dataset) / effective_batch), 1)
-        return max(math.ceil(self.args.num_train_epochs * steps_per_epoch), 1)
+        return training_values[-1]
+
+    def save_model(self, output_dir=None, _internal_call=False):
+        """Keep the inference adapter and separately save complete AdaLoRA state."""
+        from trainer.inject.adalora_state import save_adalora_training_state
+
+        super().save_model(output_dir, _internal_call)
+        save_adalora_training_state(self, output_dir or self.args.output_dir)
+
+    def _load_from_checkpoint(self, resume_from_checkpoint, model=None):
+        """Restore unpruned parameters without PEFT replacing optimizer targets.
+
+        Trainer subsequently restores its optimizer, scheduler, RNG and progress.
+        Inference-only adapters deliberately fail this training-resume path.
+        """
+        from trainer.inject.adalora_state import load_adalora_training_state
+
+        load_adalora_training_state(self, resume_from_checkpoint, model=model)
 
     def _apply_adalora_config(self):
         """应用 AdaLoRA 配置到模型"""
@@ -180,7 +208,35 @@ class AdaLoRATrainer(InjectTrainer):
             logger.error("peft library not installed. Please run: pip install peft")
             raise
 
-    def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+    def _orthogonal_regularization(self, model):
+        """Compute PEFT's AdaLoRA penalty separately from token normalization."""
+        from peft.utils.integrations import gather_params_ctx
+
+        base_model = self.accelerator.unwrap_model(model).base_model
+        adapter_name = base_model.trainable_adapter_name
+        weight = base_model.peft_config[adapter_name].orth_reg_weight
+        if weight <= 0:
+            raise ValueError("orth_reg_weight should be greater than 0.")
+        penalties = []
+        for name, parameter in base_model.model.named_parameters():
+            if ("lora_A" in name or "lora_B" in name) and adapter_name in name:
+                with gather_params_ctx(parameter, fwd_module=base_model):
+                    covariance = (
+                        parameter @ parameter.T
+                        if "lora_A" in name
+                        else parameter.T @ parameter
+                    )
+                    identity = torch.eye(
+                        *covariance.shape,
+                        device=covariance.device,
+                        dtype=covariance.dtype,
+                    )
+                    penalties.append(torch.norm(covariance - identity, p="fro"))
+        return weight * torch.stack(penalties).mean() if penalties else 0.0
+
+    def compute_loss(
+        self, model, inputs, return_outputs=False, num_items_in_batch=None, **kwargs
+    ):
         """计算 AdaLoRA 微调损失。
 
         Args:
@@ -194,8 +250,14 @@ class AdaLoRATrainer(InjectTrainer):
         outputs = model(
             input_ids=inputs["input_ids"],
             attention_mask=inputs["attention_mask"],
-            labels=inputs["labels"],
         )
-        # PEFT's AdaLoraModel.forward already adds the configured orthogonal
-        # regularizer. Adding it again here changes the published objective.
-        return (outputs.loss, outputs) if return_outputs else outputs.loss
+        # Omitting labels prevents PEFT from adding its penalty to the LM mean.
+        # The LM term is token-weighted; the penalty occurs once per update.
+        loss = self._compute_causal_loss(
+            outputs.logits,
+            inputs,
+            num_items_in_batch,
+            regularization=self._orthogonal_regularization(model),
+        )
+        outputs.loss = loss
+        return (loss, outputs) if return_outputs else loss

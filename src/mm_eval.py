@@ -2,10 +2,6 @@
 
 根据 benchmark 配置选择 MLLMU 或 CLEAR evaluator，执行评估并输出 JSON 结果。
 
-注意：
-    当前环境下需要在导入 Hydra 前先导入 torch，否则直接执行
-    `python src/mm_eval.py ...` 可能导致 CUDA 不可用。
-
 使用示例：
     python src/mm_eval.py \
         model.model_path=saves/mm_unlearn/MMGradAscent/latest \
@@ -20,7 +16,6 @@ import time
 from pathlib import Path
 
 import hydra
-import torch
 from omegaconf import DictConfig, OmegaConf
 
 sys.path.insert(0, "src")
@@ -31,6 +26,8 @@ from mm_registry import (  # noqa: E402
     import_symbol,
 )
 
+from know_surgery.runtime import resolve_device as _resolve_runtime_device
+
 logger = logging.getLogger(__name__)
 
 EVALUATOR_REGISTRY = {
@@ -38,36 +35,22 @@ EVALUATOR_REGISTRY = {
 }
 
 
+def _incomplete_native_results(eval_cfg: DictConfig, results: dict) -> list[str]:
+    """Identify missing requested MLLMU results without gating optional judges."""
+    if not eval_cfg.get("require_all_splits", False):
+        return []
+    missing = []
+    for split in eval_cfg.splits:
+        for task in eval_cfg.tasks:
+            for modality in ("image_textual", "pure_text", "total"):
+                metric = results.get(split, {}).get(task, {}).get(modality, {})
+                if metric.get("status") != "available" or not metric.get("denominator"):
+                    missing.append(f"{split}/{task}/{modality}")
+    return missing
+
+
 def _import_cls(dotpath: str):
     return import_symbol(dotpath)
-
-
-def _resolve_runtime_device(cfg: DictConfig) -> str:
-    device = str(cfg.get("device", "cuda"))
-    require_cuda = bool(cfg.get("require_cuda", device.startswith("cuda")))
-    cuda_available = torch.cuda.is_available()
-
-    logger.info(
-        "Runtime device check: device=%s, require_cuda=%s, cuda_available=%s, cuda_device_count=%s",
-        device,
-        require_cuda,
-        cuda_available,
-        torch.cuda.device_count(),
-    )
-
-    if device.startswith("cuda") and not cuda_available:
-        hint = (
-            "CUDA is not available for mm_eval. "
-            "In this environment avoid `python -u`, stdout/stderr redirection, "
-            "`CUDA_VISIBLE_DEVICES=*`, and `PYTORCH_ALLOC_CONF=expandable_segments:True`. "
-            "If you intentionally want CPU, override with `device=cpu require_cuda=false`."
-        )
-        if require_cuda:
-            raise RuntimeError(hint)
-        logger.warning("%s", hint)
-        return "cpu"
-
-    return device
 
 
 @hydra.main(version_base=None, config_path="../configs", config_name="mm_eval.yaml")
@@ -88,14 +71,24 @@ def main(cfg: DictConfig):
             "in run_summary.json."
         )
 
-    logger.info("Loading model for evaluation...")
-    model, processor = get_mm_model(cfg.model, for_training=False)
-    if device.startswith("cuda"):
+    backend = str(cfg.eval.get("backend", "transformers"))
+    if backend == "vllm":
+        if (
+            benchmark != "mllmu"
+            or str(cfg.eval.get("shot_num", "zero_shot")) != "zero_shot"
+        ):
+            raise ValueError("vLLM evaluation currently supports zero-shot MLLMU only")
+        from model.mm_vllm import MMVLLM
+
+        model = MMVLLM(cfg.model, cfg.eval, seed)
+        processor = model.processor
+    elif backend == "transformers":
+        logger.info("Loading model for evaluation...")
+        model, processor = get_mm_model(cfg.model, for_training=False)
         model = model.to(device)
-        logger.info("Moved evaluation model to %s", device)
+        model.eval()
     else:
-        logger.warning("Evaluation will run on CPU")
-    model.eval()
+        raise ValueError(f"Unknown multimodal evaluation backend: {backend}")
 
     data_dir = Path(str(cfg.eval.get("data_dir", "")))
     if not data_dir.exists():
@@ -109,8 +102,12 @@ def main(cfg: DictConfig):
     evaluator = eval_cls(cfg.eval, model, processor)
 
     logger.info("Running %s evaluation...", benchmark)
+    # Engine initialization may consume Python RNG. Test image selection must
+    # start from the same seed for every model and inference backend.
+    set_seed(seed)
     start_time = time.perf_counter()
     results = evaluator.evaluate()
+    incomplete = _incomplete_native_results(cfg.eval, results)
     elapsed_seconds = time.perf_counter() - start_time
     output_dir = Path(str(cfg.eval.output_dir))
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -120,10 +117,12 @@ def main(cfg: DictConfig):
     (output_dir / "eval_summary.json").write_text(
         json.dumps(
             {
-                "status": "completed",
+                "status": "incomplete" if incomplete else "completed",
+                "incomplete_native_results": incomplete,
                 "operation": "unlearning",
                 "modality": "multimodal",
                 "benchmark": registration.key,
+                "inference_backend": backend,
                 "model_path": str(cfg.model.model_path),
                 "seed": seed,
                 "elapsed_seconds": elapsed_seconds,
@@ -135,6 +134,11 @@ def main(cfg: DictConfig):
         ),
         encoding="utf-8",
     )
+    if incomplete:
+        raise RuntimeError(
+            "Requested native evaluation is incomplete; details saved in eval_summary.json: "
+            + ", ".join(incomplete)
+        )
     logger.info("Evaluation complete. Results: %s", results)
 
 

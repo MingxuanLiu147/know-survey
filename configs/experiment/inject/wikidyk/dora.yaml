@@ -1,0 +1,25 @@
+# @package _global_
+# Same QA-only data, token-normalized loss and effective batch as Full FT.
+defaults:
+- /experiment/inject/wikidyk/default
+- override /trainer: inject/DoRA
+- _self_
+task_name: wikidyk_dora
+model:
+  model_args:
+    torch_dtype: bfloat16
+trainer:
+  args:
+    learning_rate: 0.0001
+  method_args:
+    r: 32
+    lora_alpha: 16
+    lora_dropout: 0.0
+    use_dora: true
+    target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    bias: none
+    task_type: CAUSAL_LM

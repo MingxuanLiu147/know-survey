@@ -1,32 +1,11 @@
 # @package _global_
-# SERAC auxiliary-checkpoint gated; set archive to a newly trained supervised archive.
+# Candidate settings: inspect --preflight and review layers before execution.
 defaults:
-- override /model: Qwen2.5-7B-Instruct
-- override /trainer: edit/SERAC
-- override /data: edit
-- override /data/datasets@data.edit: ZSRE_edit
-- override /eval: edit_benchmark
-- _self_
-task_name: qwen25_7b_zsre_serac_independent100
-edit_type: independent
-max_edits: 100
-save_edit_summary: true
-save_edited_model: false
-model:
-  model_args:
-    attn_implementation: eager
+  - /experiment/edit/zsre/qwen25_7b/base
+  - override /trainer: edit/SERAC
+  - _self_
+
+task_name: qwen25_7b_zsre_serac_reviewed1301
 trainer:
-  args:
-    output_dir: ${paths.output_dir}
-    do_eval: true
-    bf16: true
-    seed: 42
   method_args:
-    archive: null
-data:
-  edit:
-    ZSRE_edit:
-      handler: ZSREDataset
-      args:
-        split: test
-        max_length: 512
+    archive: null  # Required: trained, compatible auxiliary networks.

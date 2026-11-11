@@ -208,15 +208,15 @@ class MMGradDiff(MMUnlearnBase):
         if len(self.forget_loader) == 0 or len(self.retain_loader) == 0:
             raise ValueError("MMGradDiff requires non-empty forget and retain loaders")
 
-        epoch_forget_losses = []
-        epoch_retain_losses = []
-        epoch_losses = []
-        optimizer_steps = 0
-        last_grad_norm = None
-
-        epoch_forget_steps = []
-        epoch_retain_steps = []
-        for epoch in range(self.num_epochs):
+        state = self._restore_training()
+        epoch_forget_losses = state.get("epoch_forget_losses", [])
+        epoch_retain_losses = state.get("epoch_retain_losses", [])
+        epoch_losses = state.get("epoch_losses", [])
+        optimizer_steps = state.get("optimizer_steps", 0)
+        last_grad_norm = state.get("last_grad_norm")
+        epoch_forget_steps = state.get("epoch_forget_steps", [])
+        epoch_retain_steps = state.get("epoch_retain_steps", [])
+        for epoch in range(state.get("next_epoch", 0), self.num_epochs):
             self.model.train()
             if self.schedule_mode == "sequential":
                 stats = self._train_sequential_epoch(epoch, optimizer_steps)
@@ -248,6 +248,23 @@ class MMGradDiff(MMUnlearnBase):
                 avg_forget_loss,
                 avg_retain_loss,
             )
+            complete_epoch = stats["forget_steps"] == len(self.forget_loader) and (
+                self.schedule_mode != "sequential"
+                or stats["retain_steps"] == len(self.retain_loader)
+            )
+            if complete_epoch and self._finish_epoch(
+                epoch,
+                {
+                    "epoch_forget_losses": epoch_forget_losses,
+                    "epoch_retain_losses": epoch_retain_losses,
+                    "epoch_losses": epoch_losses,
+                    "optimizer_steps": optimizer_steps,
+                    "last_grad_norm": last_grad_norm,
+                    "epoch_forget_steps": epoch_forget_steps,
+                    "epoch_retain_steps": epoch_retain_steps,
+                },
+            ):
+                break
             if self._budget_reached(optimizer_steps):
                 break
 
@@ -255,6 +272,8 @@ class MMGradDiff(MMUnlearnBase):
         if torch.cuda.is_available():
             peak_memory_mb = torch.cuda.max_memory_allocated() / (1024**2)
         return {
+            "training_complete": len(epoch_losses) == self.num_epochs
+            or self._budget_reached(optimizer_steps),
             "epochs": len(epoch_losses),
             "max_steps": self.max_steps,
             "optimizer_steps": optimizer_steps,

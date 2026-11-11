@@ -2,7 +2,22 @@
 
 [Documentation](README.md) · [Configuration](experiments.md) · [Custom data](components.md) · [Evaluation](evaluation.md)
 
-All commands below are run from the repository root. Replace `/path/to/...` with your own model and data paths. Start with `--cfg job`; remove it only after the inputs and method parameters are ready. Choose an available GPU with `CUDA_VISIBLE_DEVICES`.
+All commands below are run from the repository root. Replace `/path/to/...` with your own model and data paths. Use `--cfg job` for composition, then `--preflight` to inspect inputs and parameters. Execute with `--reviewed-config YOUR_REVIEW_HASH` after review. Choose an available GPU with `CUDA_VISIBLE_DEVICES`.
+
+Locality evaluation keeps a pristine reference model on CPU by default
+(`edit_reference_device=cpu`). When the editing model uses FlashAttention, the CPU
+copy switches to eager attention; the editing model retains its original attention
+implementation. Models that cannot switch attention dynamically require a compatible
+model implementation or an explicit CUDA reference device, such as
+`edit_reference_device=cuda:1`.
+
+Independent multimodal runs with `resume_independent=true` reuse cases only when
+the configuration, loaded checkpoint, processor and request contents match
+`independent_identity.json`. Image checks include pixels in edit, rephrase and
+locality probes, so replacing an image or checkpoint at the same path invalidates
+the resume. The checkpoint is hashed once per invocation, before editing. Use a
+new output directory for changed inputs or older runs without this content identity;
+their existing results are preserved.
 
 ## Choose a method
 
@@ -23,7 +38,7 @@ The same dataset can be reused through its adapter. Supported modes and model ma
 
 ## ROME, MEMIT and AlphaEdit
 
-The default trainer configurations use `implementation_variant=native_adapted`. Explicit reference profiles are `ROME_Official`, `MEMIT_Official` and `AlphaEdit_Official`. They select method-specific target optimization, context generation and update formulas. Model adapters remain necessary.
+For new ROME/MEMIT reproductions, select `ROME_Official` or `MEMIT_Official`. These profiles implement the original authors' target optimization, context generation and update formulas. `AlphaEdit_Official` supplies the corresponding AlphaEdit profile. The default trainer configurations retain `implementation_variant=native_adapted` for existing experiments; select the reference profile explicitly. Model adapters remain necessary.
 
 The complete GPT-2 and GPT-2-XL experiments are under `configs/experiment/edit/official/`:
 
@@ -36,6 +51,57 @@ know-surgery operation=edit experiment=edit/official/gpt2_rome \
 ```
 
 Change the experiment to `edit/official/gpt2_memit` or `edit/official/gpt2_alphaedit` for the corresponding method. Select `edit_type=batch` for one method call with multiple requests, or `edit_type=sequential` for cumulative updates. Reference profiles describe mechanisms, not a guarantee of published benchmark scores.
+
+The `gpt2-xl_rome` and `gpt2-xl_memit` experiments load weights in FP32, matching the original authors' model-loading precision. Their smaller `gpt2_*` counterparts adapt the same algorithms to GPT-2. When a subject appears more than once, use a prompt such as `Paris and {} are different` with `subject=Paris` to identify the intended occurrence. The inserted subject is used consistently for target optimization and key extraction, including when generated context also mentions it. Plain prompts without `{}` retain first-occurrence selection.
+
+CounterFact adapters retain this template automatically. Canonical records can also provide an expanded `prompt` plus a matching `prompt_template`; displayed questions and evaluation continue to use the expanded prompt.
+
+### Qwen2.5-7B on zsRE: the paper configuration
+
+The paper uses **Qwen2.5-7B-Instruct**, BF16/eager, seed 42 and 1,301 independent
+edits. Each case starts from the original weights. Main recipes are under
+`edit/zsre/qwen25_7b/`; the separate 3B recipes are model-size extensions, not
+the source of the current table. / 正文采用 7B；3B 配方供扩展使用，不对应正文结果。
+
+| Recipe | Implementation | Required resources |
+|---|---|---|
+| `ft` | Layer-restricted target-only FT | Layer 23, configured optimization budget |
+| `rome` | `ROME_Official` | Layer 5; matching covariance statistics |
+| `memit` | `MEMIT_Official` | Layers 4–8; matching covariance statistics |
+| `alphaedit` | `AlphaEdit_Official` | Layers 4–8; covariance and null-space projection |
+| `mend` | `MEND_official` factor network | Trained network for layers 25–27 and its metadata |
+| `ike` | Semantic copy/update/retain demonstrations | Independent demonstration file and sentence encoder |
+| `wise` | WISE-Merge side memory | Layer 23 and separate scope-training negatives |
+| `anyedit` | `AnyEditOfficial` / MEMIT-ARE | Long-target settings and preservation statistics; full table result pending |
+
+The seven completed methods above match the paper's method set. Auxiliary
+weights and statistics are external inputs, not bundled model assets. A recipe
+alone does not reproduce the table without the same input and auxiliary assets.
+SERAC is available separately and is not a row in the current table.
+
+The test JSON must contain 1,301 records with SHA256
+`0e0214dda853a906ef02bef58c7ce2978af5a962e91fc4a10827e0125459905c`.
+The loader checks both count and fingerprint; a small fixture is not a substitute.
+Supply `data.edit.ZSRE_edit.args.data_path`, or configure `KNOW_SURGERY_DATA_ROOTS`.
+
+```bash
+know-surgery operation=edit experiment=edit/zsre/qwen25_7b/rome \
+  model.model_args.pretrained_model_name_or_path=/path/to/Qwen2.5-7B-Instruct \
+  model.tokenizer_args.pretrained_model_name_or_path=/path/to/Qwen2.5-7B-Instruct \
+  data.edit.ZSRE_edit.args.data_path=/path/to/ZsRE-test-all.json \
+  trainer.method_args.mom2_data_path=/path/to/wikipedia \
+  trainer.method_args.stats_dir=/path/to/statistics \
+  task_name=zsre_rome --cfg job
+```
+
+Run the same command with `--preflight`, inspect the layers, model metadata,
+statistics and data, then replace it with `--reviewed-config YOUR_REVIEW_HASH`.
+Changed model/method/input settings require another review. For Qwen7B, the
+statistics-only attention path uses query chunks of 256 and a 32,768-token cap;
+editing still uses eager attention. Prepare matching 100,000-document statistics
+before execution. `scripts/prepare_rank_statistics.py --help` describes local
+corpus inputs and resumable statistics collection. Different models and corpora
+need different statistics; collection itself is a substantial computation.
 
 Important `trainer.method_args` settings:
 
@@ -73,16 +139,16 @@ Cache identity includes the model, layer and statistics settings. Keep each expe
 AnyEdit divides the target into token chunks, optimizes their boundary representations, then applies a joint layer update. Public backends are `memit_are` and `alphaedit_are`; select them with `trainer.method_args.strategy`.
 
 ```bash
-know-surgery operation=edit experiment=edit/akew/gpt2_anyedit_joint_smoke \
+know-surgery operation=edit experiment=edit/akew/anyedit \
   task_name=anyedit_example edit_type=batch max_edits=2 \
   trainer.method_args.strategy=memit_are \
-  model.model_args.pretrained_model_name_or_path=/path/to/gpt2 \
-  model.tokenizer_args.pretrained_model_name_or_path=/path/to/gpt2 \
+  model.model_args.pretrained_model_name_or_path=/path/to/Qwen2.5-7B-Instruct \
+  model.tokenizer_args.pretrained_model_name_or_path=/path/to/Qwen2.5-7B-Instruct \
   +data.edit.AKEW_counterfact_unstructured_edit.args.data_path=/path/to/CounterFact.json \
   --cfg job
 ```
 
-This GPT-2 example deliberately uses a small optimization/statistics budget. Adjust it before a larger experiment. For the AlphaEdit backend, select `strategy=alphaedit_are` and a different task name.
+For the AlphaEdit backend, select `strategy=alphaedit_are` and a different task name.
 
 `AnyEditOfficial` contains Qwen2.5-7B settings: edit layers `[4,5,6,7,8]`, loss layer `27`, window size `50` and `overlap=0`. Adapt module names and layer indices when using a different model. `window_size` and `overlap` count tokens; `target_prefix` controls the answer boundary and must match the tokenizer. `edit_type=batch` jointly solves requests, while `sequential` updates the model request by request.
 
@@ -159,7 +225,17 @@ know-surgery operation=edit experiment=edit/zsre/wise_prepared \
 
 Check `inner_params` for the chosen model. `save_freq`, `merge_freq`, `mask_ratio` and `merge_strategy` control side-memory updates and merging. WISE-Retrieve is not this configuration.
 
-## Train MEND, MALMEN or InstructEdit auxiliary networks
+## Auxiliary networks
+
+The paper's MEND uses `edit/MEND_official`: activation/backpropagation factors,
+FP32 auxiliary networks and a model-bound checkpoint. It is distinct from the
+compact `edit/MEND` and `MM_MEND` paths. Use
+`python scripts/train_mend_edit_network.py --help` for factor training, independent
+validation, preview and full-state resume options. The exported network and its
+`.metadata.json` must match the base checkpoint, edited matrices and method
+settings. An untrained network or compact checkpoint is rejected.
+
+### Compact MEND, MALMEN and InstructEdit
 
 These are compact native implementations. Their checkpoints must match the model, layers, rank and network dimensions; they are not interchangeable with arbitrary upstream archives. Use an auxiliary training split separate from evaluation data.
 
@@ -179,19 +255,11 @@ know-surgery operation=edit experiment=edit/zsre/gpt2_mend_real \
 
 For InstructEdit, add `--editor instructedit --task-type zsre` to the training command and select `trainer=edit/InstructEdit` with `trainer.method_args.default_task_type=zsre` at execution. Match its layers, rank, hidden size and learning rate to the trained network.
 
-```bash
-python scripts/train_malmen_auxiliary_network.py \
-  --model /path/to/gpt2 --data /path/to/auxiliary_zsre.json \
-  --output saves/edit/malmen_network.pt \
-  --layers 5 --rank 16 --max-edits 16 --epochs 3
-
-know-surgery operation=edit experiment=edit/zsre/gpt2_malmen_smoke \
-  task_name=malmen_example \
-  model.model_args.pretrained_model_name_or_path=/path/to/gpt2 \
-  model.tokenizer_args.pretrained_model_name_or_path=/path/to/gpt2 \
-  trainer.method_args.archive=saves/edit/malmen_network.pt \
-  data.edit.ZSRE_edit.args.data_path=/path/to/heldout_zsre.json --cfg job
-```
+For MALMEN, train the auxiliary network with
+`scripts/train_malmen_auxiliary_network.py --help`, then select
+`trainer=edit/MALMEN` in a matching editing experiment. Set
+`trainer.method_args.archive` to the resulting checkpoint and use the same
+layers, module names, rank and block count as auxiliary training.
 
 Keep `require_pretrained=true`; bypassing it does not replace training an auxiliary network.
 

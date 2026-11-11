@@ -1,43 +1,20 @@
 # @package _global_
-# Qwen2.5-7B-Instruct + MEMIT_ARE AnyEdit, zsRE independent-100 benchmark.
-
+# Candidate settings: inspect --preflight and review layers before execution.
 defaults:
-  - override /model: Qwen2.5-7B-Instruct
-  - override /trainer: edit/AnyEdit
-  - override /data: edit
-  - override /data/datasets@data.edit: ZSRE_edit
-  - override /eval: edit_benchmark
+  - /experiment/edit/zsre/qwen25_7b/base
+  - override /trainer: edit/AnyEditOfficial
   - _self_
 
-task_name: qwen25_7b_zsre_anyedit_independent100
-edit_type: independent
-max_edits: 100
-save_edit_summary: true
-save_edited_model: false
-
-model:
-  model_args:
-    attn_implementation: eager
-
+task_name: qwen25_7b_zsre_anyedit_reviewed1301
 trainer:
-  args:
-    output_dir: ${paths.output_dir}
-    do_eval: true
-    bf16: true
-    seed: 42
   method_args:
+    linear_algebra_device: cpu
     strategy: memit_are
     layers: [4, 5, 6, 7, 8]
+    v_loss_layer: 27
     window_size: 50
     overlap: 0
-    v_num_grad_steps: 25
-    v_weight_decay: 1.0e-3
-    mom2_adjustment: false
-
-data:
-  edit:
-    ZSRE_edit:
-      handler: ZSREDataset
-      args:
-        split: test
-        max_length: 512
+    mom2_adjustment: true
+    mom2_dataset_config: 20220301.en
+    mom2_n_samples: 100000
+    stats_dir: ${paths.root_dir}/data/stats/qwen25_7b/anyedit_reference

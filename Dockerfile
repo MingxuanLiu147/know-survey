@@ -12,8 +12,9 @@ COPY webui/frontend/ ./
 RUN npm run build
 
 FROM ${BASE_IMAGE} AS runtime
-ARG UV_VERSION=0.8.22
-ARG PYTHON_VERSION=3.11.13
+ARG UV_VERSION=0.13.7
+ARG UV_SHA256=c5221ff41b7892bfc223543883600125f6a47fe845093e0f5bdff4f359196d83
+ARG PYTHON_VERSION=3.11.15
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
@@ -30,8 +31,11 @@ RUN export HTTP_PROXY= HTTPS_PROXY= ALL_PROXY= http_proxy= https_proxy= all_prox
     && rm -rf /var/lib/apt/lists/*
 RUN export HTTP_PROXY= HTTPS_PROXY= ALL_PROXY= http_proxy= https_proxy= all_proxy=; \
     curl --noproxy '*' --fail --silent --show-error --location --connect-timeout 20 --max-time 180 --retry 2 \
-       "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-x86_64-unknown-linux-gnu.tar.gz" \
-       | tar -xz --strip-components=1 -C /usr/local/bin uv-x86_64-unknown-linux-gnu/uv \
+       "https://releases.astral.sh/github/uv/releases/download/${UV_VERSION}/uv-x86_64-unknown-linux-gnu.tar.gz" \
+       --output /tmp/uv.tar.gz \
+    && printf '%s  /tmp/uv.tar.gz\n' "${UV_SHA256}" | sha256sum --check --status \
+    && tar -xzf /tmp/uv.tar.gz --strip-components=1 -C /usr/local/bin uv-x86_64-unknown-linux-gnu/uv \
+    && rm /tmp/uv.tar.gz \
     && uv python install "${PYTHON_VERSION}" \
     && uv venv --python "${PYTHON_VERSION}" /opt/venv
 
@@ -56,5 +60,9 @@ RUN export HTTP_PROXY= HTTPS_PROXY= ALL_PROXY= http_proxy= https_proxy= all_prox
     && ln -s ../.claude/skills .agents/skills
 
 EXPOSE 7860
+LABEL org.opencontainers.image.source="https://github.com/MingxuanLiu147/know-survey" \
+      org.opencontainers.image.title="Know-Surgery" \
+      org.opencontainers.image.version="0.2.0" \
+      org.opencontainers.image.licenses="MIT"
 ENV TRITON_CACHE_DIR=/tmp/know-surgery-triton
 CMD ["bash"]

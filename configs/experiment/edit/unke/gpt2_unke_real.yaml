@@ -1,0 +1,35 @@
+# @package _global_
+# Local RTX-3090 validation: real GPT-2 + official UnKEBench sample.
+
+defaults:
+  - override /model: gpt2
+  - override /trainer: edit/UNKE
+  - override /data: edit
+  - override /data/datasets@data.edit: UnKE_edit
+  - override /eval: edit
+
+task_name: unke_gpt2_unke_edit_smoke_v2
+max_edits: 1
+save_edited_model: false
+
+trainer:
+  method_args:
+    layers: [5]
+    layer_module_tmp: "transformer.h.{}"
+    rewrite_module_tmp: "transformer.h.{}.mlp.c_proj"
+    ln_f_module: "transformer.ln_f"
+    fact_token: last
+    v_num_grad_steps: 1
+    ft_epochs: 2
+    ft_lr: 2.0e-4
+    preservation_sample_size: 2
+    preservation_max_length: 64
+
+data:
+  edit:
+    UnKE_edit:
+      handler: UnKEDataset
+      args:
+        version: v3
+        max_length: 1024
+        apply_chat_template: false

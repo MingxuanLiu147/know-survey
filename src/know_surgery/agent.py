@@ -145,7 +145,7 @@ def completion(
     """Call an OpenAI-compatible provider; credentials remain in server memory."""
     configs = {
         "openai": ("OPENAI", "https://api.openai.com/v1", "gpt-4.1-mini"),
-        "deepseek": ("DEEPSEEK", "https://api.deepseek.com", "deepseek-chat"),
+        "deepseek": ("DEEPSEEK", "https://api.deepseek.com", "deepseek-flash"),
     }
     if provider not in configs:
         raise ValueError("Autonomous mode requires openai or deepseek.")
@@ -571,6 +571,10 @@ class AgentSession:
                 )
                 calls = message.get("tool_calls") or []
                 assistant = {"role": "assistant", "content": message.get("content")}
+                # DeepSeek requires this context on subsequent tool-call turns.
+                # Keep it in request memory, outside the persisted user-facing trace.
+                if self.provider == "deepseek" and "reasoning_content" in message:
+                    assistant["reasoning_content"] = message["reasoning_content"]
                 if calls:
                     assistant["tool_calls"] = calls
                 messages.append(assistant)

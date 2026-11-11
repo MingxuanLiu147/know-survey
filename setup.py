@@ -88,7 +88,7 @@ extras.update(
 setup(
     cmdclass={"build_py": BuildPy, "sdist": SourceDistribution},
     name="know-surgery",
-    version="0.1.0",
+    version="0.2.0",
     author="Know-Surgery contributors",
     description="Know-Surgery: a toolkit for controlled LLM knowledge unlearning, injection, editing, and evaluation.",
     long_description=(ROOT / "README.md").read_text(encoding="utf-8"),
@@ -102,7 +102,8 @@ setup(
     package_data={
         "know_surgery.configs": [
             path.relative_to(ROOT / "configs").as_posix()
-            for path in sorted((ROOT / "configs").rglob("*.yaml"))
+            for path in sorted((ROOT / "configs").rglob("*"))
+            if path.is_file() and path.suffix in {".yaml", ".json"}
         ],
     },
     include_package_data=False,

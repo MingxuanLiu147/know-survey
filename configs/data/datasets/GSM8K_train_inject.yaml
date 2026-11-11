@@ -1,0 +1,8 @@
+# Official GSM8K main/train (MIT): https://github.com/openai/grade-school-math
+# from train. Test is only for final evaluation. This is not a BREP reproduction.
+GSM8K_train:
+  handler: AlpacaDataset
+  args:
+    data_path: ${oc.env:GSM8K_TRAIN_PATH,${paths.root_dir}/data/inject/gsm8k/train.json}
+    max_length: 1024
+    append_eos: true

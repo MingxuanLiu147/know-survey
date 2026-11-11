@@ -25,6 +25,9 @@ const messages = {
     generatePlan: "Generate plan",
     planning: "Planning",
     operation: "Operation",
+    edit: "Editing",
+    inject: "Injection",
+    unlearning: "Unlearning",
     recipe: "Recipe",
     model: "Model",
     method: "Method",
@@ -73,7 +76,7 @@ const messages = {
     selectResults: "Select 2-12 results",
     compareSelected: "Compare selected",
     comparable: "Comparable protocol",
-    exploratory: "Different run settings",
+    exploratory: "Side-by-side results",
     skills: "Agent Skills",
     catalog: "Capability catalog",
     configured: "Configured",
@@ -139,8 +142,8 @@ const messages = {
     intentPresets: "Intent presets",
     longTextInjectionPreset: "Long-text injection · 7B · LoReFT",
     longTextEditingPreset: "Long-text editing · 7B · AnyEdit",
-    availableSkills: "Available Agent Skills",
-    selectedForPlan: "selected for this plan",
+    availableSkills: "Shared project Skills",
+    selectedForPlan: "suggested steps",
     viewRegistry: "View registry",
     configuredPlanRecipes: "Configured plan recipes",
     plannerLocal: "Deterministic local",
@@ -177,7 +180,7 @@ const messages = {
       "Compare model, input and evaluation settings before interpreting results.",
     fairnessMatch: "The recorded comparison settings match.",
     fairnessMismatch:
-      "Some comparison settings are missing or differ; review them alongside the metrics.",
+      "Some comparison settings are missing or differ. View these results side by side without ranking.",
     match: "Match",
     differs: "Differs",
     metric: "Metric",
@@ -200,7 +203,7 @@ const messages = {
     modelId: "Model ID",
     modality: "Modality",
     weightSource: "Weight source",
-    cache: "Cache",
+    cache: "Source type",
     status: "Status",
     datasetId: "Dataset ID",
     handlers: "Handlers",
@@ -209,9 +212,9 @@ const messages = {
     contract: "Contract",
     textModality: "Text",
     multimodalModality: "Multimodal",
-    processorPathContract: "processor/model path contract",
-    localPath: "local path",
-    registryReference: "registry reference",
+    processorPathContract: "Weight source not listed",
+    localPath: "Local path in config",
+    registryReference: "Model repository ID",
     noMatchingRegistry: "No matching registry item",
     customExtensionContract: "CUSTOM EXTENSION CONTRACT",
     registryFirstIntegration: "Registry-first integration",
@@ -266,6 +269,9 @@ const messages = {
     generatePlan: "生成计划",
     planning: "规划中",
     operation: "操作",
+    edit: "编辑",
+    inject: "注入",
+    unlearning: "遗忘",
     recipe: "运行配方",
     model: "模型",
     method: "方法",
@@ -314,7 +320,7 @@ const messages = {
     selectResults: "选择 2-12 个结果",
     compareSelected: "对比所选结果",
     comparable: "协议可比",
-    exploratory: "运行设置不同",
+    exploratory: "暂不排名",
     skills: "智能体技能",
     catalog: "能力目录",
     configured: "已配置",
@@ -380,8 +386,8 @@ const messages = {
     intentPresets: "目标模板",
     longTextInjectionPreset: "长文本注入 · 7B · LoReFT",
     longTextEditingPreset: "长文本编辑 · 7B · AnyEdit",
-    availableSkills: "可用智能体技能",
-    selectedForPlan: "项用于当前计划",
+    availableSkills: "项目技能库",
+    selectedForPlan: "项建议步骤",
     viewRegistry: "查看注册表",
     configuredPlanRecipes: "已配置的计划配方",
     plannerLocal: "确定性本地规划器",
@@ -417,7 +423,7 @@ const messages = {
     compareDescription:
       "结合模型、输入和评测设置查看结果。",
     fairnessMatch: "已记录的对比设置一致。",
-    fairnessMismatch: "部分对比设置缺失或不同，请结合这些差异查看指标。",
+    fairnessMismatch: "部分比较条件缺失或不同，可并列查看结果，暂不排名。",
     match: "一致",
     differs: "不同",
     metric: "指标",
@@ -438,7 +444,7 @@ const messages = {
     modelId: "模型 ID",
     modality: "模态",
     weightSource: "权重来源",
-    cache: "缓存",
+    cache: "来源类型",
     status: "状态",
     datasetId: "数据集 ID",
     handlers: "处理器",
@@ -447,9 +453,9 @@ const messages = {
     contract: "接口契约",
     textModality: "文本",
     multimodalModality: "多模态",
-    processorPathContract: "处理器与模型路径契约",
-    localPath: "本地路径",
-    registryReference: "注册表引用",
+    processorPathContract: "目录未提供权重来源",
+    localPath: "配置中的本地路径",
+    registryReference: "模型仓库 ID",
     noMatchingRegistry: "没有匹配的注册项",
     customExtensionContract: "自定义扩展契约",
     registryFirstIntegration: "注册表优先的集成方式",
@@ -490,6 +496,32 @@ const messages = {
     requestFailed: "请求失败，请检查配置和服务端日志。"
   }
 } as const;
+
+const skillNamesZh: Record<string, string> = {
+  "add-dataset": "添加数据集",
+  "add-model": "添加模型",
+  "add-multimodal-case": "添加图文样本",
+  "aggregate-results": "汇总结果",
+  "batch-sweep": "批量运行",
+  "build-cases": "构造样本",
+  "compare-methods": "比较方法",
+  "debug-ui": "检查界面",
+  "generate-report": "生成报告",
+  "inspect-repo": "检查项目",
+  "normalize-knowledge": "整理数据",
+  "plan-surgery": "拟定计划",
+  "release-checklist": "检查发布配置",
+  "reproduce-run": "提取复现命令",
+  "run-edit": "执行编辑",
+  "run-inject": "执行注入",
+  "run-unlearn": "执行遗忘",
+  "setup-env": "检查环境",
+  "smoke-test": "检查配置与输入"
+};
+
+export function localizedSkillName(id: string, language: Language): string {
+  return language === "zh" ? skillNamesZh[id] || displayTechnicalText(id) : displayTechnicalText(id);
+}
 
 const skillDescriptionsZh: Record<string, string> = {
   "add-dataset":
@@ -540,6 +572,37 @@ export function displayTechnicalText(value: string): string {
     .replace(/smoke/gi, "run")
     .replaceAll("冒烟测试", "运行检查")
     .replaceAll("冒烟", "运行检查");
+}
+
+const resultReasons: Record<string, { en: string; zh: string }> = {
+  before_not_recorded: { en: "The model response before the update was not recorded.", zh: "未记录更新前的模型回答。" },
+  response_not_recorded: { en: "The model response was not recorded.", zh: "未记录模型回答。" },
+  responses_not_recorded: { en: "The model responses before and after the update were not recorded.", zh: "未记录更新前后的模型回答。" },
+  after_not_recorded: { en: "The model response after the update was not recorded.", zh: "未记录更新后的模型回答。" },
+  missing_component_metrics: { en: "The overall score requires component metrics that are missing.", zh: "缺少计算综合得分所需的分项指标。" },
+  missing_portability_inputs: { en: "No transfer questions were provided for evaluation.", zh: "未提供用于评测迁移性的问答。" },
+  missing_locality_inputs: { en: "No locality questions were provided for evaluation.", zh: "未提供用于评测局部性的问答。" },
+  missing_rephrase_prompts: { en: "No rephrased questions were provided for evaluation.", zh: "未提供用于评测泛化性的改写问题。" },
+  missing_reliability_inputs: { en: "No target questions were provided for evaluation.", zh: "未提供用于评测目标效果的问答。" },
+  semantic_model_not_configured: { en: "No model was configured to measure semantic similarity.", zh: "未配置用于计算语义相似度的模型。" },
+  missing_original_model: { en: "The original model was not available for comparison.", zh: "未提供用于对照的原始模型。" },
+  missing_pre_edit_baseline: { en: "No baseline before editing was recorded.", zh: "未记录编辑前的基线结果。" },
+  missing_tokenizer: { en: "The tokenizer required for this evaluation was unavailable.", zh: "缺少此项评测所需的分词器。" },
+  missing_processor: { en: "The image-text processor required for this evaluation was unavailable.", zh: "缺少此项评测所需的图文处理器。" },
+  missing_tokenizer_or_edit_data: { en: "The tokenizer or editing data required for evaluation was unavailable.", zh: "缺少评测所需的分词器或编辑数据。" },
+  missing_long_form_pairs: { en: "No long-form answers and references were available for comparison.", zh: "没有可用于比较的长文本回答与参考答案。" },
+  missing_mmlu_probes: { en: "No MMLU questions were provided for evaluation.", zh: "未提供 MMLU 评测问题。" },
+  no_valid_eval_samples: { en: "No valid evaluation samples were available.", zh: "没有可用的评测样本。" },
+  no_valid_benchmark_samples: { en: "No valid benchmark samples were available.", zh: "没有可用的基准评测样本。" },
+  no_valid_reference_samples: { en: "No valid reference samples were available.", zh: "没有可用的对照评测样本。" },
+  no_evaluable_response_tokens: { en: "No answer tokens were available for scoring.", zh: "没有可用于评分的回答词元。" },
+  original_score_non_positive: { en: "The original score is zero or negative, so a retention ratio cannot be calculated.", zh: "原始得分为零或负数，无法计算保留比例。" }
+};
+
+export function resultReasonText(reason: string, language: Language): string {
+  return resultReasons[reason]?.[language] || (language === "zh"
+    ? "此项记录不完整，可展开详情查看原始说明。"
+    : "This item has incomplete information. Expand the details to see the recorded reason.");
 }
 
 export function localizedSkillDescription(

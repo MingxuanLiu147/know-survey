@@ -1,0 +1,9 @@
+# @package _global_
+# Answer-only GA on all 381 forget QA, four epochs; starts from the common Vanilla.
+defaults:
+- /experiment/unlearn/multimodal/mllmu_mip_qwen25vl3b
+- override /trainer: MMGradAscent
+- _self_
+data:
+  question_mode: original
+  ans_only: true

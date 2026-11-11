@@ -11,7 +11,7 @@ import {
   Syringe,
   Workflow
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
 import {
@@ -31,6 +31,7 @@ import {
 import type { Catalog, Skill } from "../types";
 
 type Tab = "skills" | "models" | "datasets" | "methods";
+const tabs: Tab[] = ["skills", "models", "datasets", "methods"];
 
 const tabIcons = {
   skills: Bot,
@@ -44,6 +45,7 @@ export function Extensions() {
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [skills, setSkills] = useState<Skill[]>([]);
   const [tab, setTab] = useState<Tab>("skills");
+  const tabButtons = useRef<Partial<Record<Tab, HTMLButtonElement | null>>>({});
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -164,17 +166,32 @@ export function Extensions() {
       </section>
 
       <div className="catalog-toolbar">
-        <div className="catalog-tabs" role="tablist">
-          {(["skills", "models", "datasets", "methods"] as Tab[]).map(
+        <div className="catalog-tabs" role="tablist" aria-label={t("extensions")}>
+          {tabs.map(
             (value) => {
               const Icon = tabIcons[value];
               return (
                 <button
+                  ref={(element) => { tabButtons.current[value] = element; }}
+                  id={`registry-tab-${value}`}
                   role="tab"
                   aria-selected={tab === value}
+                  aria-controls="registry-panel"
+                  tabIndex={tab === value ? 0 : -1}
                   className={tab === value ? "active" : ""}
                   key={value}
                   onClick={() => setTab(value)}
+                  onKeyDown={(event) => {
+                    const index = tabs.indexOf(value);
+                    const next = event.key === "ArrowRight" ? tabs[(index + 1) % tabs.length]
+                      : event.key === "ArrowLeft" ? tabs[(index + tabs.length - 1) % tabs.length]
+                      : event.key === "Home" ? tabs[0]
+                      : event.key === "End" ? tabs[tabs.length - 1] : null;
+                    if (!next) return;
+                    event.preventDefault();
+                    setTab(next);
+                    tabButtons.current[next]?.focus();
+                  }}
                 >
                   <Icon size={16} />
                   {value === "skills" ? t("skills") : t(value.slice(0, -1) as "model" | "dataset" | "method")}
@@ -194,6 +211,7 @@ export function Extensions() {
         </label>
       </div>
 
+      <div id="registry-panel" role="tabpanel" aria-labelledby={`registry-tab-${tab}`} tabIndex={0}>
       {tab === "skills" ? (
         <section className="skill-catalog">
           <div className="skill-grid">
@@ -204,7 +222,7 @@ export function Extensions() {
                 </div>
                 <div className="skill-card-body">
                   <div>
-                    <strong>{displayTechnicalText(skill.id)}</strong>
+                    <strong className="notranslate" translate="no">{displayTechnicalText(skill.id)}</strong>
                     <span>{categoryLabels[skill.category] || skill.category}</span>
                   </div>
                   <p>
@@ -231,6 +249,11 @@ export function Extensions() {
 
       {tab === "models" ? (
         <section className="registry-table-section">
+          <p className="muted">
+            {language === "zh"
+              ? "已配置表示项目提供了配置文件；运行前仍需检查本地权重和所选方法的兼容性。此列表不检查模型是否已下载。"
+              : "Configured means a configuration file is provided. Check local weights and compatibility with the selected method before running. This list does not check whether weights are downloaded."}
+          </p>
           <div className="table-scroll">
             <table className="data-table registry-table">
               <thead>
@@ -246,18 +269,22 @@ export function Extensions() {
                 {filteredModels.map((item) => (
                   <tr key={item.id}>
                     <td>
-                          <strong>{displayTechnicalText(item.id)}</strong>
+                      <strong className="notranslate" translate="no" title={item.id}>{displayTechnicalText(item.id)}</strong>
                     </td>
                     <td>
                       {item.modality === "text"
                         ? t("textModality")
                         : t("multimodalModality")}
                     </td>
-                    <td className="mono truncate-cell">
-                      {item.source || t("processorPathContract")}
+                    <td>
+                      {item.source ? (
+                        <span className="mono notranslate" translate="no" title={item.source}>{item.source}</span>
+                      ) : t("processorPathContract")}
                     </td>
                     <td>
-                      {item.local ? t("localPath") : t("registryReference")}
+                      {!item.source
+                        ? (language === "zh" ? "未列出" : "Not listed")
+                        : item.local ? t("localPath") : t("registryReference")}
                     </td>
                     <td>
                       <StatusBadge level={item.status} compact />
@@ -286,9 +313,9 @@ export function Extensions() {
                 {filteredDatasets.map((item) => (
                   <tr key={item.id}>
                     <td>
-                      <strong>{displayTechnicalText(item.id)}</strong>
+                      <strong className="notranslate" translate="no">{displayTechnicalText(item.id)}</strong>
                     </td>
-                    <td className="mono">{item.handlers.join(", ") || "N/A"}</td>
+                    <td className="mono notranslate" translate="no">{item.handlers.join(", ") || "N/A"}</td>
                     <td>
                       <div className="operation-list">
                         {item.operations.map((operation) => (
@@ -328,7 +355,7 @@ export function Extensions() {
                 {filteredMethods.map((item) => (
                   <tr key={item.operation + item.id}>
                     <td>
-                      <strong>{item.id.split("/").at(-1)}</strong>
+                      <strong className="notranslate" translate="no">{item.id.split("/").at(-1)}</strong>
                     </td>
                     <td>
                       <span
@@ -339,7 +366,7 @@ export function Extensions() {
                         {item.operation}
                       </span>
                     </td>
-                    <td className="mono">configs/trainer/{item.id}.yaml</td>
+                    <td className="mono notranslate" translate="no">configs/trainer/{item.id}.yaml</td>
                     <td>
                       <StatusBadge level={item.status} compact />
                     </td>
@@ -354,6 +381,7 @@ export function Extensions() {
       {!({skills: filteredSkills, models: filteredModels, datasets: filteredDatasets, methods: filteredMethods}[tab]).length ? (
         <EmptyState icon={Boxes} title={t("noMatchingRegistry")} />
       ) : null}
+      </div>
 
       <section className="extension-contract">
         <div>

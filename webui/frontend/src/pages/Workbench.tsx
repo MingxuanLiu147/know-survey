@@ -1,7 +1,6 @@
 import {
   ArrowRight,
   Bot,
-  Check,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
@@ -24,6 +23,7 @@ import { api } from "../api";
 import { useDraftField } from "../state/TaskDraft";
 import { DataUpload } from "../components/DataUpload";
 import { AgentSession } from "../components/AgentSession";
+import { ConfigurationReview } from "../components/ConfigurationReview";
 import { MetricsView } from "../components/MetricsView";
 import {
   Button,
@@ -37,6 +37,7 @@ import {
 import {
   displayTechnicalText,
   localizedSkillDescription,
+  localizedSkillName,
   uiErrorMessage,
   useI18n
 } from "../i18n";
@@ -50,6 +51,12 @@ import type {
   Skill
 } from "../types";
 
+function configurationError(message: string, language: "en" | "zh"): string {
+  // Catalog validation messages use an English / Chinese pair.
+  const pair = message.match(/^([\s\S]+?) \/ ([\s\S]*[\u3400-\u9fff][\s\S]*)$/);
+  return displayTechnicalText(pair ? pair[language === "zh" ? 2 : 1] : message);
+}
+
 const operationIcons = {
   unlearning: Eraser,
   inject: Syringe,
@@ -58,32 +65,37 @@ const operationIcons = {
 
 const operationHelp = {
   en: {
-    unlearning: "Reduce target knowledge while measuring retention.",
-    inject: "Add knowledge with parameter-efficient adaptation.",
-    edit: "Replace facts with localized model interventions."
+    unlearning: "Reduce knowledge in the forget set and evaluate what the model retains.",
+    inject: "Learn new facts, rules or text and measure target performance and retained knowledge.",
+    edit: "Change selected knowledge and inspect target answers, generalization and side effects."
   },
   zh: {
-    unlearning: "降低目标知识，同时测量保留能力。",
-    inject: "通过参数高效适配增加知识。",
-    edit: "用局部模型干预替换已有事实。"
+    unlearning: "降低遗忘集知识的可提取性，同时检验保留集表现。",
+    inject: "学习新增事实、规则或文本，同时评估目标效果与已有知识的保持。",
+    edit: "修改指定知识，查看目标答案、泛化表现与无关知识的变化。"
   }
 };
 
 const DEFAULT_OPERATION: Operation = "unlearning";
-const STARTER_RECIPE_ID = "builtin-tofu-grad-ascent-gpt2";
+const DEFAULT_TEXT_MODEL = "Llama-3.2-1B-Instruct";
+const STARTER_RECIPE_IDS: Record<Operation, string> = {
+  unlearning: "builtin-tofu-graddiff-llama32-1b-workbench",
+  inject: "builtin-ruletaker-lora-llama32-1b-workbench",
+  edit: "builtin-counterfact-memit-llama32-1b-workbench"
+};
 
 const defaultIntents = {
   en: {
     unlearning:
-      "Unlearn TOFU on GPT-2 with GradAscent for 1 training step and check retention.",
+      "Use GradDiff on the TOFU-trained Llama-3.2-1B-Instruct checkpoint to unlearn 50 records from TOFU_workbench_forget, with fifty separate TOFU_workbench_retain records, for 50 training steps. Evaluate target-answer probabilities on both sets and inspect per-example results. Save the configuration and metrics, and show the equivalent CLI command before execution.",
     inject:
-      "Inject RuleTaker into GPT-2 with LoRA for 1 training step and check retention.",
-    edit: "Edit 1 CounterFact fact on GPT-2 with ROME and evaluate locality."
+      "Inject rule knowledge into Llama-3.2-1B-Instruct with LoRA using 50 samples from RuleTaker_workbench_inject for 50 training steps. Evaluate accuracy on fifty separate RuleTaker test questions and retained knowledge on five unrelated factual questions, comparing the base model with the trained model. Show per-example predictions, save the adapter and metrics, and preview the equivalent CLI command.",
+    edit: "Batch-edit 50 CounterFact_workbench_edit facts on Llama-3.2-1B-Instruct with MEMIT, using 25 target-vector optimization updates to replace the original answers with the specified targets. Evaluate target-answer reliability, rephrased questions and locality on available probes. Show per-example inputs and predictions before and after editing, save configuration and metrics, and preview the equivalent CLI command."
   },
   zh: {
-    unlearning: "使用 GradAscent 在 GPT-2 上对 TOFU 执行 1 个遗忘训练步，并检查保留能力。",
-    inject: "使用 LoRA 在 GPT-2 上对 RuleTaker 执行 1 个注入训练步，并检查保留能力。",
-    edit: "使用 ROME 在 GPT-2 上编辑 1 条 CounterFact 事实，并评估局部性。"
+    unlearning: "使用 GradDiff 在已学习 TOFU 的 Llama-3.2-1B-Instruct 权重上遗忘 50 条 TOFU_workbench_forget 记录，配合五十条独立的 TOFU_workbench_retain 保留记录，运行 50 个训练步。评估两组目标答案概率并查看逐例结果，保存配置与指标，执行前展示等价 CLI 命令。",
+    inject: "使用 LoRA 将 50 条 RuleTaker_workbench_inject 规则样本注入 Llama-3.2-1B-Instruct，运行 50 个训练步。用独立的五十个 RuleTaker 测试问题评估目标准确率，用五个无关事实问题比较原始模型与训练后的知识保持。查看逐例预测，保存适配器、配置和指标，执行前展示等价 CLI 命令。",
+    edit: "使用 MEMIT 在 Llama-3.2-1B-Instruct 上批量编辑 50 条 CounterFact_workbench_edit 事实，执行 25 次目标向量优化更新，将原答案替换为数据中的目标答案。用已有探针评估目标可靠性、问题改写泛化与局部性，查看逐例输入及编辑前后预测，保存配置与指标，执行前展示等价 CLI 命令。"
   }
 };
 
@@ -103,15 +115,15 @@ const multimodalIntents = {
 const longTextIntents = {
   en: {
     inject:
-      "Inject this long-form knowledge into a suitable 7B model with representation fine-tuning, then evaluate target efficacy and retention.",
+      "Inject long-form knowledge into Qwen2.5-7B-Instruct with LoReFT using the registered Alpaca_inject recipe. Review local training data and provide separate target and retain questions for evaluation. Preview the configuration and equivalent CLI command before execution.",
     edit:
-      "Edit this long-form knowledge on a suitable 7B model with AnyEdit, then evaluate reliability, generalization, locality, and portability."
+      "Edit 1 UnKE_edit long-form record on Qwen2.5-7B-Instruct with AnyEdit. Use its registered window-based recipe with the Wikipedia 20200501.en statistics corpus and a two-hundred-row covariance budget. Evaluate target answers, paraphrases and available locality and portability probes. Inspect per-example predictions, save configuration and metrics, and preview the equivalent CLI command."
   },
   zh: {
     inject:
-      "将这段长文本知识注入合适的 7B 模型，使用表示微调方法，并评估目标效果与知识保留。",
+      "使用 LoReFT 和已注册的 Alpaca_inject 配方，在 Qwen2.5-7B-Instruct 上注入长文本知识。核对本地训练数据，并为评估提供独立的目标问答与保留问题；执行前展示配置和等价 CLI 命令。",
     edit:
-      "在合适的 7B 模型上使用 AnyEdit 编辑这段长文本知识，并评估可靠性、泛化性、局部性与迁移性。"
+      "使用 AnyEdit 在 Qwen2.5-7B-Instruct 上编辑 1 条 UnKE_edit 长文本知识。采用已注册的滑窗编辑配方，统计语料为 Wikipedia 20200501.en，协方差预算为两百行。评估目标答案、问题改写以及可用的局部性和迁移探针，查看逐例预测，保存配置与指标，执行前展示等价 CLI 命令。"
   }
 };
 
@@ -134,13 +146,13 @@ function isDefaultIntent(value: string): boolean {
 function defaultTaskName(operation: Operation): string {
   if (operation !== DEFAULT_OPERATION) return `webui_${operation}_quick_run`;
   const timestamp = new Date().toISOString().replace(/\D/g, "").slice(0, 14);
-  return `starter_tofu_gpt2_${timestamp}`;
+  return `starter_tofu_llama32_1b_${timestamp}`;
 }
 
 function defaultRecipe(catalog: Catalog, operation: Operation, modality: Modality = "text") {
-  if (operation === DEFAULT_OPERATION && modality === "text") {
+  if (modality === "text") {
     const starter = catalog.recipes.find(
-      (item) => item.id === STARTER_RECIPE_ID && item.default_runnable
+      (item) => item.id === STARTER_RECIPE_IDS[operation] && item.default_runnable
     );
     if (starter) return starter;
   }
@@ -187,7 +199,26 @@ export function Workbench() {
   const [smoke, setSmoke] = useDraftField("smoke");
   const [baseSelections, setBaseSelections] = useDraftField("baseSelections");
   const [overrides, setOverrides] = useDraftField("overrides");
+  const [overridesDraft, setOverridesDraft] = useDraftField("overridesDraft");
+  const previousOverrides = useRef(overrides);
+  useEffect(() => {
+    if (previousOverrides.current !== overrides) {
+      setOverridesDraft(null);
+      previousOverrides.current = overrides;
+    }
+  }, [overrides, setOverridesDraft]);
+  const parameterEdit = useMemo(() => {
+    if (overridesDraft === null) return { value: overrides, error: "" };
+    try {
+      const value: unknown = JSON.parse(overridesDraft);
+      if (!value || Array.isArray(value) || typeof value !== "object") throw new Error();
+      return { value: value as Record<string, unknown>, error: "" };
+    } catch {
+      return { value: null, error: language === "zh" ? "请输入 JSON 对象，例如 {\"trainer.args.learning_rate\": 0.0001}。" : "Enter a JSON object, such as {\"trainer.args.learning_rate\": 0.0001}." };
+    }
+  }, [overridesDraft, overrides, language]);
   const [composeSnapshot, setComposeSnapshot] = useDraftField("composeSnapshot");
+  const [reviewedConfigHash, setReviewedConfigHash] = useDraftField("reviewedConfigHash");
   const [currentRun, setCurrentRun] = useDraftField("currentRun");
   const [planning, setPlanning] = useState(false);
   const [composing, setComposing] = useState(false);
@@ -283,28 +314,31 @@ export function Workbench() {
     setOverrides({});
     setBaseSelections({});
     setPlan(null);
+    setSmoke(modality === "multimodal");
     const firstRecipe = defaultRecipe(catalog, operation, modality);
     setRecipeId(firstRecipe?.id || "");
     setExperiment(modality === "multimodal" && operation === "unlearning" ? catalog.experiments.find((item) => item.id === "unlearn/multimodal/smoke_qwen25vl3b_mllmu")?.id || "" : "");
     const firstModel =
       catalog.models.find(
-        (item) => item.modality === modality && item.id === (modality === "text" ? "gpt2" : "Qwen2.5-VL-3B")
+        (item) => item.modality === modality && item.id === (modality === "text" ? DEFAULT_TEXT_MODEL : "Qwen2.5-VL-3B")
       ) || catalog.models.find((item) => item.modality === modality);
-    setModel(firstModel?.id || "");
-    setTrainer(catalog.trainers[operation].find((item) => item.modality === modality)?.id || "");
+    setModel(firstRecipe?.model || firstModel?.id || "");
+    setTrainer(firstRecipe?.trainer || catalog.trainers[operation].find((item) => item.modality === modality)?.id || "");
     setEvaluation(
-      modality === "multimodal" ? (operation === "edit" ? "mm_edit" : "") : catalog.evaluations.includes(
+      firstRecipe?.evaluation || (modality === "multimodal" ? (operation === "edit" ? "mm_edit" : "") : catalog.evaluations.includes(
         operation === "unlearning" ? "tofu" : operation
       )
         ? operation === "unlearning"
           ? "tofu"
           : operation
-        : catalog.evaluations[0] || ""
+        : catalog.evaluations[0] || "")
     );
     const operationDatasets = catalog.datasets.filter((item) =>
       item.operations.includes(operation) && item.modality === modality
     );
-    if (operation === "unlearning") {
+    if (firstRecipe) {
+      setDatasets(firstRecipe.datasets);
+    } else if (operation === "unlearning") {
       setDatasets({
         forget:
           operationDatasets.find((item) =>
@@ -396,7 +430,10 @@ export function Workbench() {
 
   const payloadKey = JSON.stringify(payload);
   const composeResult =
-    composeSnapshot?.key === payloadKey ? composeSnapshot.result : null;
+    overridesDraft === null && composeSnapshot?.key === payloadKey ? composeSnapshot.result : null;
+  const reviewConfirmed = !!composeResult?.preflight?.valid && reviewedConfigHash === composeResult.preflight.review_hash;
+  const reviewedCommand = composeResult ? composeResult.command + (reviewConfirmed
+    ? ` --reviewed-config ${reviewedConfigHash}` : " --preflight") : "";
 
   const latest = useRef({ payloadKey, intent, provider, language });
   latest.current = { payloadKey, intent, provider, language };
@@ -404,10 +441,12 @@ export function Workbench() {
   useEffect(() => {
     if (previousPayload.current !== payloadKey) {
       setComposeSnapshot(null);
+      setReviewedConfigHash(null);
       setCurrentRun(null);
       previousPayload.current = payloadKey;
     }
   }, [payloadKey]);
+  useEffect(() => { if (overridesDraft !== null) setReviewedConfigHash(null); }, [overridesDraft]);
 
   const applyConfiguration = (value: ComposePayload) => {
     const nextModality = value.modality || "text";
@@ -424,13 +463,49 @@ export function Workbench() {
     setComposeSnapshot(null); setCurrentRun(null);
   };
 
+  const applyLongTextPreset = (nextOperation: "inject" | "edit") => {
+    const presetId = nextOperation === "edit"
+      ? "builtin-unke-anyedit-qwen25-7b"
+      : "builtin-alpaca-loreft-qwen25-7b";
+    const preset = catalog?.recipes.find((item) => item.id === presetId && item.default_runnable);
+    if (!preset) return;
+    applyConfiguration({
+      operation: nextOperation,
+      modality: "text",
+      recipe_id: preset.id,
+      model: preset.model,
+      trainer: preset.trainer,
+      datasets: preset.datasets,
+      evaluation: preset.evaluation,
+      task_name: defaultTaskName(nextOperation),
+      seed,
+      smoke: false,
+      overrides: nextOperation === "edit" ? { max_edits: 1 } : {}
+    });
+    setIntent(longTextIntents[language][nextOperation]);
+    setPlan(null);
+  };
+
   const generatePlan = async () => {
     const sequence = ++planSequence.current;
     const context = JSON.stringify(latest.current);
     setPlanning(true);
     setError("");
     try {
-      const value = await api.plan({ intent, provider, language, modality });
+      const starter = modality === "text" && Object.values(defaultIntents).some((byOperation) => byOperation[operation] === intent)
+        ? catalog?.recipes.find((item) => item.id === STARTER_RECIPE_IDS[operation] && item.default_runnable)
+        : undefined;
+      const role = { unlearning: "forget", inject: "train", edit: "edit" }[operation];
+      const value = await api.plan({
+        intent, provider, language, modality,
+        ...(starter ? {
+          operation,
+          model_id: starter.model,
+          dataset_id: starter.datasets[role],
+          methods: [starter.trainer.split("/").at(-1)!],
+          num_cases: 50
+        } : {})
+      });
       if (!mounted.current || sequence !== planSequence.current || JSON.stringify(latest.current) !== context) return;
       setPlan(value);
       if (value.configuration) applyConfiguration(value.configuration);
@@ -443,9 +518,11 @@ export function Workbench() {
   };
 
   const compose = async () => {
+    if (overridesDraft !== null) return;
     const sequence = ++composeSequence.current;
     setComposing(true);
     setComposeSnapshot(null);
+    setReviewedConfigHash(null);
     setError("");
     try {
       const result = await api.compose(payload);
@@ -460,7 +537,7 @@ export function Workbench() {
   };
 
   const run = async () => {
-    if (!composeResult?.valid || composing || planning || runLock.current) return;
+    if (!composeResult?.valid || !reviewConfirmed || composing || planning || runLock.current) return;
     runLock.current = true;
     if (runRequest.current.key !== payloadKey) {
       runRequest.current = { key: payloadKey, id: Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, "0")).join("") };
@@ -468,7 +545,8 @@ export function Workbench() {
     setRunning(true);
     setError("");
     try {
-      const value = await api.startRun({ ...payload, request_id: runRequest.current.id, preview_hash: composeResult.preview_hash });
+      const value = await api.startRun({ ...payload, request_id: runRequest.current.id, preview_hash: composeResult.preview_hash,
+        reviewed_config_hash: reviewedConfigHash! });
       if (latest.current.payloadKey === payloadKey) setCurrentRun(value);
     } catch (caught) {
       setError(uiErrorMessage(caught, language));
@@ -502,8 +580,14 @@ export function Workbench() {
   const planFieldLabels: Record<string, string> = {
     operation: t("operation"),
     model: t("model"),
+    model_id: t("model"),
+    dataset: t("dataset"),
+    dataset_id: t("dataset"),
+    method: t("method"),
     methods: t("method"),
-    evaluation: t("evaluation")
+    evaluation: t("evaluation"),
+    evaluators: t("evaluation"),
+    num_cases: language === "zh" ? "样本数" : "Sample count"
   };
   const runStatusLabels: Record<string, string> = {
     queued: t("queued"),
@@ -614,33 +698,21 @@ export function Workbench() {
             <textarea
               className="intent-input"
               value={intent}
-              rows={4}
+              rows={6}
               placeholder={t("intentPlaceholder")}
               onChange={(event) => { setIntent(event.target.value); setPlan(null); }}
             />
             <div className="intent-presets" aria-label={t("intentPresets")}>
               <button
                 type="button"
-                onClick={() => {
-                  setOperation("inject");
-                  setModality("text");
-                  setIntent(longTextIntents[language].inject);
-                  setPlan(null);
-                  setComposeSnapshot(null);
-                }}
+                onClick={() => applyLongTextPreset("inject")}
               >
                 <Syringe size={14} />
                 {t("longTextInjectionPreset")}
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  setOperation("edit");
-                  setModality("text");
-                  setIntent(longTextIntents[language].edit);
-                  setPlan(null);
-                  setComposeSnapshot(null);
-                }}
+                onClick={() => applyLongTextPreset("edit")}
               >
                 <PencilLine size={14} />
                 {t("longTextEditingPreset")}
@@ -677,6 +749,7 @@ export function Workbench() {
 
             <AgentSession intent={intent} provider={provider} language={language} modality={modality}
               configuration={payload} previewHash={composeResult?.valid ? composeResult.preview_hash : undefined}
+              reviewedConfigHash={reviewConfirmed ? reviewedConfigHash! : undefined}
               previewValid={!!composeResult?.valid} />
             <div className="planner-skills">
               <div className="planner-skills-header">
@@ -702,6 +775,9 @@ export function Workbench() {
                   {t("viewRegistry")} <ChevronRight size={14} />
                 </Link>
               </div>
+              {showSkills && <p className="section-description">{language === "zh"
+                ? "高亮项对应下面的建议流程；实际调用会显示在 Agent 执行记录中。"
+                : "Highlighted skills belong to the suggested workflow below. Actual calls appear in the Agent execution trace."}</p>}
               {showSkills ? (
                 <div className="planner-skill-list" role="list">
                   {skills.map((skill) => {
@@ -711,14 +787,13 @@ export function Workbench() {
                         role="listitem"
                         className={selected ? "is-selected" : ""}
                         key={skill.id}
-                        title={localizedSkillDescription(
+                        title={`${displayTechnicalText(skill.id)}: ${localizedSkillDescription(
                           skill.id,
                           language,
                           skill.description
-                        )}
+                        )}`}
                       >
-                        {selected ? <Check size={11} /> : null}
-                        {displayTechnicalText(skill.id)}
+                        {localizedSkillName(skill.id, language)}
                       </span>
                     );
                   })}
@@ -728,6 +803,9 @@ export function Workbench() {
 
             {plan ? (
               <div className="agent-plan">
+                {plan.language && plan.language !== language ? <p className="section-description" role="status">{language === "zh"
+                  ? "这份计划的说明以英文生成。配置已保留；如需中文说明，请重新生成计划。"
+                  : "This plan's explanations were generated in Chinese. Its configuration is retained; generate a new plan for English explanations."}</p> : null}
                 <div className="plan-summary">
                   <div>
                     <Bot size={18} />
@@ -770,6 +848,10 @@ export function Workbench() {
                     </div>
                   </div>
                 ) : null}
+                <h3>{language === "zh" ? "建议流程" : "Suggested workflow"}</h3>
+                <p className="section-description">{language === "zh"
+                  ? "按任务需要选择步骤，并非每项都要调用。已有可用样本时可跳过数据整理与构造，报告和复现命令按需生成。"
+                  : "Use the steps needed for this task. Ready-to-use cases can skip data preparation; reports and reproduction commands are optional."}</p>
                 <ol className="skill-timeline">
                   {plan.steps.map((step, index) => (
                     <li key={step.skill}>
@@ -777,8 +859,8 @@ export function Workbench() {
                         {String(index + 1).padStart(2, "0")}
                       </span>
                       <div>
-                        <strong>{displayTechnicalText(step.skill)}</strong>
-                        <small>{step.reason}</small>
+                        <strong title={displayTechnicalText(step.skill)}>{localizedSkillName(step.skill, language)}</strong>
+                        {step.reason ? <small>{displayTechnicalText(step.reason)}</small> : null}
                       </div>
                       <ChevronRight size={15} />
                     </li>
@@ -788,22 +870,11 @@ export function Workbench() {
                   <h3>{t("rationale")}</h3>
                   {plan.reasoning.map((item) => (
                     <div key={item.field}>
-                      <span>{planFieldLabels[item.field] || item.field}</span>
-                      <p>{item.reason}</p>
+                      <span>{planFieldLabels[item.field.toLowerCase()] || item.field}</span>
+                      <p>{displayTechnicalText(item.reason)}</p>
                     </div>
                   ))}
                 </div>
-                {plan.warnings.length ? (
-                  <div className="plan-warnings">
-                    <CircleAlert size={17} />
-                    <div>
-                      <strong>{t("warnings")}</strong>
-                      {plan.warnings.map((warning) => (
-                        <p key={warning}>{warning}</p>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
               </div>
             ) : null}
           </section>
@@ -911,7 +982,8 @@ export function Workbench() {
                       >
                         {catalog.datasets
                           .filter((item) =>
-                            item.operations.includes(operation) && item.modality === modality
+                            item.operations.includes(operation) && item.modality === modality &&
+                            (operation !== "unlearning" || !item.unlearning_role || item.unlearning_role === role)
                           )
                           .map((item) => (
                             <option value={item.id} key={item.id}>
@@ -928,7 +1000,11 @@ export function Workbench() {
                       onChange={(event) => setEvaluation(event.target.value)}
                     >
                       {modality === "multimodal" && operation !== "edit" ? <option value="">{language === "zh" ? "使用该多模态路线的探针" : "Use multimodal route probes"}</option> : null}
-                      {catalog.evaluations.filter((item) => modality === "text" ? !item.startsWith("mm_") : operation === "edit" && item.startsWith("mm_edit")).map((item) => (
+                      {catalog.evaluations.filter((item) => {
+                        const support = catalog.evaluation_support?.find(entry => entry.id === item);
+                        return support ? support.modality === modality && support.operations.includes(operation)
+                          : modality === "text" ? !item.startsWith("mm_") : operation === "edit" && item.startsWith("mm_edit");
+                      }).map((item) => (
                         <option value={item} key={item}>
                           {item}
                         </option>
@@ -968,12 +1044,41 @@ export function Workbench() {
               </label>
             </div>
 
+            <details className="parameter-editor">
+              <summary>{language === "zh" ? "参数与本地路径" : "Parameters and local paths"}</summary>
+              <label className="field field-wide">
+                <span>{language === "zh" ? "参数覆盖（JSON）" : "Parameter overrides (JSON)"}</span>
+                <textarea rows={7} spellCheck={false}
+                  aria-invalid={!!parameterEdit.error}
+                  aria-describedby="parameter-editor-help"
+                  value={overridesDraft ?? JSON.stringify(overrides, null, 2)}
+                  onChange={event => setOverridesDraft(event.target.value)} />
+              </label>
+              <p id="parameter-editor-help" className="section-description">{language === "zh"
+                ? "可调整学习率、方法参数及模型／数据路径。字段使用 Hydra 参数名；应用后重新预览。操作、模型类型和输出目录由任务配置管理。"
+                : "Adjust learning rate, method settings, and model/data paths using Hydra keys. Apply changes, then preview again. Task fields manage the operation, model type, and output directory."}</p>
+              {parameterEdit.error && <InlineError message={parameterEdit.error} />}
+              <Button variant="secondary" disabled={overridesDraft === null || !parameterEdit.value}
+                onClick={() => { if (parameterEdit.value) { setOverrides(parameterEdit.value); setOverridesDraft(null); setComposeSnapshot(null); } }}>
+                {language === "zh" ? "应用参数" : "Apply parameters"}
+              </Button>
+              {overridesDraft !== null && <Button variant="ghost" onClick={() => setOverridesDraft(null)}>
+                {language === "zh" ? "恢复已应用参数" : "Restore applied parameters"}
+              </Button>}
+            </details>
+
+            {composeResult?.preflight && <ConfigurationReview key={composeResult.preflight.review_hash}
+              report={composeResult.preflight} language={language} confirmed={reviewConfirmed}
+              onConfirm={checked => setReviewedConfigHash(checked ? composeResult.preflight!.review_hash : null)}
+              onApply={changes => { setOverrides(old => ({ ...old, ...changes })); setComposeSnapshot(null); setReviewedConfigHash(null); }} />}
+
             <div className="execute-bar">
               <div className="execute-actions">
                 <Button
                   variant="secondary"
                   icon={GitBranch}
                   loading={composing}
+                  disabled={overridesDraft !== null}
                   onClick={compose}
                 >
                   {t("preview")}
@@ -981,7 +1086,7 @@ export function Workbench() {
                 <Button
                   icon={Play}
                   loading={running}
-                  disabled={!composeResult?.valid || composing || planning || !!currentRun}
+                  disabled={!composeResult?.valid || !reviewConfirmed || composing || planning || !!currentRun}
                   onClick={run}
                 >
                   {t("runNow")}
@@ -989,6 +1094,20 @@ export function Workbench() {
               </div>
             </div>
 
+            {composeResult && !composeResult.valid && (
+              <InlineError message={configurationError(composeResult.stderr, language) || (language === "zh" ? "配置未通过校验，请调整参数后重新预览。" : "Configuration validation failed. Update the parameters and preview again.")} />
+            )}
+            {composeResult?.model_sources?.length ? <details className="source-details">
+              <summary>{language === "zh" ? "已匹配本地模型文件" : "Local model files located"}</summary>
+              <p className="section-description">{language === "zh"
+                ? "模型来源已解析为本地目录，预览命令和实际执行使用同一路径。"
+                : "Model sources resolve to local directories. Preview and execution use the same paths."}</p>
+              <dl className="metadata-grid">
+                {composeResult.model_sources.map((source) => <div key={source.component}>
+                  <dt>{({model: language === "zh" ? "模型" : "Model", tokenizer: language === "zh" ? "分词器" : "Tokenizer", processor: language === "zh" ? "处理器" : "Processor"} as Record<string, string>)[source.component] || source.component} · {source.source}</dt><dd className="mono">{source.path}</dd>
+                </div>)}
+              </dl>
+            </details> : null}
             {composeResult ? (
               <div
                 className={
@@ -1021,18 +1140,18 @@ export function Workbench() {
                     {composeResult.valid ? (
                       <>
                         <CheckCircle2 size={15} />
-                        {t("valid")}
+                        {language === "zh" ? "配置检查通过" : "Configuration checked"}
                       </>
                     ) : (
                       <>
                         <CircleAlert size={15} />
-                        {t("invalid")}
+                        {language === "zh" ? "配置需要调整" : "Configuration needs attention"}
                       </>
                     )}
                     <CopyButton
                       text={
                         codeTab === "command"
-                          ? composeResult.command
+                          ? reviewedCommand
                           : composeResult.resolved_config
                       }
                     />
@@ -1041,7 +1160,7 @@ export function Workbench() {
                 <pre>
                   <code>
                     {codeTab === "command"
-                      ? composeResult.command
+                      ? reviewedCommand
                       : composeResult.resolved_config || composeResult.stderr}
                   </code>
                 </pre>

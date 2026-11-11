@@ -2,10 +2,6 @@
 
 通过 Hydra 配置驱动，加载多模态模型 + MLLMU 数据 + 遗忘方法，执行训练并保存 checkpoint。
 
-注意：
-    当前环境下需要在导入 Hydra 前先导入 torch，否则直接执行
-    `python src/mm_train.py ...` 可能导致 CUDA 不可用。
-
 使用示例：
     python src/mm_train.py \
         model=Qwen2VL-2B \
@@ -37,6 +33,8 @@ from mm_registry import (  # noqa: E402
     import_symbol,
 )
 
+from know_surgery.runtime import resolve_device as _resolve_runtime_device
+
 logger = logging.getLogger(__name__)
 
 MM_TRAINER_REGISTRY = {}
@@ -49,34 +47,6 @@ for canonical_name, registration in MM_UNLEARNING_ALGORITHMS.items():
 
 def _import_trainer_cls(dotpath: str):
     return import_symbol(dotpath)
-
-
-def _resolve_runtime_device(cfg: DictConfig) -> str:
-    device = str(cfg.get("device", "cuda"))
-    require_cuda = bool(cfg.get("require_cuda", device.startswith("cuda")))
-    cuda_available = torch.cuda.is_available()
-
-    logger.info(
-        "Runtime device check: device=%s, require_cuda=%s, cuda_available=%s, cuda_device_count=%s",
-        device,
-        require_cuda,
-        cuda_available,
-        torch.cuda.device_count(),
-    )
-
-    if device.startswith("cuda") and not cuda_available:
-        hint = (
-            "CUDA is not available for mm_train. "
-            "In this environment avoid `python -u`, stdout/stderr redirection, "
-            "`CUDA_VISIBLE_DEVICES=*`, and `PYTORCH_ALLOC_CONF=expandable_segments:True`. "
-            "If you intentionally want CPU, override with `device=cpu require_cuda=false`."
-        )
-        if require_cuda:
-            raise RuntimeError(hint)
-        logger.warning("%s", hint)
-        return "cpu"
-
-    return device
 
 
 def _get_data_loaders(cfg: DictConfig, processor):
@@ -159,6 +129,12 @@ def _write_run_trace(
                     "name": torch.cuda.get_device_name(index),
                     "peak_memory_mb": torch.cuda.max_memory_allocated(index)
                     / (1024**2),
+                    "peak_reserved_mb": torch.cuda.max_memory_reserved(index)
+                    / (1024**2),
+                    "total_memory_mb": torch.cuda.get_device_properties(
+                        index
+                    ).total_memory
+                    / (1024**2),
                 }
             )
     summary = {
@@ -218,22 +194,65 @@ def _write_run_trace(
         )
 
 
+def _checkpoint_source_files(cfg):
+    """Bind frozen checkpoint weights to actual bytes before selective restore."""
+    paths = {str(cfg.model.model_path)}
+    for key in ("oracle_model_path", "reference_model_path", "teacher_model_path"):
+        value = cfg.trainer.get("method_args", {}).get(key)
+        if value:
+            paths.add(str(value))
+    records = []
+    for directory in sorted(paths):
+        files = sorted(
+            p
+            for p in Path(directory).iterdir()
+            if p.is_file() and p.suffix in {".json", ".safetensors", ".bin"}
+        )
+        if not any(p.suffix in {".safetensors", ".bin"} for p in files):
+            raise ValueError("Epoch checkpoints require immutable local source weights")
+        for path in files:
+            digest = hashlib.sha256()
+            with path.open("rb") as handle:
+                for chunk in iter(lambda: handle.read(16 * 1024 * 1024), b""):
+                    digest.update(chunk)
+            records.append({"path": str(path), "sha256": digest.hexdigest()})
+    return records
+
+
 def _input_manifest(cfg: DictConfig, primary_loader, retain_loader) -> dict:
     """Record selected input scope; optimizer caps may consume fewer records."""
     sources = []
-    for key in ("train_path", "retain_path", "data_dir", "image_root"):
-        value = cfg.data.get(key)
-        if not value:
-            continue
-        path = Path(str(value))
-        digest = None
-        if path.is_file():
-            hasher = hashlib.sha256()
-            with path.open("rb") as handle:
-                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                    hasher.update(chunk)
-            digest = hasher.hexdigest()
-        sources.append({"role": key, "path": str(path), "sha256": digest})
+    source_paths = {
+        key: Path(str(cfg.data[key]))
+        for key in ("train_path", "retain_path", "data_dir", "image_root")
+        if cfg.data.get(key)
+    }
+    if cfg.data.get("training_source") == "ft_data":
+        data_root = Path(str(cfg.data.data_dir))
+        source_paths["training_parquet"] = Path(
+            str(cfg.data.get("training_parquet") or data_root / "ft_Data")
+        )
+        ratio = int(cfg.data.get("forget_split_ratio", 5))
+        for split, directory in (
+            ("forget_membership", f"forget_{ratio}"),
+            ("retain_membership", f"retain_{100 - ratio}"),
+        ):
+            for path in sorted((data_root / directory).glob("*.parquet")):
+                source_paths[f"{split}/{path.name}"] = path
+    for key, path in source_paths.items():
+        # A directory source must bind each parquet's contents as well.
+        paths = sorted(path.glob("*.parquet")) if path.is_dir() else [path]
+        if not paths:
+            paths = [path]
+        for source_path in paths:
+            digest = None
+            if source_path.is_file():
+                hasher = hashlib.sha256()
+                with source_path.open("rb") as handle:
+                    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                        hasher.update(chunk)
+                digest = hasher.hexdigest()
+            sources.append({"role": key, "path": str(source_path), "sha256": digest})
     data_config = OmegaConf.to_container(cfg.data, resolve=True)
     return {
         "operation": str(cfg.get("operation", "unlearning")),
@@ -282,7 +301,7 @@ def main(cfg: DictConfig):
     ):
         raise ValueError("MMLoRA requires model.lora.enabled=true")
 
-    if trainer_name in {"MMUnlearner", "MMMANU"} and bool(
+    if trainer_name in {"MMUnlearner", "MMMANU", "MMVKD"} and bool(
         cfg.model.get("lora", {}).get("enabled", False)
     ):
         raise ValueError(
@@ -367,6 +386,41 @@ def main(cfg: DictConfig):
         if trainer_name == "MMMANU"
         else {"max_steps": trainer_args.get("max_steps", -1)}
     )
+    optimizer_args = {
+        key: trainer_args[key]
+        for key in ("optimizer", "weight_decay")
+        if key in trainer_args
+    }
+    manifest = _input_manifest(cfg, forget_loader, retain_loader)
+    checkpoint_args = {}
+    if trainer_name != "MMMANU":
+        checkpoint_args = {
+            key: trainer_args[key]
+            for key in (
+                "checkpoint_each_epoch",
+                "resume_from_checkpoint",
+                "stop_after_epochs",
+                "gradient_checkpointing",
+            )
+            if key in trainer_args
+        }
+        checkpoint_args["checkpoint_identity"] = OmegaConf.to_container(
+            OmegaConf.create(
+                {
+                    "model": cfg.model,
+                    "data": cfg.data,
+                    "method": cfg.trainer.get("method_args", {}),
+                }
+            ),
+            resolve=True,
+        )
+    if checkpoint_args.get("checkpoint_each_epoch") or checkpoint_args.get(
+        "resume_from_checkpoint"
+    ):
+        checkpoint_args["checkpoint_identity"]["source_files"] = (
+            _checkpoint_source_files(cfg)
+        )
+        checkpoint_args["checkpoint_identity"]["data_sources"] = manifest["sources"]
     trainer = trainer_cls(
         model=model,
         processor=processor,
@@ -379,6 +433,8 @@ def main(cfg: DictConfig):
         warmup_steps=trainer_args.get("warmup_steps", 0),
         save_dir=output_dir,
         **budget_args,
+        **checkpoint_args,
+        **optimizer_args,
         **method_args,
     )
 
@@ -386,7 +442,7 @@ def main(cfg: DictConfig):
         cfg,
         output_dir,
         status="running",
-        input_manifest=_input_manifest(cfg, forget_loader, retain_loader),
+        input_manifest=manifest,
     )
     start_time = time.perf_counter()
     train_summary = None
@@ -394,7 +450,9 @@ def main(cfg: DictConfig):
         logger.info("Starting training with %s...", trainer_name)
         train_summary = trainer.train()
 
-        if bool(cfg.get("save_model", True)):
+        if bool(cfg.get("save_model", True)) and train_summary.get(
+            "training_complete", True
+        ):
             logger.info("Saving model...")
             trainer.save_model(output_dir)
         else:
@@ -415,7 +473,9 @@ def main(cfg: DictConfig):
     _write_run_trace(
         cfg,
         output_dir,
-        status="completed",
+        status="completed"
+        if train_summary.get("training_complete", True)
+        else "checkpointed",
         elapsed_seconds=elapsed_seconds,
         train_summary=train_summary,
     )

@@ -1,0 +1,7 @@
+# @package _global_
+defaults:
+  - /experiment/inject/tofu/default
+  - _self_
+trainer:
+  method_args:
+    r: 32

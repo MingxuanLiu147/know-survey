@@ -5,9 +5,10 @@ import { displayTechnicalText, uiErrorMessage } from "../i18n";
 import { useDraftField } from "../state/TaskDraft";
 import { Button, InlineError } from "./ui";
 
-export function AgentSession({ intent, provider, language, modality, configuration, previewHash, previewValid }: {
+export function AgentSession({ intent, provider, language, modality, configuration, previewHash, previewValid, reviewedConfigHash }: {
   intent: string; provider: string; language: "en" | "zh"; modality?: Modality;
   configuration: ComposePayload; previewHash?: string; previewValid: boolean;
+  reviewedConfigHash?: string;
 }) {
   const zh = language === "zh";
   const [execute, setExecute] = useState(false);
@@ -27,7 +28,7 @@ export function AgentSession({ intent, provider, language, modality, configurati
     return value;
   }
 
-  useEffect(() => { setExecute(false); }, [configurationKey]);
+  useEffect(() => { setExecute(false); }, [configurationKey, reviewedConfigHash]);
   useEffect(() => {
     if (!active || !trace) return;
     let disposed = false;
@@ -47,12 +48,12 @@ export function AgentSession({ intent, provider, language, modality, configurati
   }, [active, trace?.session_id]);
 
   async function start() {
-    if (startLock.current || active || (execute && !previewValid)) return;
+    if (startLock.current || active || (execute && (!previewValid || !reviewedConfigHash))) return;
     startLock.current = true;
     setStarting(true); setError("");
     try {
       const result = await call("", { intent, provider, modality, configuration,
-        preview_hash: previewHash, execute, max_steps: 12, timeout: 600 });
+        preview_hash: previewHash, reviewed_config_hash: reviewedConfigHash, execute, max_steps: 12, timeout: 600 });
       setTrace({ ...result, calls: [] });
     } catch (err) { setError(uiErrorMessage(err, language)); }
     finally { startLock.current = false; setStarting(false); }
@@ -68,10 +69,10 @@ export function AgentSession({ intent, provider, language, modality, configurati
     <summary>{zh ? "使用 Agent 执行当前任务" : "Use Agent for this task"}</summary>
     <p>{zh ? "Agent 使用当前任务的配置，按运行结果选择下一步技能。" :
       "The Agent uses this task’s configuration and chooses the next Skill from observed results."}</p>
-    <label className="agent-execute-option"><input type="checkbox" checked={execute} disabled={active || !previewValid}
+    <label className="agent-execute-option"><input type="checkbox" checked={execute} disabled={active || !previewValid || !reviewedConfigHash}
       onChange={event => setExecute(event.target.checked)} />
       {zh ? "执行已预览的配置" : "Execute the previewed configuration"}</label>
-    {!previewValid && <p className="muted">{zh ? "预览通过后可启用执行。" : "Preview the configuration to enable execution."}</p>}
+    {(!previewValid || !reviewedConfigHash) && <p className="muted">{zh ? "预览并确认层数、参数和数据后可启用执行。" : "Preview and confirm the layers, parameters and data to enable execution."}</p>}
     <div className="agent-actions">
       <Button variant="secondary" disabled={active || provider === "local" || intent.trim().length < 3}
         loading={starting} onClick={start}>{execute ? (zh ? "启动 Agent" : "Start Agent") : (zh ? "Agent 预览" : "Agent preview")}</Button>

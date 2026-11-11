@@ -28,6 +28,9 @@
 !scripts/train_malmen_auxiliary_network.py
 !scripts/validate_extension.py
 !scripts/run_mm_generate_mask.py
+!scripts/prepare_rank_statistics.py
+!scripts/prepare_zsre_scope.py
+!scripts/prepare_workbench_data.py
 !webui/
 !webui/**
 !demos/
@@ -37,6 +40,10 @@
 !.claude/
 !.claude/skills/
 !.claude/skills/**
+# Keep restricted implementations out of COPY and package builds.
+src/trainer/edit/unke_editor.py
+src/trainer/edit/preservation.py
+src/trainer/edit/research_unke_backend.py
 **/__pycache__/
 **/*.pyc
 **/*.egg-info/

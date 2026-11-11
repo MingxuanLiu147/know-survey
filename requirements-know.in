@@ -1,3 +1,3 @@
-# Reproducible uv environment input for repository development and evaluation.
-# Install from the repository root with: uv pip install -r requirements-know.in
--e .[dev,lm-eval]
+# Full reproducible environment: algorithms, WebUI, evaluation and build tools.
+# Compile with uv pip compile; install with uv pip install -r requirements-know.lock.
+-e .[dev,gpu,reft,webui,lm-eval]

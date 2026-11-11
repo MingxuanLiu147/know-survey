@@ -1,15 +1,14 @@
 # @package _global_
-# Qwen2.5-3B-Instruct full benchmark with model-specific AlphaEdit assets.
-
+# Candidate settings: inspect --preflight and review layers before execution.
 defaults:
-  - /experiment/edit/zsre/qwen25_7b/alphaedit
-  - override /model: Qwen2.5-3B-Instruct
+  - /experiment/edit/zsre/qwen25_3b/base
+  - override /trainer: edit/AlphaEdit_Official
   - _self_
 
-task_name: qwen25_3b_zsre_alphaedit_independent1301
-max_edits: 1301
-
+task_name: qwen25_3b_zsre_alphaedit_reviewed1301
 trainer:
   method_args:
-    stats_dir: ${paths.root_dir}/data/stats/qwen25_3b/alphaedit_stats
-    projection_path: ${paths.root_dir}/data/stats/qwen25_3b/alphaedit_projection.pt
+    layers: [4, 5, 6, 7, 8]
+    v_loss_layer: 35
+    stats_dir: ${paths.root_dir}/data/stats/qwen25_3b/alphaedit_reference
+    projection_path: ${paths.root_dir}/data/stats/qwen25_3b/alphaedit_reference/projection.pt

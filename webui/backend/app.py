@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from typing import Any, AsyncIterator
 
 import yaml
+from omegaconf import OmegaConf
 from fastapi import (
     FastAPI,
     File,
@@ -93,10 +94,17 @@ async def start_agent(request: AgentRequest) -> dict[str, Any]:
         )
     configuration = request.configuration
     composed = None
+    if request.execute and configuration is None:
+        raise HTTPException(
+            409,
+            "Execution requires a reviewed configuration. / 请先检查并确认当前任务配置。",
+        )
     if configuration is not None:
         composed = await asyncio.to_thread(
             _checked_compose, configuration, request.preview_hash
         )
+        if request.execute:
+            _require_parameter_review(composed, request.reviewed_config_hash)
         if any(not task.done() for task in _agent_tasks.values()):
             raise HTTPException(
                 409,
@@ -111,6 +119,7 @@ async def start_agent(request: AgentRequest) -> dict[str, Any]:
                 **configuration.model_dump(),
                 "request_id": f"agent-{session.id}",
                 "preview_hash": composed["preview_hash"],
+                "reviewed_config_hash": request.reviewed_config_hash,
             }
         )
         if session.cancelled.is_set() or time.monotonic() >= session.deadline:
@@ -338,7 +347,9 @@ def _response_examples() -> list[dict[str, Any]]:
     return result
 
 
-def _compose(request: ComposeRequest) -> dict[str, Any]:
+def _compose(
+    request: ComposeRequest, *, _resolve_sources: bool = True
+) -> dict[str, Any]:
     try:
         argv = catalog.build_argv(request, preview=True)
         command = catalog.command_preview(request)
@@ -370,7 +381,48 @@ def _compose(request: ComposeRequest) -> dict[str, Any]:
     }
     if result["valid"]:
         try:
+            if _resolve_sources:
+                sources = catalog.resolve_cached_sources(
+                    request, result["resolved_config"]
+                )
+                if sources["changes"]:
+                    resolved = _compose(sources["request"], _resolve_sources=False)
+                    resolved["model_sources"] = sources["changes"]
+                    return resolved
+            catalog.validate_composed(request, result["resolved_config"])
+            from know_surgery.preflight import inspect_configuration, prepare_config
+
+            prepared = prepare_config(
+                OmegaConf.create(result["resolved_config"]), root=ROOT
+            )
+            preflight = inspect_configuration(prepared, root=ROOT)
+            overrides = dict(request.overrides)
+            for dataset in preflight["datasets"]:
+                # Adapter defaults may omit data_path from the YAML. Pin the
+                # resolved file with Hydra's add-or-replace form in either case.
+                overrides = {
+                    key: value
+                    for key, value in overrides.items()
+                    if key.lstrip("+") != dataset["key"]
+                }
+                overrides["++" + dataset["key"]] = dataset["path"]
+            request = request.model_copy(update={"overrides": overrides})
+            result["request"] = request.model_dump()
+            result["command"] = catalog.command_preview(request)
+            prepared.invocation_command = result["command"]
+            result["resolved_config"] = OmegaConf.to_yaml(prepared, resolve=False)
+            result["preflight"] = preflight
             result.update(composition_identity(result["resolved_config"], ROOT))
+            if not preflight["valid"]:
+                result.update(
+                    valid=False,
+                    stderr="\n".join(
+                        issue["en"] + " / " + issue["zh"]
+                        for issue in preflight["errors"]
+                    ),
+                )
+        except CatalogError as exc:
+            result.update(valid=False, stderr=str(exc))
         except (OSError, ValueError, TypeError) as exc:
             raise HTTPException(
                 422, f"Cannot inspect the composed configuration: {exc}"
@@ -398,6 +450,15 @@ def _checked_compose(
     return result
 
 
+def _require_parameter_review(composed, reviewed_hash):
+    from know_surgery.preflight import PreflightError, require_review
+
+    try:
+        require_review(composed["preflight"], reviewed_hash)
+    except PreflightError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
 def _start_configuration(request: RunRequest, *, abort=None) -> dict[str, Any]:
     """Start GUI and configured Agent jobs through the same validated path."""
     payload = request.model_dump()
@@ -406,13 +467,17 @@ def _start_configuration(request: RunRequest, *, abort=None) -> dict[str, Any]:
         if existing is not None:
             return existing
         compose_request = ComposeRequest.model_validate(
-            request.model_dump(exclude={"gpu", "request_id", "preview_hash"})
+            request.model_dump(
+                exclude={"gpu", "request_id", "preview_hash", "reviewed_config_hash"}
+            )
         )
         composed = _checked_compose(compose_request, request.preview_hash)
+        _require_parameter_review(composed, request.reviewed_config_hash)
         if abort is not None and abort():
             raise TimeoutError("Session cancelled or time budget exhausted.")
         return jobs.start(
-            argv=catalog.build_argv(compose_request),
+            argv=catalog.build_argv(ComposeRequest.model_validate(composed["request"]))
+            + ["--reviewed-config", request.reviewed_config_hash],
             operation=request.operation,
             task_name=request.task_name,
             gpu=request.gpu,

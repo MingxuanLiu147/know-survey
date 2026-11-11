@@ -25,6 +25,7 @@ import copy
 import hashlib
 import json
 import logging
+import math
 import os
 import sys
 import time
@@ -184,9 +185,23 @@ def _write_edit_input_manifest(
             provenance = path.parent / "provenance.json"
             if provenance.is_file():
                 record["provenance_path"] = str(provenance)
+        scope_path = getattr(dataset, "scope_training_path", None)
+        if scope_path:
+            from know_surgery.edit_data import file_sha256
+
+            record["scope_training"] = {
+                "path": str(scope_path),
+                "sha256": file_sha256(Path(scope_path)),
+            }
         records.append(record)
     method_inputs = []
-    for key in ("archive", "edit_network_path", "projection_path"):
+    for key in (
+        "archive",
+        "edit_network_path",
+        "projection_path",
+        "demonstration_path",
+        "memory_path",
+    ):
         raw_path = (method_args or {}).get(key)
         if not raw_path:
             continue
@@ -501,6 +516,8 @@ def _summarize_edit_eval(eval_results: Mapping[str, Any]) -> dict[str, Any]:
         "generalization",
         "locality",
         "portability",
+        "sequence_success",
+        "generation_exact_match",
         "overall_score",
         "mm_reliability",
         "mm_generalization",
@@ -557,7 +574,7 @@ def _snapshot_original_model(model):
     return {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
 
 
-def _materialize_original_model(model, state_snapshot):
+def _materialize_original_model(model, state_snapshot, device="cpu"):
     """Clone ``model`` architecture and load the pre-edit snapshot."""
     # IKE/SERAC attach a non-parametric runtime to the edited model.  Detach it
     # while cloning so the locality reference remains genuinely pre-edit and
@@ -566,7 +583,7 @@ def _materialize_original_model(model, state_snapshot):
     if runtime is not None:
         delattr(model, "_edit_runtime")
     try:
-        original = copy.deepcopy(model)
+        original = _clone_original_model(model, device)
     finally:
         if runtime is not None:
             model._edit_runtime = runtime
@@ -604,7 +621,19 @@ def _clone_original_model(model, device: str | torch.device = "cpu"):
                 f"visible CUDA device count is {torch.cuda.device_count()}"
             )
 
-    original = copy.deepcopy(model)
+    # Copy weights directly to the reference device. Deepcopy followed by
+    # ``.cpu()`` first duplicates the entire model on the source GPU, which can
+    # OOM a 7B edit even when the final CPU reference would fit comfortably.
+    memo = {}
+    for parameter in model.parameters():
+        memo[id(parameter)] = torch.nn.Parameter(
+            parameter.detach().to(device=reference_device, copy=True),
+            requires_grad=False,
+        )
+    for buffer in model.buffers():
+        if id(buffer) not in memo:
+            memo[id(buffer)] = buffer.detach().to(device=reference_device, copy=True)
+    original = copy.deepcopy(model, memo)
     if getattr(model, "hf_device_map", None) is not None or any(
         hasattr(module, "_hf_hook") for module in model.modules()
     ):
@@ -621,6 +650,32 @@ def _clone_original_model(model, device: str | torch.device = "cpu"):
             method = original.__dict__.get(name)
             if method is not None and hasattr(method, "__wrapped__"):
                 delattr(original, name)
+    if reference_device.type == "cpu":
+        flash_modules = [
+            module
+            for module in original.modules()
+            if str(
+                getattr(getattr(module, "config", None), "_attn_implementation", "")
+            ).startswith("flash_attention")
+        ]
+        if flash_modules:
+            # Change only the copy: the edited model can keep its CUDA kernels.
+            # Use the model API so composite configs are updated consistently.
+            set_attention = getattr(original, "set_attn_implementation", None)
+            if callable(set_attention):
+                set_attention("eager")
+            if any(
+                str(module.config._attn_implementation).startswith("flash_attention")
+                for module in flash_modules
+            ):
+                raise ValueError(
+                    "CPU locality reference requires a model that supports "
+                    "set_attn_implementation('eager'). Use a compatible model "
+                    "or set edit_reference_device to an explicit CUDA device. "
+                    "/ CPU 局部性参考模型需要支持切换到 eager attention；"
+                    "请使用兼容模型，或将 edit_reference_device 设为明确的 CUDA 设备。"
+                )
+            logger.info("Using eager attention for the CPU locality reference")
     original.to(reference_device)
     original.eval()
     for parameter in original.parameters():
@@ -639,6 +694,7 @@ def _restore_independent_model(trainer, model, state_snapshot) -> None:
     if callable(reset_layer):
         reset_layer()
     model.load_state_dict(state_snapshot, strict=True)
+    model.zero_grad(set_to_none=True)
     _reset_independent_editor_state(trainer, model)
 
 
@@ -875,7 +931,10 @@ def _reset_independent_editor_state(trainer, model) -> None:
 def _aggregate_independent_summaries(
     case_summaries: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    keys = sorted({key for summary in case_summaries for key in summary})
+    keys = sorted(
+        {"reliability", "generalization", "locality", "portability"}
+        | {key for summary in case_summaries for key in summary}
+    )
     aggregate: dict[str, Any] = {
         "case_count": len(case_summaries),
         "metrics": {},
@@ -884,8 +943,7 @@ def _aggregate_independent_summaries(
         values = [
             float(summary[key])
             for summary in case_summaries
-            if isinstance(summary.get(key), (int, float))
-            and summary.get(key) is not None
+            if type(summary.get(key)) in (int, float) and math.isfinite(summary[key])
         ]
         aggregate["metrics"][key] = {
             "mean": sum(values) / len(values) if values else None,
@@ -905,20 +963,71 @@ def _run_independent_edit_benchmark(
     eval_cfgs,
     output_dir,
     base_snapshot,
+    reference_device="cpu",
 ) -> dict[str, Any]:
     """Edit/evaluate/restore each case, matching benchmark paper semantics."""
+    if not requests:
+        raise ValueError("Independent editing requires at least one request.")
     output_path = Path(output_dir)
     cases_root = output_path / "independent_cases"
     cases_root.mkdir(parents=True, exist_ok=True)
-    original_model = _materialize_original_model(model, base_snapshot)
+    original_model = _materialize_original_model(model, base_snapshot, reference_device)
+    grad_flags = {name: p.requires_grad for name, p in model.named_parameters()}
+    training_modes = {name: module.training for name, module in model.named_modules()}
     case_records = []
     case_summaries = []
+    run_error = None
+
+    def restore_baseline():
+        _restore_independent_model(trainer, model, base_snapshot)
+        for name, parameter in model.named_parameters():
+            parameter.requires_grad_(grad_flags[name])
+        for name, module in model.named_modules():
+            module.training = training_modes[name]
+
+    def save_progress():
+        # Missing and unexecuted cases stay visible in every denominator.
+        aggregate = _aggregate_independent_summaries(
+            case_summaries + [{}] * (len(requests) - len(case_summaries))
+        )
+        payload = {
+            "method": trainer.__class__.__name__,
+            "edit_type": "independent",
+            "requested_count": len(requests),
+            "completed_cases": len(case_records),
+            "successful_cases": sum(record["success"] for record in case_records),
+            "cases": case_records,
+            "aggregate": aggregate,
+        }
+        payload["success"] = (
+            payload["successful_cases"] == len(requests) and run_error is None
+        )
+        if run_error is not None:
+            payload["error"] = run_error
+        for filename, value in (
+            ("independent_results.json", payload),
+            ("independent_SUMMARY.json", aggregate),
+        ):
+            destination = output_path / filename
+            temporary = destination.with_suffix(".json.tmp")
+            temporary.write_text(
+                json.dumps(
+                    _to_jsonable(value), ensure_ascii=False, indent=2, allow_nan=False
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            temporary.replace(destination)
+        return payload
 
     try:
         for index, request in enumerate(requests):
-            _restore_independent_model(trainer, model, base_snapshot)
-            edit_result = trainer.edit(request)
+            phase = "restore"
             case_dir = cases_root / f"{index:05d}"
+            restore_baseline()
+            phase = "edit"
+            edit_result = trainer.edit(request)
+            phase = "save_edit_artifacts"
             save_edit_artifacts(
                 case_dir,
                 [request],
@@ -941,6 +1050,7 @@ def _run_independent_edit_benchmark(
             )
             summary = {}
             if case_success:
+                phase = "evaluate"
                 summary = _run_inline_edit_evaluation(
                     eval_cfgs=eval_cfgs,
                     model=model,
@@ -960,30 +1070,36 @@ def _run_independent_edit_benchmark(
                     "output_dir": str(case_dir),
                 }
             )
+            phase = "save_progress"
+            save_progress()
+    except Exception as exc:
+        # Persist the failed case and finished cases before propagating the error.
+        run_error = f"{type(exc).__name__}: {exc}"
+        if len(case_records) <= index:
+            failed_record = {
+                "case_index": index,
+                "success": False,
+                "error": run_error,
+                "failure_phase": phase,
+                "summary": {},
+                "output_dir": str(case_dir),
+            }
+            case_records.append(failed_record)
+            case_summaries.append({})
+            save_edit_artifacts(case_dir, [request], failed_record)
+        save_progress()
+        raise
     finally:
-        _restore_independent_model(trainer, model, base_snapshot)
-        del original_model
+        try:
+            restore_baseline()
+        except Exception as exc:
+            run_error = f"Baseline restoration failed: {type(exc).__name__}: {exc}"
+            save_progress()
+            raise
+        finally:
+            del original_model
 
-    aggregate = _aggregate_independent_summaries(case_summaries)
-    payload = {
-        "method": trainer.__class__.__name__,
-        "edit_type": "independent",
-        "requested_count": len(requests),
-        "successful_cases": sum(record["success"] for record in case_records),
-        "cases": case_records,
-        "aggregate": aggregate,
-    }
-    payload["success"] = payload["successful_cases"] == payload["requested_count"]
-    output_path.mkdir(parents=True, exist_ok=True)
-    with (output_path / "independent_results.json").open(
-        "w", encoding="utf-8"
-    ) as handle:
-        json.dump(_to_jsonable(payload), handle, ensure_ascii=False, indent=2)
-    with (output_path / "independent_SUMMARY.json").open(
-        "w", encoding="utf-8"
-    ) as handle:
-        json.dump(aggregate, handle, ensure_ascii=False, indent=2)
-    return payload
+    return save_progress()
 
 
 @hydra.main(version_base=None, config_path="../configs", config_name="train.yaml")
@@ -1016,6 +1132,15 @@ def main(cfg: DictConfig):
     #   - "unlearn": 遗忘训练，将 forget/retain 合并为 ForgetRetainDataset
     #   - "edit": 知识编辑，按 data.edit 加载原始编辑数据
     mode = cfg.get("mode", "train")
+    if mode == "edit":
+        from know_surgery.preflight import (
+            inspect_configuration,
+            prepare_config,
+            require_review,
+        )
+
+        prepare_config(cfg)
+        require_review(inspect_configuration(cfg), cfg.get("reviewed_config_hash"))
     run_started_at = _start_edit_run_trace(cfg)
 
     model_cfg = cfg.model
@@ -1028,6 +1153,10 @@ def main(cfg: DictConfig):
     #   - model: HuggingFace 预训练模型（如 LLaMA、Mistral 等）
     #   - tokenizer: 对应的 tokenizer
     model, tokenizer = get_model(model_cfg)
+    if mode == "edit":
+        from know_surgery.preflight import validate_model_modules
+
+        validate_model_modules(cfg, model)
 
     # Build the locality reference while the model still has its pristine
     # architecture.  Adapter editors (GRACE/WISE) replace modules during
@@ -1141,16 +1270,23 @@ def main(cfg: DictConfig):
                 raise ValueError(
                     "edit_type=independent requires do_eval=true and an edit evaluator"
                 )
-            independent_summary = _run_independent_edit_benchmark(
-                trainer=trainer,
-                model=model,
-                tokenizer=tokenizer,
-                template_args=template_args,
-                requests=executed_requests,
-                eval_cfgs=eval_cfgs,
-                output_dir=trainer_args.output_dir,
-                base_snapshot=pre_edit_snapshot,
-            )
+            try:
+                independent_summary = _run_independent_edit_benchmark(
+                    trainer=trainer,
+                    model=model,
+                    tokenizer=tokenizer,
+                    template_args=template_args,
+                    requests=executed_requests,
+                    eval_cfgs=eval_cfgs,
+                    output_dir=trainer_args.output_dir,
+                    base_snapshot=pre_edit_snapshot,
+                    reference_device=str(cfg.get("edit_reference_device", "cpu")),
+                )
+            except Exception:
+                _finish_edit_run_trace(
+                    _edit_output_dir(cfg), run_started_at, status="failed"
+                )
+                raise
             if cfg.get("save_edit_summary", True):
                 save_edit_artifacts(
                     trainer_args.output_dir,
@@ -1259,7 +1395,13 @@ def _run_training_and_evaluation(trainer, trainer_args, cfg):
         #   2. 调用 trainer.compute_loss() 计算损失
         #   3. 反向传播更新模型参数
         #   4. 定期评估和保存模型
-        trainer.train()
+        # TrainingArguments stores this option, but Trainer.train does not
+        # consume it unless the caller forwards it explicitly.
+        resume = getattr(trainer_args, "resume_from_checkpoint", None)
+        if resume is None:
+            trainer.train()
+        else:
+            trainer.train(resume_from_checkpoint=resume)
 
         # Save Trainer's progress metadata. Optimizer/scheduler recovery
         # additionally requires a full Trainer checkpoint.

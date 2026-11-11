@@ -13,6 +13,12 @@ Inspect every resolved job. For an authorized bounded model run, add `--execute`
 and optionally `--cuda <id>`. The helper limits a copy of the plan to two cases;
 it does not authorize or launch the full matrix.
 
+Use `--preflight` to inspect the exact bounded smoke configuration (including
+the two-case limit and one training step where applicable). After the user checks
+layers, method settings and inputs, execute with
+`--execute --reviewed-config METHOD=HASH`. A full-run review does not authorize a
+different smoke configuration, or vice versa; do not generate consent automatically.
+
 Output defaults to `artifacts/smoke-test/trace.json`. Read input counts, generated
 files and failure messages. Compose evidence is `configured`; successful real
 smoke evidence is `verified_smoke`, not a full-dataset result.

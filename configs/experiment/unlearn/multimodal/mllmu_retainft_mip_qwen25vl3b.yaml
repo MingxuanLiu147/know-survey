@@ -1,0 +1,14 @@
+# @package _global_
+defaults:
+  - /experiment/unlearn/multimodal/mllmu_mip_qwen25vl3b
+  - override /trainer: MMRetainFT
+
+data:
+  mode: reference
+  reference_source: retain
+
+benchmark_protocol:
+  method: RetainFT-from-Vanilla
+  adaptation_notes:
+    - continues-existing-Vanilla-on-all-7323-retain-QA
+    - not-a-retain-only-oracle-retrained-from-the-original-foundation-model

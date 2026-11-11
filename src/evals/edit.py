@@ -92,6 +92,8 @@ class EditEvaluator(Evaluator):
             return_tensors="pt",
         )["input_ids"].to(device)
         prompt_ids = prompt_inputs["input_ids"]
+        if prompt_ids.shape[1] == 0:
+            raise ValueError("Causal edit evaluation requires a non-empty prompt.")
         full_inputs = {
             "input_ids": torch.cat((prompt_ids, target_ids), dim=1),
             "attention_mask": torch.cat(
@@ -103,6 +105,26 @@ class EditEvaluator(Evaluator):
             ),
         }
         return full_inputs, prompt_ids.shape[1], target_ids[0]
+
+    def _encoder_decoder_target_logits(self, model, tokenizer, prompt, target):
+        """Score every target token from shifted decoder inputs, never itself."""
+        device = self._get_model_device(model)
+        source = tokenizer(prompt, return_tensors="pt").to(device)
+        encoded_target = tokenizer(target, return_tensors="pt").to(device)
+        target_ids = encoded_target["input_ids"]
+        mask = encoded_target.get("attention_mask", torch.ones_like(target_ids)).bool()
+        if not mask.any():
+            raise ValueError(
+                "The target has no scorable tokens; accuracy is undefined."
+            )
+        labels = target_ids.masked_fill(~mask, -100)
+        with torch.no_grad():
+            logits = model(
+                input_ids=source["input_ids"],
+                attention_mask=source.get("attention_mask"),
+                labels=labels,
+            ).logits
+        return logits[0, mask[0].to(logits.device)], target_ids[0, mask[0]]
 
     @contextmanager
     def _grace_prompt_boundary(self, model, prompt_length: int):
@@ -254,21 +276,10 @@ class EditEvaluator(Evaluator):
         device = self._get_model_device(model)
 
         if getattr(model.config, "is_encoder_decoder", False):
-            src = tokenizer(prompt, return_tensors="pt").to(device)
-            trg = tokenizer(target, return_tensors="pt").to(device)
-            target_ids = trg["input_ids"][0]
-            if target_ids.numel() <= 1:
-                return [], []
-            with torch.no_grad():
-                outputs = model(
-                    input_ids=src["input_ids"],
-                    attention_mask=src.get("attention_mask", None),
-                    decoder_input_ids=trg["input_ids"],
-                    decoder_attention_mask=trg.get("attention_mask", None),
-                )
-                logits = outputs.logits
-            pred = torch.argmax(logits[0, :-1, :], dim=-1)
-            gold = target_ids[:-1]
+            logits, gold = self._encoder_decoder_target_logits(
+                model, tokenizer, prompt, target
+            )
+            pred = torch.argmax(logits, dim=-1)
             return pred.detach().cpu().tolist(), gold.detach().cpu().tolist()
 
         full_inputs, prompt_len, gold = self._causal_prompt_target_inputs(
@@ -301,8 +312,14 @@ class EditEvaluator(Evaluator):
             1 for index in range(overlap) if pred_tokens[index] == gold_tokens[index]
         )
         denominator = len(gold_tokens)
+        if denominator == 0:
+            raise ValueError(
+                "The target has no scorable tokens; accuracy is undefined."
+            )
         return {
-            "score": correct / denominator if denominator else 0.0,
+            "score": correct / denominator,
+            "sequence_success": correct == denominator
+            and len(pred_tokens) == denominator,
             "correct_tokens": correct,
             "total_target_tokens": denominator,
             "prediction_token_ids": pred_tokens,
@@ -312,9 +329,11 @@ class EditEvaluator(Evaluator):
         }
 
     def token_match_ratio(self, pre_tokens: List[int], post_tokens: List[int]) -> float:
-        if not pre_tokens and not post_tokens:
-            return 1.0
-        if not pre_tokens or not post_tokens:
+        if not pre_tokens:
+            raise ValueError(
+                "Locality has no pre-edit tokens; invariance is undefined."
+            )
+        if not post_tokens:
             return 0.0
         overlap = min(len(pre_tokens), len(post_tokens))
         same = sum(1 for i in range(overlap) if pre_tokens[i] == post_tokens[i])
@@ -329,7 +348,7 @@ class EditEvaluator(Evaluator):
             with torch.no_grad():
                 log_probs, gold = runtime.target_distribution(prompt, target)
                 if not gold.numel():
-                    return 0.0
+                    raise ValueError("The target has no scorable tokens.")
                 return float(
                     log_probs.gather(-1, gold.to(log_probs.device).unsqueeze(-1))
                     .exp()
@@ -340,20 +359,11 @@ class EditEvaluator(Evaluator):
         device = self._get_model_device(model)
 
         if getattr(model.config, "is_encoder_decoder", False):
-            src = tokenizer(prompt, return_tensors="pt").to(device)
-            trg = tokenizer(target, return_tensors="pt").to(device)
-            target_ids = trg["input_ids"][0]
-            if target_ids.numel() <= 1:
-                return 0.0
-            with torch.no_grad():
-                logits = model(
-                    input_ids=src["input_ids"],
-                    attention_mask=src.get("attention_mask", None),
-                    decoder_input_ids=trg["input_ids"],
-                    decoder_attention_mask=trg.get("attention_mask", None),
-                ).logits
-            probs = F.softmax(logits[0, :-1, :], dim=-1)
-            gold = target_ids[:-1].to(probs.device)
+            logits, gold = self._encoder_decoder_target_logits(
+                model, tokenizer, prompt, target
+            )
+            probs = F.softmax(logits, dim=-1)
+            gold = gold.to(probs.device)
             target_probs = probs.gather(1, gold.unsqueeze(1)).squeeze()
             return (
                 float(target_probs.item())
@@ -365,7 +375,7 @@ class EditEvaluator(Evaluator):
             tokenizer, prompt, target, device
         )
         if target_ids.numel() == 0:
-            return 0.0
+            raise ValueError("The target has no scorable tokens.")
 
         with self._grace_prompt_boundary(model, prompt_len), torch.no_grad():
             logits = model(**self._causal_model_inputs(full_inputs)).logits
@@ -479,6 +489,10 @@ class EditSuiteEvaluator(Evaluator):
                 summary[key] = metric_result[key]
             elif metric_name in metric_result:
                 summary[metric_name] = metric_result[metric_name]
+            if metric_name == "reliability":
+                for diagnostic in ("sequence_success", "generation_exact_match"):
+                    if diagnostic in metric_result:
+                        summary[diagnostic] = metric_result[diagnostic]
             if metric_name == "long_form":
                 for long_form_key in (
                     "bleu4",
@@ -564,12 +578,38 @@ class EditReliabilityEvaluator(EditEvaluator):
         self.name = "edit_reliability"
         args = eval_cfg.get("args", {})
         self.success_threshold = float(args.get("success_threshold", 1.0))
+        self.generate_exact_match = bool(args.get("generate_exact_match", False))
+        self.generation_max_new_tokens = int(args.get("generation_max_new_tokens", 64))
+
+    def _generation_detail(self, model, tokenizer, prompt, target):
+        """Greedy generation EM is separate from teacher-forced token accuracy."""
+        selected, tok, query = self._resolve_edit_runtime(model, tokenizer, prompt)
+        inputs = tok(query, return_tensors="pt").to(self._get_model_device(selected))
+        with torch.no_grad(), self._grace_prompt_boundary(
+            selected, inputs["input_ids"].shape[-1]
+        ):
+            output = selected.generate(
+                **self._causal_model_inputs(inputs),
+                do_sample=False,
+                num_beams=1,
+                max_new_tokens=self.generation_max_new_tokens,
+            )
+        prefix = (
+            0
+            if getattr(selected.config, "is_encoder_decoder", False)
+            else inputs["input_ids"].shape[-1]
+        )
+        prediction = tok.decode(output[0, prefix:], skip_special_tokens=True).strip()
+        return {
+            "generated_text": prediction,
+            "generation_exact_match": prediction == target.strip(),
+        }
 
     def evaluate(self, model, output_dir=None, **kwargs):
         tokenizer = kwargs.get("tokenizer")
         edit_data = kwargs.get("edit_data", [])
-        if tokenizer is None or not edit_data:
-            return {"reliability": 0.0}
+        if tokenizer is None:
+            raise ValueError("Reliability evaluation requires a tokenizer.")
 
         model = self.prepare_model(model)
         scores = []
@@ -582,6 +622,10 @@ class EditReliabilityEvaluator(EditEvaluator):
                 detail = self._token_accuracy_detail(
                     model, tokenizer, prompt, target_new
                 )
+                if self.generate_exact_match:
+                    detail.update(
+                        self._generation_detail(model, tokenizer, prompt, target_new)
+                    )
                 scores.append(detail["score"])
                 examples.append(
                     {
@@ -592,16 +636,25 @@ class EditReliabilityEvaluator(EditEvaluator):
                     }
                 )
 
-        reliability = self._mean(scores, 0.0)
+        reliability = self._mean(scores, None)
         result = {
             "reliability": reliability,
+            "sequence_success": self._mean(
+                [float(item["sequence_success"]) for item in examples], None
+            ),
+            "generation_exact_match": self._mean(
+                [float(item["generation_exact_match"]) for item in examples], None
+            )
+            if self.generate_exact_match
+            else None,
+            "success_threshold": self.success_threshold,
             "total_samples": len(scores),
             "successful_edits": int(
                 sum(1 for score in scores if score >= self.success_threshold)
             ),
             "per_example": examples,
         }
-        logger.info("Edit Reliability: %.4f", reliability)
+        logger.info("Edit Reliability: %s", reliability)
         return result
 
 
@@ -616,7 +669,7 @@ class EditGeneralizationEvaluator(EditEvaluator):
         tokenizer = kwargs.get("tokenizer")
         edit_data = kwargs.get("edit_data", [])
         if tokenizer is None:
-            return {"generalization": 0.0}
+            raise ValueError("Generalization evaluation requires a tokenizer.")
 
         model = self.prepare_model(model)
         case_scores = []
@@ -795,7 +848,7 @@ class EditPortabilityEvaluator(EditEvaluator):
         tokenizer = kwargs.get("tokenizer")
         edit_data = kwargs.get("edit_data", [])
         if tokenizer is None:
-            return {"portability": 0.0}
+            raise ValueError("Portability evaluation requires a tokenizer.")
 
         model = self.prepare_model(model)
 

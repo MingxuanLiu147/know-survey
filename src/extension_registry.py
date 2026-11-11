@@ -815,7 +815,9 @@ def _experiment_from_argv(argv: Sequence[str]) -> str:
     return experiment
 
 
-def _validate_smoke_argv(argv: Sequence[str], operation: str) -> str:
+def _validate_smoke_argv(
+    argv: Sequence[str], operation: str, *, bounded: bool = True
+) -> str:
     if len(argv) < 5 or tuple(argv[:4]) != (
         "python",
         "src/surgery.py",
@@ -827,6 +829,8 @@ def _validate_smoke_argv(argv: Sequence[str], operation: str) -> str:
             f"--config-name=surgery.yaml operation={operation}"
         )
     for token in argv[4:]:
+        if token == "--preflight" and not bounded:
+            continue
         if token.startswith("-"):
             raise ExtensionSchemaError(
                 f"unsupported command option in recipe.smoke.argv: {token}"
@@ -848,11 +852,15 @@ def _validate_smoke_argv(argv: Sequence[str], operation: str) -> str:
             raise ExtensionSchemaError("extension smoke must use modality=text")
         if key.startswith("hydra.") or key.startswith("paths.root_dir"):
             raise ExtensionSchemaError(f"smoke may not override {key}")
-    if operation == "edit" and "max_edits=1" not in argv:
+    if bounded and operation == "edit" and "max_edits=1" not in argv:
         raise ExtensionSchemaError("edit smoke must include max_edits=1")
-    if operation in {"inject", "unlearning"} and not any(
-        token in {"trainer.args.max_steps=1", "+trainer.args.max_steps=1"}
-        for token in argv
+    if (
+        bounded
+        and operation in {"inject", "unlearning"}
+        and not any(
+            token in {"trainer.args.max_steps=1", "+trainer.args.max_steps=1"}
+            for token in argv
+        )
     ):
         raise ExtensionSchemaError(
             f"{operation} smoke must include trainer.args.max_steps=1"
@@ -935,6 +943,7 @@ def _validate_refs_and_compatibility(
     project_root: Path,
     bundle: _BundleView | None,
     registry: Mapping[str, Any],
+    curated: bool = False,
 ) -> tuple[list[str], bool]:
     """Return (errors, unknown_algorithm_scaffold)."""
 
@@ -1046,7 +1055,9 @@ def _validate_refs_and_compatibility(
     architecture_specific = manifest.supports.architecture_specific or bool(
         method_metadata and method_metadata.get("architecture_specific", False)
     )
-    if architecture_specific and manifest.recipe.model_hparams is None:
+    # Built-in experiments contain their own mappings. Their runtime assets are
+    # checked by surgery preflight; uploaded bundles must declare these assets.
+    if not curated and architecture_specific and manifest.recipe.model_hparams is None:
         errors.append("architecture-specific methods require recipe.model_hparams")
     if manifest.recipe.model_hparams and "recipe.model_hparams" in loaded:
         hparams = loaded["recipe.model_hparams"]
@@ -1063,12 +1074,20 @@ def _validate_refs_and_compatibility(
                 and hparams.get("handler", method_handler) != method_handler
             ):
                 errors.append("model hparams handler does not match recipe method")
-    if method_metadata and method_metadata.get("requires_checkpoints", False):
+    if (
+        not curated
+        and method_metadata
+        and method_metadata.get("requires_checkpoints", False)
+    ):
         if not manifest.requires.checkpoints:
             errors.append(
                 f"algorithm handler {method_handler} requires requires.checkpoints"
             )
-    if method_metadata and method_metadata.get("requires_statistics", False):
+    if (
+        not curated
+        and method_metadata
+        and method_metadata.get("requires_statistics", False)
+    ):
         if not manifest.requires.statistics:
             errors.append(
                 f"algorithm handler {method_handler} requires requires.statistics"
@@ -1148,6 +1167,8 @@ def _bundle_structure_errors(
 def _compose_overrides(argv: Sequence[str]) -> list[str]:
     overrides: list[str] = []
     for token in argv[4:]:
+        if token == "--preflight":
+            continue
         key = token.lstrip("+").split("=", 1)[0]
         if key in {"operation", "modality"}:
             continue
@@ -1180,9 +1201,12 @@ def _compose_recipe(
     *,
     project_root: Path,
     bundle: _BundleView | None,
+    bounded: bool = True,
 ) -> list[str]:
     errors: list[str] = []
-    experiment = _validate_smoke_argv(manifest.recipe.smoke.argv, manifest.operation)
+    experiment = _validate_smoke_argv(
+        manifest.recipe.smoke.argv, manifest.operation, bounded=bounded
+    )
     experiment_ref = f"configs/experiment/{experiment}.yaml"
     if not _ref_exists(experiment_ref, project_root=project_root, bundle=bundle):
         return [f"smoke experiment does not exist: {experiment_ref}"]
@@ -1846,7 +1870,7 @@ class ExtensionRegistry:
                     recipe["experiment"], f"recipes[{index}].experiment"
                 )
                 argv = _string_tuple(recipe["argv"], f"recipes[{index}].argv")
-                if _validate_smoke_argv(argv, operation) != experiment:
+                if _validate_smoke_argv(argv, operation, bounded=False) != experiment:
                     raise ExtensionSchemaError(
                         "curated recipe experiment does not match argv"
                     )
@@ -1951,6 +1975,7 @@ class ExtensionRegistry:
                         project_root=self.project_root,
                         bundle=None,
                         registry=registry,
+                        curated=True,
                     )
                 )
                 if unknown_scaffold:
@@ -1958,7 +1983,10 @@ class ExtensionRegistry:
                         "curated recipe cannot use an unregistered scaffold"
                     )
                 compose_errors = compatibility_errors + _compose_recipe(
-                    synthetic, project_root=self.project_root, bundle=None
+                    synthetic,
+                    project_root=self.project_root,
+                    bundle=None,
+                    bounded=False,
                 )
                 if compose_errors:
                     raise ExtensionSchemaError("; ".join(compose_errors))

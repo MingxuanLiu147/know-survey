@@ -1,0 +1,14 @@
+# Source: https://huggingface.co/datasets/YWZBrandon/wikidyk_exp
+# Paper: https://aclanthology.org/2026.acl-long.771/
+# QA-only training split: generated_qas; eval probes are never training targets.
+# The upstream repository is Apache-2.0; consult the dataset card for data terms.
+# See docs/injection.md for the exact input checksums used by the paper.
+WikiDYK_train:
+  handler: WikiDYKDataset
+  args:
+    data_path: ${oc.env:WIKIDYK_QA_TRAIN_PATH,data/inject/wikidyk/train_qa.json}
+    max_length: 256
+    num_upsample: 1000
+    training_recipe: qa_only
+    append_eos: true
+    loss_normalization: token

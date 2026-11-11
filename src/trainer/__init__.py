@@ -8,7 +8,7 @@ Know-Surgery 训练器注册表
 - Edit: 知识编辑（ROME, MEMIT, MEND 等）
 """
 
-import torch
+import math
 from typing import Dict, Any
 from omegaconf import DictConfig
 from transformers import Trainer, TrainingArguments
@@ -40,6 +40,7 @@ from trainer.edit.base import EditTrainer
 from trainer.edit.rome import ROMEEditor
 from trainer.edit.memit import MEMITEditor
 from trainer.edit.mend import MENDEditor
+from trainer.edit.mend_official import MENDFactorEditor
 from trainer.edit.ft import FTEditor
 from trainer.edit.alphaedit import AlphaEditEditor
 from trainer.edit.grace import GRACEEditor
@@ -73,8 +74,11 @@ def _register_trainer(trainer_class):
 
 
 def load_trainer_args(trainer_args: DictConfig, dataset):
+    """Resolve epoch-based warmup using the Trainer's actual parallel layout."""
     trainer_args = dict(trainer_args)
     warmup_epochs = trainer_args.pop("warmup_epochs", None)
+    if warmup_epochs is not None and warmup_epochs < 0:
+        raise ValueError("warmup_epochs must be nonnegative.")
     if warmup_epochs:
         if dataset is None:
             raise ValueError(
@@ -82,16 +86,21 @@ def load_trainer_args(trainer_args: DictConfig, dataset):
                 "Please check if your data mode is set correctly (e.g. mode='unlearn') "
                 "or if the dataset is loaded properly."
             )
-        batch_size = trainer_args["per_device_train_batch_size"]
-        grad_accum_steps = trainer_args["gradient_accumulation_steps"]
-        num_devices = torch.cuda.device_count()
-        dataset_len = len(dataset)
-        trainer_args["warmup_steps"] = int(
-            (warmup_epochs * dataset_len)
-            // (batch_size * grad_accum_steps * num_devices)
-        )
-
     trainer_args = TrainingArguments(**trainer_args)
+    if warmup_epochs:
+        # train_batch_size includes single-process DataParallel devices;
+        # world_size includes all distributed ranks, including other nodes.
+        global_microbatch = trainer_args.train_batch_size * trainer_args.world_size
+        batches_per_epoch = (
+            len(dataset) // global_microbatch
+            if trainer_args.dataloader_drop_last
+            else math.ceil(len(dataset) / global_microbatch)
+        )
+        updates_per_epoch = max(
+            math.ceil(batches_per_epoch / trainer_args.gradient_accumulation_steps),
+            1,
+        )
+        trainer_args.warmup_steps = math.ceil(warmup_epochs * updates_per_epoch)
     return trainer_args
 
 
@@ -162,6 +171,7 @@ _register_trainer(EditTrainer)
 _register_trainer(ROMEEditor)
 _register_trainer(MEMITEditor)
 _register_trainer(MENDEditor)
+_register_trainer(MENDFactorEditor)
 _register_trainer(FTEditor)
 _register_trainer(AlphaEditEditor)
 _register_trainer(GRACEEditor)

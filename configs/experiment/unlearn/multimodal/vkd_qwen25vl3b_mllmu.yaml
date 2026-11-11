@@ -1,0 +1,42 @@
+# @package _global_
+# Qwen visual adaptation with training-only pruning/loss calibration; not an upstream code port.
+defaults:
+- override /model: Qwen2.5-VL-3B
+- override /data: mllmu
+- override /trainer: MMVKD
+model:
+  model_path: ???
+  processor_path: ${model.model_path}
+  preserve_saved_processor: true
+  lora:
+    enabled: false
+data:
+  training_source: ft_data
+  training_parquet: ${data.data_dir}/ft_Data/train-00000-of-00001.parquet
+  forget_split_ratio: 5
+  batch_size: 4
+  ans_only: true
+  max_samples: null
+  paired_modalities: false
+trainer:
+  args:
+    lr: 2e-5
+    num_epochs: 4
+    optimizer: adam
+    weight_decay: 0.0
+  method_args:
+    prune_fraction: 0.01
+    require_nonzero_pruning: true
+    calibrate_loss_weights: true
+    loss_calibration_batches: 8
+    retain_gradient_fraction: 0.5
+    distill_gradient_fraction: 0.25
+benchmark_protocol:
+  paper: https://arxiv.org/html/2512.11325v2
+  comparison_paper: https://arxiv.org/html/2511.06793v1
+  status: prototype
+  exact_replication: false
+  budget_source: MIP-Editor-Table-A1-common-comparison-budget
+  checkpoint_policy: existing-benchmark-trained-vanilla-is-usable
+  evaluation: separate-forget-vqa-forget-qa-retain-vqa-retain-qa
+output_dir: saves/unlearning/vkd_qwen25vl3b_mllmu/${now:%Y-%m-%d_%H-%M-%S}

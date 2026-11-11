@@ -90,7 +90,7 @@ class _ActivationMoments:
             self.above_tau += batch_above_tau
         self.count += int(values.shape[0])
 
-    def finalized(self) -> dict[str, torch.Tensor | int]:
+    def finalized(self, variance_correction: int = 0) -> dict[str, torch.Tensor | int]:
         if (
             self.count <= 0
             or self.total is None
@@ -103,6 +103,13 @@ class _ActivationMoments:
         # torch.var(..., unbiased=False), and unlike the upstream default it is
         # defined for a one-record smoke test.
         variance = (self.squared_total / self.count - mean.square()).clamp_min(0)
+        if variance_correction:
+            if self.count <= variance_correction:
+                raise ValueError(
+                    "MANU source sample variance requires at least two QA observations; "
+                    "use variance_correction=0 only for a population-variance smoke"
+                )
+            variance *= self.count / (self.count - variance_correction)
         return {
             "count": self.count,
             "mean": mean,
@@ -294,6 +301,7 @@ class MMMANU:
         epsilon: float = 1e-6,
         selection_scope: str = "global",
         denominator_mode: str = "absolute_sum",
+        variance_correction: int = 0,
         materialize: bool = True,
         benchmark: str | None = None,
         checkpoint_id: str | None = None,
@@ -316,6 +324,8 @@ class MMMANU:
             raise ValueError(
                 f"MMMANU denominator_mode must be one of {self.DENOMINATOR_MODES}"
             )
+        if variance_correction not in (0, 1):
+            raise ValueError("MMMANU variance_correction must be 0 or 1")
         if int(num_epochs) != 1:
             raise ValueError(
                 "MMMANU is a one-shot neuron editor and requires num_epochs=1"
@@ -338,6 +348,7 @@ class MMMANU:
         self.epsilon = float(epsilon)
         self.selection_scope = selection_scope
         self.denominator_mode = denominator_mode
+        self.variance_correction = variance_correction
         self.materialize = bool(materialize)
         if self.materialize:
             for module_name, module in discover_language_down_projections(
@@ -417,8 +428,10 @@ class MMMANU:
                 "MMMANU did not observe identical layers for text and multimodal forwards"
             )
         for layer in sorted(text_layers):
-            text = moments["text"][layer].finalized()
-            multimodal = moments["multimodal"][layer].finalized()
+            text = moments["text"][layer].finalized(self.variance_correction)
+            multimodal = moments["multimodal"][layer].finalized(
+                self.variance_correction
+            )
             if text["count"] != multimodal["count"]:
                 raise RuntimeError(
                     f"MMMANU layer {layer} has unpaired observations: "
@@ -607,6 +620,7 @@ class MMMANU:
             "status": "materialized" if self.materialize else "selection_only",
             "selection_scope": self.selection_scope,
             "denominator_mode": self.denominator_mode,
+            "variance_correction": self.variance_correction,
             "alpha": self.alpha,
             "decay": self.decay,
             "scale": 1.0 - self.decay,
@@ -627,7 +641,18 @@ class MMMANU:
             "importance_artifact_sha256": hashlib.sha256(
                 score_path.read_bytes()
             ).hexdigest(),
-            "source_adjustments": list(SOURCE_ADJUSTMENTS),
+            "source_adjustments": [
+                adjustment
+                for adjustment in SOURCE_ADJUSTMENTS
+                if not (
+                    self.variance_correction == 1
+                    and adjustment.startswith("population variance")
+                )
+                and not (
+                    self.denominator_mode == "source_signed_sum"
+                    and adjustment.startswith("absolute-sum")
+                )
+            ],
             "standard_trainer_args": self.runtime_args,
         }
         manifest_path = output_dir / "manu_manifest.json"
@@ -680,7 +705,7 @@ class MMMANU:
             "materialized": self.materialize,
             "manifest_path": os.path.join(self.save_dir, "manu_manifest.json"),
             "importance_path": os.path.join(self.save_dir, "manu_importance.pt"),
-            "source_adjustments": list(SOURCE_ADJUSTMENTS),
+            "source_adjustments": manifest["source_adjustments"],
             "peak_memory_mb": peak_memory_mb,
         }
 

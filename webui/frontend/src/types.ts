@@ -33,9 +33,11 @@ export interface Catalog {
     handlers: string[];
     modality: Modality;
     operations: Operation[];
+    unlearning_role?: string | null;
     status: EvidenceLevel;
   }>;
   evaluations: string[];
+  evaluation_support?: Array<{ id: string; modality: Modality; operations: Operation[] }>;
   experiments: Array<{
     id: string;
     operation: Operation;
@@ -62,6 +64,7 @@ export interface Recipe {
 
 export interface Plan {
   plan_id: string;
+  language?: "en" | "zh";
   configuration?: ComposePayload | null;
   configuration_limits?: { max_samples: number | null; max_steps: number | null };
   configurations?: Record<string, ComposePayload>;
@@ -103,8 +106,26 @@ export interface ComposePayload {
   overrides?: Record<string, unknown>;
 }
 
+export interface ConfigurationReview {
+  valid: boolean;
+  review_hash: string;
+  model: { source: string; num_hidden_layers: number | null; model_type: string | null };
+  method: string;
+  parameters: Array<{ key: string; value: unknown; source: string; active: boolean }>;
+  datasets: Array<{ key: string; path: string; count: number; count_kind?: string; sha256: string; split?: string }>;
+  errors: Array<{ key: string; en: string; zh: string }>;
+  warnings: Array<{ key: string; en: string; zh: string }>;
+}
+
 export interface ComposeResult {
+  preflight?: ConfigurationReview;
   preview_hash?: string;
+  model_sources?: Array<{
+    component: string;
+    source: string;
+    path: string;
+    revision?: string | null;
+  }>;
   valid: boolean;
   returncode: number;
   command: string;

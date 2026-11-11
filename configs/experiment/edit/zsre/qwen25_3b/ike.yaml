@@ -1,10 +1,13 @@
 # @package _global_
-# Qwen2.5-3B-Instruct full benchmark; inherits the configured IKE protocol.
-
+# Candidate settings: inspect --preflight and review layers before execution.
 defaults:
-  - /experiment/edit/zsre/qwen25_7b/ike
-  - override /model: Qwen2.5-3B-Instruct
+  - /experiment/edit/zsre/qwen25_3b/base
+  - override /trainer: edit/IKE_official
   - _self_
 
-task_name: qwen25_3b_zsre_ike_independent1301
-max_edits: 1301
+task_name: qwen25_3b_zsre_ike_reviewed1301
+trainer:
+  method_args:
+    demonstration_path: null  # Required: independent reviewed demonstration corpus.
+    retrieval_backend: sentence_transformer
+    k: 32

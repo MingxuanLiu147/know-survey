@@ -8,6 +8,7 @@ import csv
 import hashlib
 import importlib.util
 import json
+import math
 import os
 import re
 import shlex
@@ -23,6 +24,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT / "src") not in sys.path:
     sys.path.insert(0, str(ROOT / "src"))
+
 OPERATIONS = {"unlearning", "inject", "edit"}
 EVIDENCE_LEVELS = {
     "planned",
@@ -175,6 +177,16 @@ def _operation_from_intent(text: str) -> str:
 
 def _model_from_intent(text: str) -> str:
     lowered = text.lower().replace("_", "-")
+    # Honor explicit registered Llama IDs before size/family fallbacks.
+    for path in sorted(
+        (ROOT / "configs/model").glob("Llama*.yaml"),
+        key=lambda path: (-len(path.stem), path.stem),
+    ):
+        if re.search(
+            r"(?<![a-z0-9])" + re.escape(path.stem.lower()) + r"(?![a-z0-9])",
+            lowered,
+        ):
+            return path.stem
     for model in (
         "Qwen2.5-VL-3B",
         "Qwen2VL-2B",
@@ -195,6 +207,8 @@ def _model_from_intent(text: str) -> str:
     if "zephyr" in lowered and "7b" in lowered:
         return "zephyr-7b-beta"
     if "qwen2.5-1.5b" in lowered or "qwen25-1.5b" in lowered:
+        if re.search(r"qwen(?:2\.5|25)-1\.5b\s+base\b", lowered):
+            return "Qwen2.5-1.5B"
         return "Qwen2.5-1.5B-Instruct"
     if "qwen2.5-3b" in lowered or "qwen25-3b" in lowered:
         return "Qwen2.5-3B-Instruct"
@@ -204,6 +218,8 @@ def _model_from_intent(text: str) -> str:
         return "gpt2"
     if re.search(r"\b7b\b", lowered):
         return "Qwen2.5-7B-Instruct"
+    if "wikidyk" in lowered:
+        return "Qwen2.5-1.5B"
     return "gpt2"
 
 
@@ -214,6 +230,20 @@ def _is_long_text(text: str) -> bool:
 
 def _dataset_from_intent(text: str, operation: str) -> tuple[str, str]:
     lowered = text.lower()
+    workbench_datasets = {
+        "unlearning": ("TOFU_workbench_forget", "fact"),
+        "inject": ("RuleTaker_workbench_inject", "rule"),
+        "edit": ("CounterFact_workbench_edit", "fact"),
+    }
+    dataset_id, knowledge_type = workbench_datasets[operation]
+    if dataset_id.lower() in lowered:
+        return dataset_id, knowledge_type
+    if operation == "edit" and "zsre" in lowered:
+        return (
+            ("LEME_zsre_edit", "free_text")
+            if "leme" in lowered
+            else ("ZSRE_edit", "fact")
+        )
     if operation == "edit" and "akew" in lowered:
         return "AKEW_counterfact_unstructured_edit", "free_text"
     if operation == "edit" and "leme" in lowered:
@@ -224,14 +254,16 @@ def _dataset_from_intent(text: str, operation: str) -> tuple[str, str]:
         return "UnKE_edit", "free_text"
     if "counterfact" in lowered:
         return "CounterFact_edit", "fact"
+    if operation == "inject" and "wikidyk" in lowered:
+        return "WikiDYK_train_inject", "fact"
     if "tofu" in lowered:
-        return "TOFU_local_smoke_forget", "fact"
+        return "TOFU_workbench_forget", "fact"
     if "ruletaker" in lowered or "rule" in lowered or "规则" in lowered:
         return "RuleTaker_train_inject", "rule"
     if "wikihow" in lowered or "procedure" in lowered or "过程" in lowered:
         return "WikiHow_train_inject", "procedural"
     defaults = {
-        "unlearning": ("TOFU_local_smoke_forget", "fact"),
+        "unlearning": ("TOFU_workbench_forget", "fact"),
         "inject": ("Alpaca_inject", "free_text"),
         "edit": ("CounterFact_edit", "fact"),
     }
@@ -278,7 +310,7 @@ def _methods_from_intent(text: str, operation: str) -> list[str]:
 
 def _num_cases(text: str) -> int:
     match = re.search(
-        r"\b(\d+)\s*(?:edits?|cases?|samples?|records?|facts?|条)\b",
+        r"(?<!\d)(\d+)\s*(?:(?:edits?|cases?|samples?|records?|facts?)\b|条|个\s*(?:样本|记录|事实))",
         text,
         flags=re.I,
     )
@@ -307,13 +339,7 @@ def _experiments(
     result: dict[str, str | None] = {}
     for method in methods:
         experiment = None
-        if (
-            dataset == "TOFU_local_smoke_forget"
-            and model == "gpt2"
-            and method == "GradAscent"
-        ):
-            experiment = "unlearn/tofu/gpt2_quickstart"
-        elif dataset == "CounterFact_edit" and model == "Qwen2.5-1.5B-Instruct":
+        if dataset == "CounterFact_edit" and model == "Qwen2.5-1.5B-Instruct":
             if method == "ROME":
                 experiment = "edit/counterfact/qwen25_1_5b_rome_100"
             elif method == "MEMIT":
@@ -322,7 +348,7 @@ def _experiments(
                 experiment = "edit/model_coverage/qwen25_1_5b_ft_counterfact"
         elif dataset == "CounterFact_edit" and model == "gpt2":
             candidates = {
-                "FT": "edit/model_coverage/gpt2_ft_counterfact",
+                "FT": "edit/counterfact/workbench",
                 "ROME": "edit/counterfact/gpt2_rome_real",
                 "MEMIT": "edit/counterfact/gpt2_memit_real",
                 "IKE": "edit/model_coverage/gpt2_ike_counterfact",
@@ -368,7 +394,13 @@ def _experiments(
             for row in rows:
                 if (operation is None or row.get("operation") == operation) and (
                     Path(row.get("model", "")).stem == model
-                    and Path(row.get("method", "")).stem == method
+                    and Path(row.get("method", "")).stem
+                    in {
+                        method,
+                        f"{method}_Official",
+                        f"{method}Official",
+                        f"{method}_official",
+                    }
                     and any(
                         Path(value).stem == dataset
                         for value in row.get("datasets", {}).values()
@@ -466,6 +498,8 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
         "inject": ["task_accuracy", "knowledge_retention"],
         "edit": ["reliability", "generalization", "locality", "portability"],
     }[operation]
+    if operation == "inject" and dataset == "WikiDYK_train_inject":
+        evaluators = ["acquisition", "generalization", "retention"]
     if modality == "multimodal" and operation == "inject":
         evaluators = [
             "train_tf_token_accuracy_before_after",
@@ -487,29 +521,22 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
             "Only the 7B size was explicit; selected Qwen2.5-7B-Instruct because registered long-text recipes target it."
         )
     experiments = _experiments(model, dataset, methods, operation)
-    if modality == "multimodal" and operation == "unlearning":
+    if (
+        modality == "multimodal"
+        and operation == "unlearning"
+        and model == "Qwen2.5-VL-3B"
+        and dataset == "MLLMU_Bench_unlearn"
+    ):
+        recipes = {
+            "MMGradAscent": "mllmu_ga_qwen25vl3b",
+            "MMGradDiff": "mllmu_mip_qwen25vl3b",
+            "MMNPO": "mllmu_npo_rt_qwen25vl3b",
+            "MMManu": "manu_mip_qwen25vl3b_mllmu",
+            "MMVKD": "vkd_qwen25vl3b_mllmu",
+        }
         for method in methods:
-            for path in sorted(
-                (ROOT / "configs/experiment/unlearn/multimodal").glob("smoke_*.yaml")
-            ):
-                config = yaml.safe_load(path.read_text())
-                defaults = {
-                    key: value
-                    for row in config.get("defaults", [])
-                    if isinstance(row, dict)
-                    for key, value in row.items()
-                }
-                benchmark = "clear" if dataset == "CLEAR_unlearn" else "mllmu"
-                if (
-                    defaults.get("override /model") == model
-                    and defaults.get("override /data") == benchmark
-                ):
-                    experiments[method] = (
-                        path.relative_to(ROOT / "configs/experiment")
-                        .with_suffix("")
-                        .as_posix()
-                    )
-                    break
+            if method in recipes:
+                experiments[method] = "unlearn/multimodal/" + recipes[method]
     if args.dataset_id:
         registry = ROOT / "configs/extensions/recipes.yaml"
         rows = (
@@ -958,7 +985,38 @@ def _bind_plan_cases(plan: dict[str, Any], source: Path, plan_path: Path) -> Non
     )
 
 
+def _encode_hydra_override(value: Any, *, nested: bool = False) -> str:
+    """Serialize typed plan values using Hydra's unquoted mapping-key syntax."""
+    if isinstance(value, dict):
+        entries = []
+        for key, item in value.items():
+            if not isinstance(key, str) or not re.fullmatch(
+                r"[A-Za-z_][A-Za-z0-9_./@-]*", key
+            ):
+                raise ValueError(f"Invalid nested override key: {key}")
+            entries.append(f"{key}: {_encode_hydra_override(item, nested=True)}")
+        return "{" + ", ".join(entries) + "}"
+    if isinstance(value, list):
+        return (
+            "["
+            + ", ".join(_encode_hydra_override(item, nested=True) for item in value)
+            + "]"
+        )
+    if isinstance(value, str):
+        if "${" in value or any(ord(char) < 32 for char in value):
+            raise ValueError("Unsafe override value")
+        # Top-level strings may intentionally contain Hydra list/group syntax.
+        if nested:
+            from hydra.core.override_parser.types import Quote, QuotedString
+
+            return QuotedString(value, Quote.double).with_quotes()
+        return value
+    return json.dumps(value, ensure_ascii=False, allow_nan=False)
+
+
 def _plan_command(plan: dict[str, Any], method: str, *, preview: bool) -> list[str]:
+    from know_surgery.resources import reference_trainer_for_experiment
+
     operation = plan["operation"]
     modality = plan.get("modality", "text")
     if modality not in {"text", "multimodal"}:
@@ -968,6 +1026,9 @@ def _plan_command(plan: dict[str, Any], method: str, *, preview: bool) -> list[s
     trainer = (
         "inject/" if operation == "inject" else "edit/" if operation == "edit" else ""
     ) + method
+    trainer = reference_trainer_for_experiment(
+        plan.get("experiments", {}).get(method), trainer
+    )
     for kind, value in (
         ("model", plan["model_id"]),
         ("trainer", trainer),
@@ -991,6 +1052,26 @@ def _plan_command(plan: dict[str, Any], method: str, *, preview: bool) -> list[s
     command.extend([f"model={plan['model_id']}", f"trainer={trainer}"])
     inputs = plan.get("inputs")
     if inputs:
+        if experiment:
+            from surgery import _compose_config
+
+            recipe, _ = _compose_config(
+                [
+                    f"operation={operation}",
+                    f"modality={modality}",
+                    f"experiment={experiment}",
+                ]
+            )
+            edit_datasets = recipe.get("data", {}).get("edit", {})
+            if any(
+                dataset.get("args", {}).get("expected_sha256")
+                for dataset in edit_datasets.values()
+            ):
+                raise ValueError(
+                    "This experiment pins a benchmark snapshot and cannot be combined "
+                    "with bound custom cases. Use the benchmark data_path override or "
+                    "select a custom-data experiment. / 固定基准配置不能混入自定义样本。"
+                )
         roles = (
             {"forget", "retain"}
             if operation == "unlearning"
@@ -1086,14 +1167,43 @@ def _plan_command(plan: dict[str, Any], method: str, *, preview: bool) -> list[s
             "${" in value or any(ord(c) < 32 for c in value)
         ):
             raise ValueError(f"Unsafe override value for {key}")
-        encoded = (
-            json.dumps(value, ensure_ascii=False)
-            if not isinstance(value, str)
-            else value
-        )
+        encoded = _encode_hydra_override(value)
         command.append(f"{key}={encoded}")
     if preview:
         command.extend(["--cfg", "job"])
+    return command
+
+
+def _reviewed_plan_command(plan, method, args, *, smoke=False):
+    """Forward only an explicitly supplied review; previews never grant consent."""
+    preflight = getattr(args, "preflight", False)
+    if preflight and args.execute:
+        raise ValueError("Choose either --preflight or --execute.")
+    command = _plan_command(plan, method, preview=not (args.execute or preflight))
+    if smoke and plan["operation"] in {"unlearning", "inject"}:
+        command.append("++trainer.args.max_steps=1")
+    if preflight:
+        command.append("--preflight")
+    reviews = {}
+    for item in getattr(args, "reviewed_config", None) or []:
+        name, separator, digest = item.partition("=")
+        if (
+            not separator
+            or name not in plan["methods"]
+            or not re.fullmatch(r"[0-9a-f]{64}", digest)
+        ):
+            raise ValueError(
+                "Use --reviewed-config METHOD=HASH for a method in this plan."
+            )
+        if name in reviews:
+            raise ValueError(f"Duplicate configuration review for {name}")
+        reviews[name] = digest
+    if args.execute:
+        if method not in reviews:
+            raise ValueError(
+                "Review --preflight output, then supply --reviewed-config METHOD=HASH. / 请先检查并确认层数、参数和数据。"
+            )
+        command.extend(["--reviewed-config", reviews[method]])
     return command
 
 
@@ -1106,7 +1216,7 @@ def cmd_run_operation(args: argparse.Namespace) -> int:
     methods = [args.method] if args.method else list(plan["methods"])
     results = []
     for method in methods:
-        command = _plan_command(plan, method, preview=not args.execute)
+        command = _reviewed_plan_command(plan, method, args)
         result = _run(
             command,
             timeout=args.timeout,
@@ -1163,7 +1273,7 @@ def _has_smoke_evidence(
             "input_manifest.json",
         )
     ]
-    metrics = list(run_dir.glob("*_SUMMARY.json"))
+    metrics = _summary_paths(run_dir)
     metrics.extend(
         path for path in (run_dir / "unlearning_metrics.json",) if path.is_file()
     )
@@ -1305,20 +1415,22 @@ def cmd_smoke(args: argparse.Namespace) -> int:
     methods = [args.method] if args.method else list(plan["methods"])
     results = []
     for method in methods:
-        command = _plan_command(plan, method, preview=not args.execute)
-        if args.execute and plan["operation"] in {"unlearning", "inject"}:
-            command.append("++trainer.args.max_steps=1")
+        command = _reviewed_plan_command(plan, method, args, smoke=True)
         result = _run(
             command,
             timeout=args.timeout,
             env={"CUDA_VISIBLE_DEVICES": args.cuda} if args.cuda else None,
         )
+        overrides = {
+            key.lstrip("+"): value for key, value in plan.get("overrides", {}).items()
+        }
+        output_keys = (
+            ("output_dir", "trainer.args.output_dir", "paths.output_dir")
+            if plan.get("modality") == "multimodal"
+            else ("trainer.args.output_dir", "paths.output_dir", "output_dir")
+        )
         output_dir = next(
-            (
-                value
-                for key, value in plan.get("overrides", {}).items()
-                if key.lstrip("+") in {"trainer.args.output_dir", "output_dir"}
-            ),
+            (overrides[key] for key in output_keys if key in overrides),
             None,
         )
         run_dirs = _run_artifact_candidates(
@@ -1394,6 +1506,43 @@ def cmd_smoke(args: argparse.Namespace) -> int:
     return 0 if all(item["returncode"] == 0 for item in results) else 1
 
 
+def _summary_paths(run_dir: Path) -> list[Path]:
+    """Read root summaries and only the checkpoint matching final Trainer state."""
+    paths = sorted(run_dir.glob("*_SUMMARY.json"))
+    state = run_dir / "trainer_state.json"
+    if state.is_file():
+        step = _read_json(state).get("global_step")
+        if type(step) is int and step >= 0:
+            paths.extend(
+                sorted(
+                    (run_dir / f"checkpoint-{step}" / "evals").glob("*_SUMMARY.json")
+                )
+            )
+    return list(
+        dict.fromkeys(
+            path for path in paths if path.resolve().is_relative_to(run_dir.resolve())
+        )
+    )
+
+
+def _run_inputs(paths: list[str]) -> list[Path]:
+    """Avoid counting a run twice when its final checkpoint is also supplied."""
+    runs = []
+    for raw in paths:
+        path = _path(raw).resolve()
+        checkpoint = path.parent
+        if path.name == "evals" and re.fullmatch(r"checkpoint-\d+", checkpoint.name):
+            parent = checkpoint.parent
+            state = parent / "trainer_state.json"
+            if state.is_file() and _read_json(state).get("global_step") == int(
+                checkpoint.name.removeprefix("checkpoint-")
+            ):
+                path = parent
+        if path not in runs:
+            runs.append(path)
+    return runs
+
+
 def _summary_payload(run_dir: Path) -> dict[str, Any]:
     if not run_dir.is_dir():
         raise FileNotFoundError(f"Run directory not found: {run_dir}")
@@ -1402,25 +1551,81 @@ def _summary_payload(run_dir: Path) -> dict[str, Any]:
     paper_columns: dict[str, Any] = {}
     paper_protocol_columns: dict[str, Any] = {}
     summary_files = []
-    for path in sorted(run_dir.glob("*_SUMMARY.json")):
+    for path in _summary_paths(run_dir):
         payload = _read_json(path)
         summary_files.append(str(path))
         if isinstance(payload, dict):
+            source = path.relative_to(run_dir).as_posix()
+            evaluator = path.stem.removesuffix("_SUMMARY")
+            location = path.parent.relative_to(run_dir).as_posix()
+            location = "run" if location == "." else location
+            phase = payload.get("phase") or location
+            identity_phase = phase if phase == location else f"{location}/{phase}"
+
+            def append(key: str, value: Any, detail: dict | None = None) -> None:
+                # Preserve the full metric key and evaluator/location, matching
+                # the UI's IDs; two evaluators must never overwrite each other.
+                metric_id = f"{evaluator}:{identity_phase}:{key}"
+                context = {**payload, **(detail or {})}
+                metrics[metric_id] = (
+                    value
+                    if type(value) in (int, float) and math.isfinite(value)
+                    else None
+                )
+                metric_details[metric_id] = {
+                    **(detail or {}),
+                    "metric_name": key,
+                    "evaluator": evaluator,
+                    "phase": phase,
+                    "source": source,
+                    **{
+                        name: context.get(name)
+                        for name in (
+                            "protocol_version",
+                            "scoring",
+                            "measurement_kind",
+                            "denominator",
+                            "numerator",
+                            "unit",
+                            "unavailable_reason",
+                        )
+                    },
+                }
+                reason = context.get(f"{key}_unavailable_reason")
+                if reason is not None:
+                    metric_details[metric_id]["unavailable_reason"] = reason
+                elif metrics[metric_id] is not None:
+                    metric_details[metric_id]["unavailable_reason"] = None
+
             nested_metrics = payload.get("metrics")
             if isinstance(nested_metrics, dict):
                 for key, detail in nested_metrics.items():
                     if isinstance(detail, dict):
-                        metrics[key] = detail.get("mean")
-                        metric_details[key] = detail
+                        append(key, detail.get("mean"), detail)
             if isinstance(payload.get("paper_columns"), dict):
                 paper_columns = payload["paper_columns"]
             if isinstance(payload.get("paper_protocol_columns"), dict):
                 paper_protocol_columns = payload["paper_protocol_columns"]
             for key, value in payload.items():
+                if key in {
+                    "protocol_version",
+                    "scoring",
+                    "measurement_kind",
+                    "phase",
+                    "denominator",
+                    "numerator",
+                    "unit",
+                    "unavailable_reason",
+                } or key.endswith("_unavailable_reason"):
+                    continue
                 if isinstance(value, (int, float)) and not isinstance(value, bool):
-                    metrics[key.rsplit(".", 1)[-1]] = value
+                    append(key, value)
                 elif value is None:
-                    metrics.setdefault(key.rsplit(".", 1)[-1], None)
+                    append(key, None)
+                elif isinstance(value, dict) and (
+                    "value" in value or "agg_value" in value
+                ):
+                    append(key, value.get("value", value.get("agg_value")), value)
     local = run_dir / "unlearning_metrics.json"
     explicit_evidence = None
     if local.exists():
@@ -1457,14 +1662,8 @@ def _summary_payload(run_dir: Path) -> dict[str, Any]:
     )
     if trace.get("runtime_seconds") is not None:
         metrics["runtime_seconds"] = trace["runtime_seconds"]
-    core = all(
-        (run_dir / filename).is_file()
-        for filename in (
-            "command.txt",
-            "resolved_config.yaml",
-            "input_manifest.json",
-            "run_trace.json",
-        )
+    evaluation_present = any(
+        key != "runtime_seconds" and value is not None for key, value in metrics.items()
     )
     trace_evidence = trace.get("evidence_level")
     evidence = (
@@ -1473,11 +1672,13 @@ def _summary_payload(run_dir: Path) -> dict[str, Any]:
         else explicit_evidence
         if explicit_evidence in EVIDENCE_LEVELS
         else "verified_smoke"
-        if core and trace.get("status") == "success"
+        if _has_smoke_evidence(run_dir)
         else "local_validation"
         if metrics
         else "configured"
     )
+    if evidence in {"verified_smoke", "verified_result"} and not evaluation_present:
+        evidence = "local_validation"
     manifest = (
         _read_json(run_dir / "input_manifest.json")
         if (run_dir / "input_manifest.json").exists()
@@ -1536,7 +1737,7 @@ def _summary_payload(run_dir: Path) -> dict[str, Any]:
 
 
 def cmd_aggregate(args: argparse.Namespace) -> int:
-    runs = [_summary_payload(_path(path)) for path in args.run_dirs]
+    runs = [_summary_payload(path) for path in _run_inputs(args.run_dirs)]
     output = _write_json(
         _path(args.output),
         {"generated_at": _utc(), "runs": runs, "missing_metrics_are_null": True},
@@ -1546,7 +1747,7 @@ def cmd_aggregate(args: argparse.Namespace) -> int:
 
 
 def cmd_compare(args: argparse.Namespace) -> int:
-    runs = [_summary_payload(_path(path)) for path in args.run_dirs]
+    runs = [_summary_payload(path) for path in _run_inputs(args.run_dirs)]
     keys = sorted(set().union(*(run["metrics"].keys() for run in runs)))
     rows = [
         {
@@ -1578,11 +1779,35 @@ def cmd_compare(args: argparse.Namespace) -> int:
         values = [run["fairness"].get(field) for run in runs]
         fairness[field] = {
             "values": values,
-            "known": all(value not in (None, "") for value in values),
+            "known": all(value not in (None, "", [], {}) for value in values),
             "equal": len({json.dumps(value, sort_keys=True) for value in values}) == 1,
         }
-    comparable = len(runs) >= 2 and all(
-        item["known"] and item["equal"] for item in fairness.values()
+    common = set.intersection(*(set(run["metrics"]) for run in runs)) if runs else set()
+    common.discard("runtime_seconds")
+    alignment = {}
+    for key in sorted(common):
+        contexts = [
+            {
+                field: run["metric_details"].get(key, {}).get(field)
+                for field in ("protocol_version", "scoring", "measurement_kind", "unit")
+            }
+            for run in runs
+        ]
+        alignment[key] = {
+            "values": contexts,
+            "known": all(
+                row["protocol_version"] not in (None, "")
+                or row["scoring"] not in (None, "")
+                for row in contexts
+            ),
+            "equal": len({json.dumps(row, sort_keys=True) for row in contexts}) == 1,
+        }
+    comparable = (
+        len(runs) >= 2
+        and bool(common)
+        and all(run["trace"].get("status") in {"success", "completed"} for run in runs)
+        and all(item["known"] and item["equal"] for item in fairness.values())
+        and all(item["known"] and item["equal"] for item in alignment.values())
     )
     output = _write_json(
         _path(args.output),
@@ -1590,13 +1815,14 @@ def cmd_compare(args: argparse.Namespace) -> int:
             "generated_at": _utc(),
             "comparable": comparable,
             "fairness": fairness,
+            "metric_alignment": alignment,
             "metric_keys": keys,
             "rows": rows,
             "limitations": (
                 []
                 if comparable
                 else [
-                    "Runs are not ranked because one or more fairness fields are missing or differ."
+                    "Runs are not ranked: completed evaluation, shared metrics, matching identities and scoring protocols are required."
                 ]
             ),
         },
@@ -1678,7 +1904,8 @@ def cmd_validate_config(args: argparse.Namespace) -> int:
 def cmd_validate_mm(args: argparse.Namespace) -> int:
     from PIL import Image
 
-    records = _records(_path(args.input))
+    source = _path(args.input)
+    records = _records(source)
     errors = []
     if not records:
         errors.append({"error": "no records"})
@@ -1702,7 +1929,9 @@ def cmd_validate_mm(args: argparse.Namespace) -> int:
                     {"index": index, "error": "image path must be nonempty text"}
                 )
                 continue
-            path = _path(raw)
+            path = Path(raw).expanduser()
+            if not path.is_absolute():
+                path = source.parent / path
             if not path.is_file():
                 errors.append({"index": index, "error": f"image not found: {raw}"})
                 continue
@@ -1735,12 +1964,21 @@ def cmd_sweep(args: argparse.Namespace) -> int:
     for method in plan["methods"]:
         for seed in seeds:
             command = _plan_command(plan, method, preview=False) + [
-                f"trainer.args.seed={seed}"
+                f"++trainer.args.seed={seed}"
             ]
-            command = [
-                f"{arg}_seed{seed}" if arg.startswith("task_name=") else arg
-                for arg in command
-            ]
+            for index, argument in enumerate(command):
+                key, separator, value = argument.partition("=")
+                normalized = key.lstrip("+")
+                if separator and (
+                    normalized == "task_name" or normalized.endswith("output_dir")
+                ):
+                    # Includes ++task_name/++output_dir on multimodal routes and
+                    # explicit output overrides. Preserve quoted Hydra strings.
+                    try:
+                        decoded = json.loads(value)
+                    except json.JSONDecodeError:
+                        decoded = value
+                    command[index] = f"{key}={json.dumps(f'{decoded}_seed{seed}')}"
             command_text = shlex.join(command)
             runs.append(
                 {
@@ -1914,6 +2152,8 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--operation", required=True, choices=sorted(OPERATIONS))
     run.add_argument("--method")
     run.add_argument("--execute", action="store_true")
+    run.add_argument("--preflight", action="store_true")
+    run.add_argument("--reviewed-config", action="append", metavar="METHOD=HASH")
     run.add_argument("--cuda")
     run.add_argument("--timeout", type=int, default=120)
     run.add_argument("--output", default="artifacts/run/trace.json")
@@ -1923,6 +2163,8 @@ def build_parser() -> argparse.ArgumentParser:
     smoke.add_argument("--plan", required=True)
     smoke.add_argument("--method")
     smoke.add_argument("--execute", action="store_true")
+    smoke.add_argument("--preflight", action="store_true")
+    smoke.add_argument("--reviewed-config", action="append", metavar="METHOD=HASH")
     smoke.add_argument("--cuda")
     smoke.add_argument("--timeout", type=int, default=300)
     smoke.add_argument("--output", default="artifacts/smoke-test/trace.json")

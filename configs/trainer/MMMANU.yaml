@@ -17,6 +17,7 @@ method_args:
   epsilon: 1e-6
   selection_scope: global
   denominator_mode: absolute_sum
+  variance_correction: 0
   materialize: true
   benchmark: ${data.benchmark}
   checkpoint_id: ${model.model_path}

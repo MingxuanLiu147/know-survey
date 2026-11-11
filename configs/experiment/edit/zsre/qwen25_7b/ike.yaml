@@ -1,40 +1,13 @@
 # @package _global_
-# Qwen2.5-7B-Instruct + offline IKE, zsRE independent-100 benchmark.
-
+# Candidate settings: inspect --preflight and review layers before execution.
 defaults:
-  - override /model: Qwen2.5-7B-Instruct
-  - override /trainer: edit/IKE
-  - override /data: edit
-  - override /data/datasets@data.edit: ZSRE_edit
-  - override /eval: edit_benchmark
+  - /experiment/edit/zsre/qwen25_7b/base
+  - override /trainer: edit/IKE_official
   - _self_
 
-task_name: qwen25_7b_zsre_ike_independent100
-edit_type: independent
-max_edits: 100
-save_edit_summary: true
-save_edited_model: false
-
-model:
-  model_args:
-    attn_implementation: eager
-
+task_name: qwen25_7b_zsre_ike_reviewed1301
 trainer:
-  args:
-    output_dir: ${paths.output_dir}
-    do_eval: true
-    bf16: true
-    seed: 42
   method_args:
-    retrieval_backend: token_overlap
-    k: 5
-    use_icl_examples: true
-    memory_path: null
-
-data:
-  edit:
-    ZSRE_edit:
-      handler: ZSREDataset
-      args:
-        split: test
-        max_length: 512
+    demonstration_path: null  # Required: independent reviewed demonstration corpus.
+    retrieval_backend: sentence_transformer
+    k: 32

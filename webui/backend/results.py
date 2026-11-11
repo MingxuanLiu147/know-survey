@@ -188,11 +188,50 @@ def _operation(relative_path: str) -> str:
     }.get(lane, "unknown")
 
 
+def _independent_cases(run_dir: Path) -> list[tuple[int, Path]]:
+    """Follow only cases explicitly indexed by this independent edit run."""
+    index_path = run_dir / "independent_results.json"
+    if index_path.resolve().parent != run_dir.resolve():
+        return []
+    index = _read_json(index_path)
+    records = index.get("cases")
+    if index.get("edit_type") != "independent" or not isinstance(records, list):
+        return []
+    indices = [item.get("case_index") for item in records if isinstance(item, dict)]
+    if (
+        len(indices) != len(records)
+        or any(type(value) is not int or value < 0 for value in indices)
+        or len(set(indices)) != len(indices)
+    ):
+        return []
+    paths = []
+    for record in records:
+        case_index = record["case_index"]
+        relative = Path("independent_cases") / f"{case_index:05d}"
+        recorded = record.get("output_dir")
+        # Stored paths can contain the original checkout prefix. Rebase only
+        # this fixed indexed suffix, never follow an arbitrary saved pathname.
+        if not isinstance(recorded, str) or Path(recorded).parts[-2:] != relative.parts:
+            continue
+        case_dir = run_dir / relative
+        if case_dir.resolve() != run_dir.resolve() / relative:
+            continue
+        summary_path = case_dir / "edit_SUMMARY.json"
+        if summary_path.resolve().parent != case_dir.resolve():
+            continue
+        summary = _read_json(summary_path)
+        if not summary or summary != record.get("summary"):
+            continue
+        paths.append((case_index, case_dir))
+    return paths
+
+
 def _candidate_dirs(root: Path) -> list[Path]:
     saves = root / "saves"
     if not saves.exists():
         return []
     directories: set[Path] = set()
+    indexed_cases: dict[Path, set[Path]] = {}
     patterns = (
         "run_trace.json",
         "*_SUMMARY.json",
@@ -219,6 +258,14 @@ def _candidate_dirs(root: Path) -> list[Path]:
                 )
             ):
                 directory = checkpoint.parent
+            if directory.parent.name == "independent_cases":
+                parent = directory.parent.parent
+                if parent not in indexed_cases:
+                    indexed_cases[parent] = {
+                        path for _, path in _independent_cases(parent)
+                    }
+                if directory in indexed_cases[parent]:
+                    directory = parent
             directories.add(directory)
     return sorted(
         directories,
@@ -227,16 +274,106 @@ def _candidate_dirs(root: Path) -> list[Path]:
     )
 
 
+def _history_link(run_dir: Path) -> tuple[Path, dict[str, Any]] | None:
+    """Link a saved evaluation to its parent only through a matching history index."""
+    history_dir = run_dir.parent
+    if (
+        history_dir.name != "history"
+        or run_dir.resolve().parent != history_dir.resolve()
+    ):
+        return None
+    index_path = history_dir / "index.json"
+    if index_path.resolve().parent != history_dir.resolve():
+        return None
+    index = _read_json(index_path)
+    records = index.get("checkpoints")
+    if index.get("schema_version") != 1 or not isinstance(records, list):
+        return None
+    matches = [
+        record
+        for record in records
+        if isinstance(record, dict) and record.get("artifacts_dir") == run_dir.name
+    ]
+    if len(matches) != 1:
+        return None
+    record = matches[0]
+    step, indices = record.get("step"), record.get("evaluated_request_indices")
+    if (
+        type(step) is not int
+        or step <= 0
+        or not isinstance(indices, list)
+        or not indices
+        or len(indices) > step
+        or any(
+            type(value) is not int or value < 0 or value >= step for value in indices
+        )
+        or len(set(indices)) != len(indices)
+        or not isinstance(record.get("evaluation_scope"), str)
+        or not record["evaluation_scope"]
+    ):
+        return None
+    summary_path = run_dir / "edit_SUMMARY.json"
+    if summary_path.resolve().parent != run_dir.resolve():
+        return None
+    summary = _read_json(summary_path)
+    if not summary or summary != record.get("summary"):
+        return None
+    return history_dir.parent, {
+        "step": step,
+        "reference": index.get("reference"),
+        "evaluation_scope": record["evaluation_scope"],
+        "evaluated_request_indices": indices,
+        "parent_run": history_dir.parent.name,
+        "index_source": "history/index.json",
+    }
+
+
 def _resolved_metadata(run_dir: Path) -> dict[str, Any]:
+    config_name = "resolved_config.yaml"
     config = _read_yaml(run_dir / "resolved_config.yaml")
     if not config:
+        config_name = ".hydra/config.yaml"
         config = _read_yaml(run_dir / ".hydra" / "config.yaml")
+    history_link = _history_link(run_dir)
+    source_dir = run_dir
+    if history_link and not config:
+        source_dir = history_link[0]
+        config_name = "resolved_config.yaml"
+        config = _read_yaml(source_dir / "resolved_config.yaml")
+        if not config:
+            config_name = ".hydra/config.yaml"
+            config = _read_yaml(source_dir / ".hydra" / "config.yaml")
     model = config.get("model") if isinstance(config.get("model"), dict) else {}
     model_args = (
         model.get("model_args") if isinstance(model.get("model_args"), dict) else {}
     )
     trainer = config.get("trainer") if isinstance(config.get("trainer"), dict) else {}
     data = config.get("data") if isinstance(config.get("data"), dict) else {}
+    comparison = _comparison_metadata(source_dir, config)
+    if history_link:
+        history = history_link[1]
+        comparison.update(
+            {
+                "scope": {
+                    key: history[key]
+                    for key in (
+                        "step",
+                        "reference",
+                        "evaluation_scope",
+                        "evaluated_request_indices",
+                    )
+                },
+                "request_count": len(history["evaluated_request_indices"]),
+                "budget": {
+                    "edits_applied": history["step"],
+                    **(comparison.get("budget") or {}),
+                },
+                # A completed parent does not turn a prefix into its final benchmark.
+                "complete_benchmark": _read_json(run_dir / "input_manifest.json").get(
+                    "complete_benchmark"
+                ),
+            }
+        )
     return {
         "model": model_args.get("pretrained_model_name_or_path")
         or model.get("name")
@@ -252,13 +389,27 @@ def _resolved_metadata(run_dir: Path) -> dict[str, Any]:
             for name in datasets
         )
         or None,
-        "task_name": config.get("task_name") or run_dir.name,
+        "task_name": run_dir.name
+        if history_link
+        else config.get("task_name") or run_dir.name,
         "seed": (
             trainer.get("args", {}).get("seed")
             if isinstance(trainer.get("args"), dict)
             else None
         ),
-        "comparison": _comparison_metadata(run_dir, config),
+        "comparison": comparison,
+        **(
+            {
+                "history": history_link[1],
+                "metadata_source": (
+                    ("../../" if source_dir != run_dir else "") + config_name
+                )
+                if config
+                else None,
+            }
+            if history_link
+            else {}
+        ),
     }
 
 
@@ -394,6 +545,53 @@ def _evaluation_settings(value: Any) -> Any:
     return value
 
 
+def _recorded_sha256(value: Any) -> str | None:
+    if (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdefABCDEF" for character in value)
+    ):
+        return value.lower()
+    return None
+
+
+def _unlearning_settings(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Recover explicit settings from the saved target-NLL evaluator format."""
+    boundary = payload.get("boundary_contract")
+    if not isinstance(boundary, dict) or not all(
+        isinstance(boundary.get(key), str) and boundary[key]
+        for key in (
+            "version",
+            "prompt_encoding",
+            "target_encoding",
+            "concatenation",
+            "labels",
+            "truncation",
+        )
+    ):
+        return None
+    if type(payload.get("max_length")) is not int or payload["max_length"] <= 0:
+        return None
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        return None
+    recorded = {}
+    for role in ("forget", "retain"):
+        item = data.get(role)
+        if not isinstance(item, dict):
+            return None
+        digest = _recorded_sha256(item.get("sha256"))
+        count = item.get("records")
+        if digest is None or type(count) is not int or count <= 0:
+            return None
+        recorded[role] = {"sha256": digest, "records": count}
+    return {
+        "boundary_contract": boundary,
+        "max_length": payload["max_length"],
+        "data": recorded,
+    }
+
+
 def _comparison_metadata(run_dir: Path, config: dict[str, Any]) -> dict[str, Any]:
     """Align with Skill comparison fields, adding data-role, evaluator and budget checks.
 
@@ -403,6 +601,10 @@ def _comparison_metadata(run_dir: Path, config: dict[str, Any]) -> dict[str, Any
     trace = _read_json(run_dir / "run_trace.json")
     manifest = _read_json(run_dir / "input_manifest.json")
     environment = _read_json(run_dir / "environment.json")
+    unlearning = _read_json(run_dir / "unlearning_metrics.json")
+    saved_evaluation = _unlearning_settings(unlearning)
+    model_identity = unlearning.get("base_model_identity")
+    boundary = unlearning.get("boundary_contract")
     model = config.get("model") if isinstance(config.get("model"), dict) else {}
     model_args = (
         model.get("model_args") if isinstance(model.get("model_args"), dict) else {}
@@ -444,6 +646,8 @@ def _comparison_metadata(run_dir: Path, config: dict[str, Any]) -> dict[str, Any
         )
     scope = trace.get("scope") or manifest.get("used_samples")
     count = manifest.get("request_count")
+    if count is None and isinstance(manifest.get("used_samples"), dict):
+        count = manifest["used_samples"].get("train")
     if not scope and type(count) is int and count > 0:
         scope = {"request_count": count}
     gpu = environment.get("gpu_name") or environment.get("cuda_devices")
@@ -455,14 +659,27 @@ def _comparison_metadata(run_dir: Path, config: dict[str, Any]) -> dict[str, Any
         or model.get("model_path"),
         "model_revision": trace.get("model_revision")
         or environment.get("model_revision")
-        or model_args.get("revision"),
+        or model_args.get("revision")
+        or (
+            _recorded_sha256(model_identity.get("identity_sha256"))
+            if isinstance(model_identity, dict)
+            else None
+        ),
         "dataset": _data_identity(manifest, data, config.get("eval"))
         if isinstance(data, dict)
         else None,
         "scope": scope,
         "request_count": count if type(count) is int and count > 0 else None,
-        "protocol": trace.get("protocol"),
-        "evaluation": _fingerprint(_evaluation_settings(config.get("eval"))),
+        "protocol": trace.get("protocol")
+        or (boundary.get("version") if isinstance(boundary, dict) else None),
+        "evaluation": _fingerprint(
+            {
+                "configured": _evaluation_settings(config.get("eval")),
+                "saved": saved_evaluation,
+            }
+            if saved_evaluation
+            else _evaluation_settings(config.get("eval"))
+        ),
         "budget": budget,
         "seed": args.get("seed"),
         "environment": {
@@ -565,6 +782,41 @@ def _metric_context(
             result["measurement_kind"] = "generation"
         elif "value_by_index" in context:
             result["measurement_kind"] = "per_example_score"
+    if (
+        key == "locality"
+        and not result["scoring"]
+        and isinstance(examples, list)
+        and examples
+    ):
+
+        def records_token_agreement(item: Any) -> bool:
+            if not isinstance(item, dict):
+                return False
+            before = item.get("pre_prediction_token_ids")
+            after = item.get("post_prediction_token_ids")
+            if (
+                not isinstance(before, list)
+                or not before
+                or not isinstance(after, list)
+            ):
+                return False
+            if any(type(token) is not int for token in before + after):
+                return False
+            matches = sum(left == right for left, right in zip(before, after))
+            score = item.get("score")
+            return (
+                type(item.get("matching_tokens")) is int
+                and item["matching_tokens"] == matches
+                and type(item.get("total_pre_edit_tokens")) is int
+                and item["total_pre_edit_tokens"] == len(before)
+                and type(score) in (int, float)
+                and math.isclose(
+                    score, matches / len(before), rel_tol=1e-6, abs_tol=1e-8
+                )
+            )
+
+        if all(records_token_agreement(item) for item in examples):
+            result["scoring"] = "pre_post_token_agreement"
     if result["protocol_version"] == "inject-v2":
         counts = {
             "task_accuracy": ("correct", "total"),
@@ -590,6 +842,61 @@ def _metric_context(
     }
 
 
+def _unlearning_metric_context(payload: dict[str, Any], key: str) -> dict[str, Any]:
+    """Read schema-v2 NLL semantics only when its saved sums reproduce the mean."""
+    context = {**payload, "measurement_kind": "target_token_nll"}
+    settings = _unlearning_settings(payload)
+    if payload.get("schema_version") != 2 or settings is None:
+        return context
+    split = "retain" if "retain" in key else "forget"
+    values = {}
+    for phase in ("base", "edited"):
+        groups = payload.get(phase)
+        entry = groups.get(split) if isinstance(groups, dict) else None
+        if not isinstance(entry, dict):
+            return context
+        total, tokens, mean = (
+            entry.get("target_nll_sum"),
+            entry.get("target_tokens"),
+            entry.get("mean_target_nll"),
+        )
+        if (
+            type(total) not in (int, float)
+            or not math.isfinite(total)
+            or type(tokens) is not int
+            or tokens <= 0
+            or type(mean) not in (int, float)
+            or not math.isfinite(mean)
+            or not math.isclose(total / tokens, mean, rel_tol=1e-6, abs_tol=1e-8)
+        ):
+            return context
+        values[phase] = entry
+    change = key.endswith("_change")
+    phase = "base" if key.startswith("base_") else "edited"
+    expected = (
+        values["edited"]["mean_target_nll"] - values["base"]["mean_target_nll"]
+        if change
+        else values[phase]["mean_target_nll"]
+    )
+    recorded = payload.get(key)
+    if type(recorded) not in (int, float) or not math.isclose(
+        recorded, expected, rel_tol=1e-6, abs_tol=1e-8
+    ):
+        return context
+    if not context.get("protocol_version"):
+        context["protocol_version"] = settings["boundary_contract"]["version"]
+    if not context.get("scoring"):
+        context["scoring"] = (
+            "edited minus base target-token-weighted mean NLL"
+            if change
+            else "target_nll_sum / target_tokens"
+        )
+    if not change:
+        context.setdefault("numerator", values[phase]["target_nll_sum"])
+        context.setdefault("denominator", values[phase]["target_tokens"])
+    return context
+
+
 def _scalar_metrics(run_dir: Path) -> list[dict[str, Any]]:
     rows = []
 
@@ -613,18 +920,56 @@ def _scalar_metrics(run_dir: Path) -> list[dict[str, Any]]:
             and context.get("protocol_version") == "inject-v2"
         ):
             definition["unit"] = "multiplier"
-        rows.append(
-            {
-                **_metric_identity(source, key, context),
-                "value": value,
-                "source": source,
-                **definition,
-                **{field: context.get(field) for field in METRIC_CONTEXT_FIELDS},
-            }
-        )
+        row = {
+            **_metric_identity(source, key, context),
+            "value": value,
+            "source": source,
+            **definition,
+            **{field: context.get(field) for field in METRIC_CONTEXT_FIELDS},
+        }
+        rows.append(row)
+        return row
 
     for path in _summary_paths(run_dir):
         summary = _read_json(path)
+        if path.name == "independent_SUMMARY.json":
+            recorded = _read_json(run_dir / "independent_results.json")
+            if recorded.get("aggregate") != summary or not isinstance(
+                summary.get("metrics"), dict
+            ):
+                continue
+            children = [
+                (
+                    _read_json(case / "edit_SUMMARY.json"),
+                    _read_json(case / "edit_EVAL.json"),
+                )
+                for _, case in _independent_cases(run_dir)
+                if (case / "edit_EVAL.json").resolve().parent == case.resolve()
+            ]
+            for key, item in summary["metrics"].items():
+                if not isinstance(item, dict) or "mean" not in item:
+                    continue
+                contexts = [
+                    _metric_context(key, child_summary, child_detail)
+                    for child_summary, child_detail in children
+                    if child_summary.get(key) is not None
+                ]
+                context = {
+                    field: contexts[0].get(field)
+                    if contexts
+                    and all(
+                        row.get(field) == contexts[0].get(field) for row in contexts
+                    )
+                    else None
+                    for field in METRIC_CONTEXT_FIELDS
+                }
+                context["denominator"] = item.get("available_cases")
+                append(key, item["mean"], path.name, context).update(
+                    aggregation="mean_over_available_cases",
+                    available_cases=item.get("available_cases"),
+                    missing_cases=item.get("missing_cases"),
+                )
+            continue
         detail_path = path.with_name(path.name.replace("_SUMMARY.json", "_EVAL.json"))
         detailed = (
             _read_json(detail_path)
@@ -665,7 +1010,7 @@ def _scalar_metrics(run_dir: Path) -> list[dict[str, Any]]:
                 key,
                 unlearning[key],
                 "unlearning_metrics.json",
-                {**unlearning, "measurement_kind": "target_token_nll"},
+                _unlearning_metric_context(unlearning, key),
             )
     target_nll = _read_json(run_dir / "target_nll.json")
     if target_nll:
@@ -773,7 +1118,9 @@ def _run_status(run_dir: Path) -> str:
             or artifact.get("status") in {"failed", "error", "interrupted", "stopped"}
         ):
             return "failed"
-    return trace.get("status") or "configured"
+    return trace.get("status") or (
+        "completed" if _history_link(run_dir) else "configured"
+    )
 
 
 def run_evidence(run_dir: Path, metrics: list[dict[str, Any]] | None = None) -> str:
@@ -805,20 +1152,22 @@ def run_evidence(run_dir: Path, metrics: list[dict[str, Any]] | None = None) -> 
 def _timeline(run_dir: Path, metrics: list[dict[str, Any]]) -> list[dict[str, Any]]:
     status = _run_status(run_dir)
     execution_success = status in {"success", "completed"}
+    history_link = _history_link(run_dir)
+    metadata_dir = history_link[0] if history_link else run_dir
     return [
         {
             "id": "input",
             "label": {"en": "Input manifest", "zh": "输入清单"},
             "status": "completed"
-            if (run_dir / "input_manifest.json").is_file()
+            if (metadata_dir / "input_manifest.json").is_file()
             else "missing",
         },
         {
             "id": "compose",
             "label": {"en": "Resolved config", "zh": "配置解析"},
             "status": "completed"
-            if (run_dir / "resolved_config.yaml").is_file()
-            or (run_dir / ".hydra" / "config.yaml").is_file()
+            if (metadata_dir / "resolved_config.yaml").is_file()
+            or (metadata_dir / ".hydra" / "config.yaml").is_file()
             else "missing",
         },
         {
@@ -856,6 +1205,12 @@ class ResultStore:
     def detail_for_path(self, run_dir: Path) -> dict[str, Any]:
         relative = _relative(run_dir, self.root)
         metrics = _scalar_metrics(run_dir)
+        metadata = _resolved_metadata(run_dir)
+        history = metadata.get("history")
+        name = run_dir.name
+        if history:
+            method = metadata.get("trainer") or history["parent_run"]
+            name = f"{str(method).removesuffix('Editor')} · step {history['step']}"
         trace = _read_json(run_dir / "run_trace.json")
         unlearning = _read_json(run_dir / "unlearning_metrics.json")
         files = sorted(
@@ -870,6 +1225,15 @@ class ResultStore:
                 for path in sorted(checkpoint_eval.glob("*.json"))
                 if path.is_file()
             )
+        for _, case_dir in _independent_cases(run_dir):
+            files.extend(
+                path.relative_to(run_dir).as_posix()
+                for path in (
+                    case_dir / "edit_SUMMARY.json",
+                    case_dir / "edit_EVAL.json",
+                )
+                if path.is_file() and path.resolve().parent == case_dir.resolve()
+            )
         warnings = []
         if not _has_evaluation(metrics):
             warnings.append("This run has no completed evaluation metrics.")
@@ -880,15 +1244,17 @@ class ResultStore:
             warnings.append("Some metrics do not record protocol or scoring metadata.")
         return {
             "id": _result_id(relative),
-            "name": run_dir.name,
+            "name": name,
             "path": relative,
             "operation": _operation(relative),
             "evidence_level": run_evidence(run_dir, metrics),
             "status": _run_status(run_dir),
             "updated_at": run_dir.stat().st_mtime,
             "metadata": {
-                **_resolved_metadata(run_dir),
-                "scope": unlearning.get("scope"),
+                **metadata,
+                "scope": history["evaluation_scope"]
+                if history
+                else unlearning.get("scope"),
                 "finished_at": trace.get("finished_at_utc"),
             },
             "metrics": metrics,
@@ -979,11 +1345,49 @@ class ResultStore:
         from .cases import read_cases
 
         run_dir = self.path(result_id)
+        metrics = _scalar_metrics(run_dir)
         rows, warnings = read_cases(
             run_dir,
-            _scalar_metrics(run_dir),
+            metrics,
             checkpoint_eval=_checkpoint_eval_dir(run_dir),
         )
+        aggregate_metrics = {
+            metric["metric_name"]: metric
+            for metric in metrics
+            if metric["source"] == "independent_SUMMARY.json"
+        }
+        for case_index, case_dir in _independent_cases(run_dir):
+            child_metrics = _scalar_metrics(case_dir)
+            child_by_id = {metric["id"]: metric for metric in child_metrics}
+            child_rows, child_warnings = read_cases(case_dir, child_metrics)
+            prefix = case_dir.relative_to(run_dir).as_posix()
+            warnings.extend(f"{prefix}: {warning}" for warning in child_warnings)
+            for row in child_rows:
+                child_metric = child_by_id[row["metric_id"]]
+                metric = aggregate_metrics.get(child_metric["metric_name"])
+                if metric is None:
+                    continue
+                source = f"{prefix}/{row['source']}"
+                rows.append(
+                    {
+                        **row,
+                        "id": hashlib.sha256(
+                            f"{source}#{row['source_pointer']}".encode()
+                        ).hexdigest()[:20],
+                        "metric_id": metric["id"],
+                        "evaluator": metric["evaluator"],
+                        "phase": metric["phase"],
+                        "case_index": case_index,
+                        "source": source,
+                    }
+                )
+        if rows:
+            warnings = [
+                warning
+                for warning in warnings
+                if warning
+                != "No supported per-example records were saved for this result."
+            ]
         if metric_id is not None:
             rows = [row for row in rows if row["metric_id"] == metric_id]
         return {

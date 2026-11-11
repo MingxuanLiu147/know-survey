@@ -1,0 +1,6 @@
+# Public alias; mm_train records the canonical MMVKD name in the run trace.
+defaults:
+  - MMVKD
+  - _self_
+
+handler: VKD

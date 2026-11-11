@@ -29,8 +29,10 @@ interface TaskDraft {
   seed: number;
   smoke: boolean;
   overrides: Record<string, unknown>;
+  overridesDraft: string | null;
   baseSelections: Pick<ComposePayload, "model" | "trainer" | "datasets" | "evaluation">;
   composeSnapshot: { key: string; result: ComposeResult } | null;
+  reviewedConfigHash: string | null;
   currentRun: RunRecord | null;
   agentTrace: AgentTrace | null;
 }
@@ -38,7 +40,7 @@ interface TaskDraft {
 const initialDraft: TaskDraft = {
   initialized: false, operation: "unlearning", modality: "text", intent: "", provider: "local",
   plan: null, recipeId: "", experiment: "", model: "", trainer: "", datasets: {}, evaluation: "",
-  taskName: "", seed: 42, smoke: true, overrides: {}, baseSelections: {}, composeSnapshot: null, currentRun: null, agentTrace: null
+  taskName: "", seed: 42, smoke: false, overrides: {}, overridesDraft: null, baseSelections: {}, composeSnapshot: null, reviewedConfigHash: null, currentRun: null, agentTrace: null
 };
 type DraftUpdate = (draft: TaskDraft) => TaskDraft;
 const DraftContext = createContext<{ draft: TaskDraft; update: (update: DraftUpdate) => void } | null>(null);

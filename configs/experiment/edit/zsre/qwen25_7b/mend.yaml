@@ -1,0 +1,35 @@
+# @package _global_
+# Factor MEND candidate. A model-bound, trained network is mandatory.
+# Matrix/rank/learning settings follow EasyEdit @14cea824 Qwen2.5-7B.
+# BF16 base / FP32 network is an explicit adaptation requiring real calibration;
+# the reference profile uses FP32 base weights. No Qwen checkpoint is bundled.
+defaults:
+  - /experiment/edit/zsre/qwen25_7b/base
+  - override /trainer: edit/MEND_official
+  - _self_
+
+task_name: qwen25_7b_zsre_mend_reviewed1301
+trainer:
+  method_args:
+    layers: [25, 26, 27]
+    inner_params:
+      - model.layers.25.mlp.gate_proj.weight
+      - model.layers.25.mlp.up_proj.weight
+      - model.layers.25.mlp.down_proj.weight
+      - model.layers.26.mlp.gate_proj.weight
+      - model.layers.26.mlp.up_proj.weight
+      - model.layers.26.mlp.down_proj.weight
+      - model.layers.27.mlp.gate_proj.weight
+      - model.layers.27.mlp.up_proj.weight
+      - model.layers.27.mlp.down_proj.weight
+    edit_network_path: null
+    require_pretrained: true
+    edit_lr: 1.0e-4
+    rank: 1920
+    n_hidden: 1
+    normalize: true
+    shared: true
+    cedit: 0.1
+    cloc: 1.0
+    max_length: 512
+    max_locality_samples: 1

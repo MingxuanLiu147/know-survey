@@ -1,0 +1,42 @@
+# @package _global_
+# Two-3090 adaptation smoke: Qwen2.5-3B + official UnKEBench + UnKE_ARE.
+# The algorithm/protocol are real; the 3B layer choice and reduced step budget
+# are an explicitly labelled engineering adaptation, not an AnyEdit paper row.
+# Expose two GPUs and keep the edited/reference models on cuda:0/cuda:1.
+
+defaults:
+  - override /model: Qwen2.5-3B-Instruct
+  - override /trainer: edit/AnyEdit
+  - override /data: edit
+  - override /data/datasets@data.edit: UnKE_edit
+  - override /eval: edit
+
+task_name: anyedit_unke_are_qwen25_3b_unke_edit_smoke_v3
+max_edits: 1
+save_edited_model: false
+edit_reference_device: cuda:1
+
+model:
+  model_args:
+    attn_implementation: eager
+
+trainer:
+  method_args:
+    strategy: unke_are
+    layers: [7]
+    window_size: 50
+    overlap: 0
+    v_num_grad_steps: 2
+    ft_lr: 2.0e-4
+    ft_epochs: 2
+    preservation_sample_size: 2
+    preservation_max_length: 64
+
+data:
+  edit:
+    UnKE_edit:
+      handler: UnKEDataset
+      args:
+        version: v3
+        max_length: 2048
+        apply_chat_template: true

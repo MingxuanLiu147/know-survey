@@ -55,5 +55,8 @@ def model_cache_identity(model) -> dict:
     return {
         "class": f"{type(model).__module__}.{type(model).__qualname__}",
         "config": json.loads(json.dumps(raw, default=str)),
+        # Transformers omits this runtime selection from config.to_dict().
+        # Read it on every call so dynamic backend changes cannot reuse C0.
+        "attention_implementation": getattr(config, "_attn_implementation", None),
         **stream_model_persistent_state_sha256(model),
     }

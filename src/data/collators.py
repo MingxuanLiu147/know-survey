@@ -2,6 +2,7 @@ import torch
 import transformers
 from typing import Dict, Sequence
 from data.utils import IGNORE_INDEX
+from model.reft_positions import build_loreft_unit_locations, loreft_position_config
 
 
 class DataCollatorForSupervisedDataset(object):
@@ -45,11 +46,16 @@ class DataCollatorForSupervisedDataset(object):
         return input_ids
 
     def _stack_optional_scalar(self, instances, key: str):
+        if key in ("sample_weight", "loss_group"):
+            if not any(key in instance for instance in instances):
+                return None
+            default = 1.0 if key == "sample_weight" else -1
+            values = [instance.get(key, default) for instance in instances]
+            dtype = torch.float32 if key == "sample_weight" else torch.long
+            return torch.tensor(values, dtype=dtype)
         if key not in instances[0]:
             return None
         values = [instance[key] for instance in instances]
-        if key == "sample_weight":
-            return torch.tensor(values, dtype=torch.float32)
         return torch.tensor(values, dtype=torch.long)
 
     def __call__(self, instances: Sequence[Dict]) -> Dict[str, torch.Tensor]:
@@ -70,9 +76,18 @@ class DataCollatorForSupervisedDataset(object):
                 return_dct[key] = self(key_instances)
         else:
             # 叶子结构：真正执行 padding 和 stack
-            input_ids = [instance["input_ids"] for instance in instances]
-            input_ids = self._pad_tokens(input_ids, self.tokenizer.pad_token_id)
-            attention_mask = input_ids.ne(self.tokenizer.pad_token_id)
+            sequences = [instance["input_ids"] for instance in instances]
+            masks = []
+            for instance, sequence in zip(instances, sequences):
+                # EOS and PAD may share an ID. The supplied mask (or the
+                # unpadded sequence length) distinguishes real EOS from padding.
+                mask = instance.get("attention_mask", torch.ones_like(sequence))
+                mask = torch.as_tensor(mask, dtype=torch.bool)
+                if mask.shape != sequence.shape:
+                    raise ValueError("attention_mask must match input_ids shape.")
+                masks.append(mask)
+            input_ids = self._pad_tokens(sequences, self.tokenizer.pad_token_id)
+            attention_mask = self._pad_tokens(masks, False)
             return_dct.update({"input_ids": input_ids})
             return_dct.update({"attention_mask": attention_mask})
             if "labels" in instances[0]:
@@ -85,6 +100,7 @@ class DataCollatorForSupervisedDataset(object):
                 "response_start",
                 "train_target_span",
                 "sample_weight",
+                "loss_group",
             ):
                 scalar_value = self._stack_optional_scalar(instances, scalar_key)
                 if scalar_value is not None:
@@ -106,16 +122,34 @@ class DataCollatorForSupervisedDataset(object):
 
 
 class DataCollatorForReFTDataset(DataCollatorForSupervisedDataset):
-    """为 ReFT 训练补充最后一个 prompt token 的 intervention 位置。"""
+    """Select k distinct prompt-prefix tokens, with identical padding semantics at eval."""
+
+    def __init__(
+        self,
+        tokenizer,
+        padding_side="right",
+        index=None,
+        num_interventions=1,
+        last_k_prompt_tokens=1,
+        allow_legacy_ntp=False,
+    ):
+        super().__init__(tokenizer, padding_side=padding_side, index=index)
+        if num_interventions < 1:
+            raise ValueError("ReFT requires at least one intervention.")
+        self.num_interventions = num_interventions
+        self.loreft_position_config = loreft_position_config(
+            last_k_prompt_tokens, allow_legacy_ntp
+        )
 
     def __call__(self, instances: Sequence[Dict]) -> Dict[str, torch.Tensor]:
         batch = super().__call__(instances)
-        if "input_ids" in batch and "prompt_length" in batch:
-            prompt_lengths = torch.clamp(batch["prompt_length"] - 1, min=0)
-            batch["unit_locations"] = {
-                "sources->base": (
-                    None,
-                    [[[int(position.item())]] for position in prompt_lengths],
-                )
-            }
+        if "input_ids" in batch:
+            batch["unit_locations"] = build_loreft_unit_locations(
+                batch["attention_mask"],
+                batch.get("prompt_length"),
+                self.num_interventions,
+                labels=batch.get("labels"),
+                loss_group=batch.get("loss_group"),
+                **self.loreft_position_config,
+            )
         return batch

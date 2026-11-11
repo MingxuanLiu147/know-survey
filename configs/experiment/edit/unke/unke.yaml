@@ -1,0 +1,20 @@
+# @package _global_
+# UnKE + UNKE editor
+
+defaults:
+  - override /model: Qwen2.5-7B-Instruct
+  - override /trainer: edit/UNKE
+  - override /data: edit
+  - override /data/datasets@data.edit: UnKE_edit
+  - override /eval: edit
+
+task_name: unke_plain
+
+data:
+  edit:
+    UnKE_edit:
+      handler: UnKEDataset
+      args:
+        version: v3
+        max_length: 2048
+        apply_chat_template: true

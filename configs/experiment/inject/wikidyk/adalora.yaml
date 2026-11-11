@@ -1,0 +1,33 @@
+# @package _global_
+# Same QA-only data, token-normalized loss and effective batch as Full FT.
+defaults:
+- /experiment/inject/wikidyk/default
+- override /trainer: inject/AdaLoRA
+- _self_
+task_name: wikidyk_adalora
+model:
+  model_args:
+    torch_dtype: bfloat16
+trainer:
+  args:
+    per_device_train_batch_size: 256
+    gradient_accumulation_steps: 1
+    learning_rate: 0.0001
+  method_args:
+    init_r: 48
+    target_r: 32
+    lora_alpha: 16
+    lora_dropout: 0.0
+    target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    tinit: 4800
+    tfinal: 4800
+    deltaT: 5
+    beta1: 0.85
+    beta2: 0.85
+    orth_reg_weight: 0.5
+    bias: none
+    task_type: CAUSAL_LM

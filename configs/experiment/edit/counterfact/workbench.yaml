@@ -1,0 +1,15 @@
+# @package _global_
+# Evaluate each requested fact against the same original GPT-2 checkpoint.
+
+defaults:
+  - /experiment/edit/model_coverage/gpt2_ft_counterfact
+  - _self_
+
+edit_type: independent
+max_edits: 4
+
+trainer:
+  method_args:
+    num_steps: 25
+
+task_name: counterfact_ft_workbench

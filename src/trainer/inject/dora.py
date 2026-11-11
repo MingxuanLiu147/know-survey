@@ -37,7 +37,7 @@ class DoRATrainer(InjectTrainer):
         r: int = 8,
         lora_alpha: int = 16,
         lora_dropout: float = 0.05,
-        target_modules: Optional[List[str]] = None,
+        target_modules: Optional[List[str] | str] = None,
         use_dora: bool = True,
         bias: str = "none",
         task_type: str = "CAUSAL_LM",
@@ -59,7 +59,9 @@ class DoRATrainer(InjectTrainer):
         self.lora_alpha = lora_alpha
         self.lora_dropout = lora_dropout
         self.target_modules = (
-            list(target_modules)
+            target_modules
+            if isinstance(target_modules, str)
+            else list(target_modules)
             if target_modules
             else ["q_proj", "v_proj", "k_proj", "o_proj"]
         )
@@ -106,14 +108,3 @@ class DoRATrainer(InjectTrainer):
         except ImportError:
             logger.error("peft library not installed. Please run: pip install peft")
             raise
-
-    def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
-        """计算 DoRA 微调损失"""
-        outputs = model(
-            input_ids=inputs["input_ids"],
-            attention_mask=inputs["attention_mask"],
-            labels=inputs["labels"],
-        )
-        loss = outputs.loss
-
-        return (loss, outputs) if return_outputs else loss

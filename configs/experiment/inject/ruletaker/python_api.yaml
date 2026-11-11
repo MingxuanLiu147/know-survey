@@ -1,0 +1,18 @@
+# @package _global_
+# Python example: RuleTaker train/test plus small unrelated factual probes.
+# Replace benchmark_data_path for a study with a larger retention benchmark.
+defaults:
+  - /experiment/inject/ruletaker/lora
+  - _self_
+
+trainer:
+  args:
+    do_eval: true
+
+eval:
+  inject_metrics:
+    task_accuracy:
+      eval_data_path: ${paths.root_dir}/data/inject/logic/eval/ruletaker/test.json
+    knowledge_retention:
+      benchmark_data_path: ${paths.root_dir}/demos/inject/basic/data/retention_benchmark.json
+      original_model_path: ${model.model_args.pretrained_model_name_or_path}

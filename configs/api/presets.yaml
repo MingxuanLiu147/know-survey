@@ -1,0 +1,29 @@
+# Short names used by the public Python example. Each preset keeps the native
+# experiment's checkpoint, data splits, method settings, and evaluation protocol.
+model_aliases:
+  Qwen2.5-3B: Qwen2.5-3B-Instruct
+  Qwen2.5-7B: Qwen2.5-7B-Instruct
+  Llama-3.2-1B: Llama-3.2-1B-Instruct
+dataset_aliases:
+  TOFU: TOFU:forget10
+
+presets:
+  - operation: inject
+    model: Qwen2.5-3B-Instruct
+    dataset: RuleTaker
+    method: LoRA
+    experiment: inject/ruletaker/python_api
+  - operation: edit
+    model: Qwen2.5-7B-Instruct
+    dataset: UnKE
+    method: AnyEdit
+    experiment: edit/unke/anyedit
+  - operation: unlearning
+    model: Llama-3.2-1B-Instruct
+    dataset: TOFU:forget10
+    method: NPO
+    experiment: unlearn/tofu/default
+    overrides:
+      - trainer=NPO
+      - forget_split=forget10
+      - retain_split=retain90

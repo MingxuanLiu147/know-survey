@@ -1,0 +1,58 @@
+# @package _global_
+# MIP-Editor Table A1 hyperparameters for existing gradient-based baselines.
+# This is not an implementation or a verified reproduction of MIP-Editor.
+defaults:
+  - override /model: Qwen2.5-VL-3B
+  - override /data: mllmu
+  - override /trainer: MMGradDiff
+
+model:
+  # Reuse the user's full-data Vanilla. Its earlier training differs from MIP.
+  model_path: ???
+  processor_path: ${model.model_path}
+  preserve_saved_processor: true
+  lora:
+    enabled: true
+    # Table A1 specifies LoRA; these details come from official load_model.py.
+    r: 8
+    alpha: 16
+    dropout: 0.1
+    init_lora_weights: true
+    # Official Vanilla uses visual_trainable=False. GA/KL/NPO reload its adapter.
+    target_policy: explicit-language-projections
+    target_modules: [q_proj, k_proj, v_proj, o_proj, up_proj, gate_proj, down_proj]
+
+data:
+  # Official training QA pool; split files provide profile membership only.
+  training_source: ft_data
+  training_parquet: ${data.data_dir}/ft_Data/train-00000-of-00001.parquet
+  forget_split_ratio: 5
+  batch_size: 4
+  ans_only: true
+  max_samples: null
+
+trainer:
+  args:
+    lr: 2e-5
+    num_epochs: 4
+    optimizer: adam
+    weight_decay: 0.0
+    gradient_accumulation_steps: 1
+    warmup_steps: 0
+
+benchmark_protocol:
+  paper: https://arxiv.org/html/2511.06793v1
+  hyperparameter_source: Table-A1
+  supplementary_lora_source: https://github.com/PreckLi/MIP-Editor/blob/db8e6d2350c5e188f58a6bd38d92d2cebcb037cd/load_model.py
+  status: configured
+  exact_replication: false
+  supported_baselines: [MMGradAscent, MMGradDiff, MMKLMin, MMNPO, MMRetainFT]
+  unresolved_protocol_differences:
+    - existing-five-epoch-rank16-vanilla-is-reused-by-user-request
+    - merged-checkpoint-plus-fresh-adapter-differs-from-continuing-vanilla-adapter
+    - saved-Vanilla-processor-and-local-prompt-evaluation-protocol-are-reused
+    - answer-only-CE-differs-from-upstream-full-conversation-CE
+    - baseline-objective-details-differ-between-paper-and-released-code
+  mip_editor_algorithm_implemented: false
+
+output_dir: saves/unlearning/mllmu_mip_qwen25vl3b/${trainer.handler}/${now:%Y-%m-%d_%H-%M-%S}

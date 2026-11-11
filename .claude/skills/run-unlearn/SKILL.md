@@ -13,6 +13,11 @@ Check that forget and retain scopes are disjoint and the intended loss, checkpoi
 and evaluation are composed. Add `--execute` only for an authorized run; CPU paths
 do not require a CUDA argument.
 
+First use `--preflight` and have the user check the current model, layer/method
+settings, forget/retain data and budget. Pass their explicit confirmation as
+`--execute --reviewed-config METHOD=HASH`. Never auto-confirm a report; changing
+the configuration or inputs requires another review.
+
 Output defaults to `artifacts/run-unlearn/trace.json`; model artifacts follow the
 resolved Hydra directory. Examine forget efficacy and retained utility together.
 Reduced answer quality is not a guarantee of complete knowledge removal. Missing

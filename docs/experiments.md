@@ -1,6 +1,6 @@
 # Configuring and running tasks
 
-[Documentation](README.md) · [Models and data](components.md) · [Editing methods](editing.md)
+[Documentation](README.md) · [Models and data](components.md) · [Injection](injection.md) · [Editing](editing.md) · [Unlearning](unlearning.md)
 
 Run commands from the repository root after installation. The common form is:
 
@@ -9,7 +9,16 @@ know-surgery operation=edit experiment=edit/model_coverage/gpt2_ft_counterfact \
   task_name=my_edit --cfg job
 ```
 
-`--cfg job` prints the configuration and exits without loading a model. Remove it to execute after preparing the selected model, data and method assets. Choose a new `task_name` for each run.
+`--cfg job` prints the configuration and exits without loading a model. After preparing model, data and method assets, use `--preflight`, review its settings, and execute with `--reviewed-config YOUR_REVIEW_HASH`. Choose a new `task_name` for each run.
+
+## Review and execute
+
+`--cfg job` only composes YAML. `--preflight` additionally checks local model
+metadata, input paths, method prerequisites and the configuration fingerprint,
+without loading weights. Review the report before supplying its `review_hash`
+through `--reviewed-config`. Do not automatically copy the hash into a launch.
+Changing the model, data or method settings invalidates the previous review.
+Python API previews and WebUI previews use this same checker.
 
 ## Choose an operation and experiment
 
@@ -99,7 +108,7 @@ Use `modality=multimodal` with a compatible editing, injection or unlearning con
 
 ```bash
 know-surgery operation=edit modality=multimodal \
-  experiment=edit/multimodal/mmedit_grace_smoke task_name=image_edit \
+  model=Qwen2VL-2B trainer=edit/MM_GRACE task_name=image_edit \
   model.model_path=/path/to/Qwen2-VL-2B-Instruct \
   model.processor_path=/path/to/Qwen2-VL-2B-Instruct \
   data.edit.MMEdit_VQA.args.data_path=/path/to/vqa_eval.json \
@@ -107,7 +116,7 @@ know-surgery operation=edit modality=multimodal \
   data.edit.MMEdit_VQA.args.rephrase_image_dir=/path/to/rephrase_images --cfg job
 ```
 
-This example uses a one-step GRACE budget. Supply readable images and the correct processor, then adjust the method budget for the intended task. Image–text methods are experimental and compatibility depends on the exact model and dataset. For LoRA injection, use `operation=inject modality=multimodal` with local training images and targets; see the [data and execution example](components.md#imagetext-injection).
+Supply readable images and the correct processor, and review the method budget before execution. Image–text methods are experimental and compatibility depends on the exact model and dataset. For LoRA injection, use `operation=inject modality=multimodal` with local training images and targets; see the [data and execution example](components.md#imagetext-injection).
 
 Unlearning experiments are under `configs/experiment/unlearn/multimodal/`. MLLMU-Bench/CLEAR require the corresponding full-data-trained starting checkpoint; methods may additionally need a retain-only reference or a teacher. `MMUnlearner` requires checkpoint-bound gradient masks: prepare them with `scripts/run_mm_generate_mask.py` and set `trainer.method_args.grad_mask_path`. Use that script's `--help` for the benchmark, model family, dataset and output arguments. Generating masks can require substantially more memory than LoRA training.
 
@@ -125,3 +134,13 @@ CUDA_VISIBLE_DEVICES=0,1 torchrun --standalone --nproc_per_node=2 \
 ```
 
 Do not combine distributed data parallel training with `device_map=auto`. Evaluate saved checkpoints separately in one process. Merely listing multiple visible GPUs does not launch distributed workers.
+
+## Resume and reproduce
+
+Training accepts `trainer.args.resume_from_checkpoint=/path/to/checkpoint` where
+supported by the selected trainer. A usable training checkpoint contains weights,
+optimizer/scheduler, random state, data progress and algorithm-specific state;
+inference adapter weights alone are not sufficient. Keep the resolved configuration
+and input manifest with the full run. Changes to data, effective batch or method
+state require checking the trainer's resume contract. For reproduction from saved
+outputs, use the `reproduce-run` Skill described in [Agent usage](agent_mode.md).

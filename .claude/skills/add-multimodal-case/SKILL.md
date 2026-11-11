@@ -7,7 +7,7 @@ description: Validate local images referenced by JSON or JSONL knowledge cases b
 
 Run `python .claude/skills/add-multimodal-case/scripts/run.py --input <records.jsonl> --output <validation.json>`.
 Each record must contain `image` or `images`. Use absolute paths or paths relative
-to the repository root. The helper checks files exist and can be decoded; it does
+to the input JSON/JSONL file, as in `plan-surgery`. The helper checks files exist and can be decoded; it does
 not judge image/text alignment or run the model. Empty input and corrupt images
 return an error with the record index.
 

@@ -8,6 +8,7 @@ Know-Surgery trainer validates before the first optimizer step.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import os
@@ -31,6 +32,13 @@ def parse_args():
     parser.add_argument("--model-path", required=True)
     parser.add_argument("--processor-path", default=None)
     parser.add_argument("--data-dir", default=None)
+    parser.add_argument(
+        "--training-source",
+        choices=["ft_data", "profile_qa"],
+        default="ft_data",
+        help="MLLMU mask calibration source; profile_qa reproduces legacy eval-label use.",
+    )
+    parser.add_argument("--training-parquet", default=None)
     parser.add_argument("--device", default="cuda")
     parser.add_argument(
         "--torch-dtype", choices=["float16", "bfloat16", "float32"], default=None
@@ -38,6 +46,7 @@ def parse_args():
     parser.add_argument("--attn-implementation", default="sdpa")
     parser.add_argument("--allow-download", action="store_true")
     parser.add_argument("--forget-ratio", type=int, default=5)
+    parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--mask-max-samples", type=int, default=0)
     parser.add_argument("--max-batches", type=int, default=0)
@@ -76,6 +85,9 @@ def _build_data_config(args, data_dir: Path):
     else:
         common.update(
             {
+                "training_source": args.training_source,
+                "training_parquet": args.training_parquet
+                or str(data_dir / "ft_Data" / "train-00000-of-00001.parquet"),
                 "full_set_parquet": str(
                     data_dir / "Full_Set" / "train-00000-of-00001.parquet"
                 ),
@@ -103,6 +115,7 @@ def main():
     from data.clear_dataset import get_clear_mask_data
     from data.multimodal import get_mm_mask_data
     from model.multimodal import get_mm_model
+    from transformers import set_seed
     from trainer.unlearn.sfron import (
         UPSTREAM_COMMIT,
         generate_saliency_mask,
@@ -110,6 +123,8 @@ def main():
         model_identity,
         resolve_mm_module_selectors,
     )
+
+    set_seed(args.seed)
 
     print(
         json.dumps(
@@ -146,6 +161,7 @@ def main():
             "torch_dtype": dtype,
             "attn_implementation": args.attn_implementation,
             "local_files_only": not args.allow_download,
+            "preserve_saved_processor": True,
             "lora": {"enabled": False},
         }
     )
@@ -185,7 +201,36 @@ def main():
         "forget_ratio": args.forget_ratio,
         "upstream_repository": "https://github.com/Z1zs/MMUnlearner",
         "upstream_commit": UPSTREAM_COMMIT,
+        "training_source": data_cfg.get("training_source"),
+        "training_parquet": data_cfg.get("training_parquet"),
+        "language_preservation_source": (
+            "training_qa_text_views_plus_retain_qa"
+            if args.benchmark == "mllmu" and args.training_source == "ft_data"
+            else "upstream_preserve_sets"
+        ),
+        "seed": args.seed,
+        "processor_config": (
+            processor.image_processor.to_dict()
+            if getattr(processor, "image_processor", None) is not None
+            else None
+        ),
     }
+    if args.benchmark == "mllmu":
+        sources = set((data_dir / f"forget_{args.forget_ratio}").glob("*.parquet"))
+        sources.update(
+            (data_dir / f"retain_{100 - args.forget_ratio}").glob("*.parquet")
+        )
+        if args.training_source == "ft_data":
+            sources.add(Path(data_cfg.training_parquet))
+        else:
+            sources.add(Path(data_cfg.full_set_parquet))
+        common_metadata["data_sha256"] = {}
+        for source in sorted(sources):
+            digest = hashlib.sha256()
+            with source.open("rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            common_metadata["data_sha256"][str(source)] = digest.hexdigest()
 
     vision_artifact = generate_saliency_mask(
         model=model,

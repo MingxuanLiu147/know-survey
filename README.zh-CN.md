@@ -20,12 +20,20 @@ Know-Surgery 将模型知识更新整理为统一的配置与执行流程：选�
 | 学习新知识 | `inject` | 监督训练样本与评估数据 |
 | 修改已有知识 | `edit` | 新答案、改写问题与无关知识探针 |
 
+## 按任务开始
+
+| 操作 | 使用指南 | 论文正文对应实验 |
+|---|---|---|
+| `inject` | [知识注入](docs/injection.md) | WikiDYK · Qwen2.5-1.5B Base |
+| `edit` | [知识编辑](docs/editing.md) | zsRE · Qwen2.5-7B-Instruct |
+| `unlearning` | [知识遗忘](docs/unlearning.md) | MLLMU-Bench · Qwen2.5-VL-3B-Instruct |
+
 ## 快速开始
 
 使用 **Python 3.11+**，并准备适合当前硬件的 PyTorch 环境。从 [GitHub 仓库](https://github.com/MingxuanLiu147/know-survey) 安装：
 
 ```bash
-git clone https://github.com/MingxuanLiu147/know-survey.git
+git clone --branch v0.2.0 --depth 1 https://github.com/MingxuanLiu147/know-survey.git
 cd know-survey
 python -m venv .venv
 source .venv/bin/activate
@@ -42,7 +50,7 @@ know-surgery operation=edit \
   task_name=first_edit --cfg job
 ```
 
-执行示例需要本地 GPT-2 权重和 CounterFact JSON 文件。设置路径，选择空闲 GPU，确认配置后去掉 `--cfg job`：
+执行示例需要本地 GPT-2 权重和 CounterFact JSON 文件。设置路径，选择空闲 GPU，先检查配置。执行前使用 `--preflight` 获取配置校验码，再用 `--reviewed-config 校验码` 启动：
 
 ```bash
 export MODEL_PATH=/path/to/gpt2
@@ -80,7 +88,7 @@ TOFU 遗忘需要使用正确的起始权重。RuleTaker 配置默认关闭评�
 | 权重编辑 | FT、ROME、MEMIT、AlphaEdit | 层映射和统计量；ROME/MEMIT/AlphaEdit 提供显式参考配置 |
 | 长目标编辑 | AnyEdit 的 MEMIT/AlphaEdit ARE 后端 | 目标分块、模型映射和保留统计量 |
 | 记忆／适配器编辑 | IKE、GRACE、WISE、SERAC | IKE 需要演示库，WISE 需要独立负例，SERAC 需要训练辅助网络 |
-| 辅助网络编辑 | MEND、MALMEN、InstructEdit | 紧凑实现，需要匹配的预训练编辑网络 |
+| 辅助网络编辑 | MEND、MALMEN、InstructEdit | MEND 提供 factor-network 配置，各方法需要匹配的预训练编辑网络 |
 | 图文更新 | 多模态遗忘、LoRA 注入与编辑适配器 | 实验性能力，按模型与方法选择；[本地图文注入说明](docs/components.md#imagetext-injection) |
 
 文本模型配置覆盖 GPT-2/XL、GPT-J、Llama、Qwen2.5、Phi、Gemma、Zephyr 和 DeepSeek 蒸馏模型。数据适配器包括 TOFU、CounterFact、zsRE、LEME、ELKEN、AKEW、WikiHow、RuleTaker、RuleArena、Alpaca/ShareGPT、ConceptEdit 及图文数据集。配置存在不表示可以任意组合模型与方法。

@@ -1,0 +1,31 @@
+# @package _global_
+# Train and test on separate RuleTaker records; retain probes use unrelated facts.
+
+defaults:
+  - /experiment/inject/ruletaker/workbench
+  - override /model: Llama-3.2-1B-Instruct
+  - override /data/datasets@data.train: RuleTaker_workbench_inject
+  - _self_
+
+max_train_samples: 50
+
+model:
+  model_args:
+    pretrained_model_name_or_path: ${oc.env:KNOW_SURGERY_LLAMA_MODEL_PATH,meta-llama/Llama-3.2-1B-Instruct}
+    attn_implementation: sdpa
+    device_map: auto
+  tokenizer_args:
+    pretrained_model_name_or_path: ${model.model_args.pretrained_model_name_or_path}
+
+trainer:
+  args:
+    max_steps: 50
+    per_device_train_batch_size: 2
+    gradient_accumulation_steps: 1
+
+eval:
+  inject_metrics:
+    task_accuracy:
+      eval_data_path: ${paths.root_dir}/data/workbench/inject/ruletaker_eval.json
+
+task_name: llama32_1b_ruletaker_lora_50

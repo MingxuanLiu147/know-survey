@@ -1,0 +1,5 @@
+RuleTaker_workbench_inject:
+  handler: AlpacaDataset
+  args:
+    data_path: ${paths.root_dir}/data/workbench/inject/ruletaker_train.json
+    max_length: 4096

@@ -39,7 +39,7 @@ class LoRATrainer(InjectTrainer):
         r: int = 8,
         lora_alpha: int = 16,
         lora_dropout: float = 0.05,
-        target_modules: Optional[List[str]] = None,
+        target_modules: Optional[List[str] | str] = None,
         bias: str = "none",
         task_type: str = "CAUSAL_LM",
         *args,
@@ -59,7 +59,11 @@ class LoRATrainer(InjectTrainer):
         self.lora_alpha = lora_alpha
         self.lora_dropout = lora_dropout
         self.target_modules = (
-            list(target_modules) if target_modules else ["q_proj", "v_proj"]
+            target_modules
+            if isinstance(target_modules, str)
+            else list(target_modules)
+            if target_modules
+            else ["q_proj", "v_proj"]
         )
         self.bias = bias
         self.task_type = task_type
@@ -104,25 +108,3 @@ class LoRATrainer(InjectTrainer):
         except ImportError:
             logger.error("peft library not installed. Please run: pip install peft")
             raise
-
-    def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
-        """计算 LoRA 微调损失
-
-        标准的 causal language modeling 损失。
-
-        Args:
-            model: PEFT 包装后的模型
-            inputs: 输入 batch
-            return_outputs: 是否返回输出
-
-        Returns:
-            loss 或 (loss, outputs)
-        """
-        outputs = model(
-            input_ids=inputs["input_ids"],
-            attention_mask=inputs["attention_mask"],
-            labels=inputs["labels"],
-        )
-        loss = outputs.loss
-
-        return (loss, outputs) if return_outputs else loss

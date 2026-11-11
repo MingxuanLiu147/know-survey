@@ -1,10 +1,13 @@
 # @package _global_
-# Qwen2.5-3B-Instruct full benchmark; inherits the adapted ROME protocol.
-
+# Candidate settings: inspect --preflight and review layers before execution.
 defaults:
-  - /experiment/edit/zsre/qwen25_7b/rome
-  - override /model: Qwen2.5-3B-Instruct
+  - /experiment/edit/zsre/qwen25_3b/base
+  - override /trainer: edit/ROME_Official
   - _self_
 
-task_name: qwen25_3b_zsre_rome_independent1301
-max_edits: 1301
+task_name: qwen25_3b_zsre_rome_reviewed1301
+trainer:
+  method_args:
+    layers: [5]
+    v_loss_layer: 35  # Inactive with final_logits; shown in the review report.
+    mom2_adjustment: true

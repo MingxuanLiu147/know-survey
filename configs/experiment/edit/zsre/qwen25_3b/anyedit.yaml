@@ -1,10 +1,19 @@
 # @package _global_
-# Qwen2.5-3B-Instruct full benchmark; inherits the MEMIT_ARE protocol.
-
+# Candidate settings: inspect --preflight and review layers before execution.
 defaults:
-  - /experiment/edit/zsre/qwen25_7b/anyedit
-  - override /model: Qwen2.5-3B-Instruct
+  - /experiment/edit/zsre/qwen25_3b/base
+  - override /trainer: edit/AnyEditOfficial
   - _self_
 
-task_name: qwen25_3b_zsre_anyedit_independent1301
-max_edits: 1301
+task_name: qwen25_3b_zsre_anyedit_reviewed1301
+trainer:
+  method_args:
+    strategy: memit_are
+    layers: [4, 5, 6, 7, 8]
+    v_loss_layer: 35
+    window_size: 50
+    overlap: 0
+    mom2_adjustment: true
+    mom2_dataset_config: 20220301.en
+    mom2_n_samples: 100000
+    stats_dir: ${paths.root_dir}/data/stats/qwen25_3b/anyedit_reference

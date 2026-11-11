@@ -2,3 +2,5 @@ handler: DataCollatorForReFTDataset
 
 args:
   padding_side: right
+  last_k_prompt_tokens: ${oc.select:trainer.method_args.last_k_prompt_tokens,1}
+  allow_legacy_ntp: ${oc.select:trainer.method_args.allow_legacy_ntp,false}

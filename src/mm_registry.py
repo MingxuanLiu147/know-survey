@@ -127,7 +127,11 @@ MM_UNLEARNING_ALGORITHMS: dict[str, MMAlgorithmRegistration] = {
         supported_benchmarks=("mllmu", "clear"),
         benchmark_origin=("MLLMU-Bench", "CLEAR"),
         paper_arxiv="2404.05868",
-        requirements=("retain_only_oracle_checkpoint",),
+        requirements=("frozen_reference_model",),
+        notes=(
+            "MIP/MLLMU uses a retain-only oracle; original NPO+RT uses frozen "
+            "Vanilla and paired retain CE. Select the matching experiment recipe."
+        ),
     ),
     "MMRetainFT": MMAlgorithmRegistration(
         name="MMRetainFT",
@@ -254,18 +258,25 @@ MM_UNLEARNING_ALGORITHMS: dict[str, MMAlgorithmRegistration] = {
         requirements=("inference_only_prompt_policy",),
         notes="MLLMU-Bench prompting baseline; it does not update model weights.",
     ),
-    # Later methods and adjacent tasks. They remain non-runnable until their
-    # architecture-specific code and data contracts are integrated and tested.
+    # Later methods and adjacent tasks. Only integrated implementations are runnable.
     "MMVKD": MMAlgorithmRegistration(
         name="MMVKD",
         family="later_method",
-        implementation=None,
-        status="Planned",
+        implementation="trainer.unlearn.mm_vkd.MMVKD",
+        status="Prototype",
         supported_benchmarks=("mllmu", "clear"),
         paper_arxiv="2512.11325",
         aliases=("VKD",),
-        requirements=("intermediate_visual_teacher_features", "vision_only_updates"),
-        notes="The paper names the method VKD; MMVKD is retained only as a user-facing alias.",
+        requirements=(
+            "retain_set",
+            "intermediate_visual_teacher_features",
+            "vision_only_updates",
+        ),
+        notes=(
+            "Paper-based VKD v2: visual neuron pruning, Fisher-masked forget ascent "
+            "and frozen Vanilla projector-feature distillation. Qwen2/2.5-VL only; "
+            "hyperparameters are local defaults, not verified paper settings."
+        ),
     ),
     "MIPEditor": MMAlgorithmRegistration(
         name="MIPEditor",
@@ -447,11 +458,12 @@ def _seven_b_method_compatibility(
             single_rtx3090_status="requires-dual-model-memory",
             requirements=(
                 "benchmark_trained_base_checkpoint",
-                "retain_only_oracle_checkpoint",
+                "frozen_reference_model",
                 "multi_gpu_or_model_offload",
             ),
             notes=(
-                "Requires a retain-only oracle checkpoint and memory for both models."
+                "Requires memory for both models. Use a retain-only oracle for "
+                "MIP/MLLMU or frozen Vanilla for original NPO+RT."
             ),
         ),
         MMModelMethodCompatibility(
@@ -537,6 +549,7 @@ def _small_qwen_method_compatibility(
     single_model = f"single-{parameter_scale}-model"
     dual_model = f"dual-{parameter_scale}-model"
     return (
+        _vkd_qwen_compatibility(),
         MMModelMethodCompatibility(
             method="MMGradAscent",
             supported_benchmarks=benchmarks,
@@ -577,7 +590,7 @@ def _small_qwen_method_compatibility(
             single_rtx3090_status="requires-dual-model-memory",
             requirements=(
                 "benchmark_trained_base_checkpoint",
-                "retain_only_oracle_checkpoint",
+                "frozen_reference_model",
             ),
         ),
         MMModelMethodCompatibility(
@@ -630,6 +643,24 @@ def _small_qwen_method_compatibility(
     )
 
 
+def _vkd_qwen_compatibility() -> MMModelMethodCompatibility:
+    """VKD's visual-only contract; it does not certify benchmark performance."""
+    return MMModelMethodCompatibility(
+        method="MMVKD",
+        supported_benchmarks=("mllmu", "clear"),
+        update_policy="visual-pruning-masked-forget-feature-distillation",
+        lora_target_policy="disabled-visual-full-weights",
+        memory_tier="one-full-model-plus-visual-teacher-and-optimizer",
+        single_rtx3090_status="configured",
+        requirements=(
+            "benchmark_trained_base_checkpoint",
+            "retain_set",
+            "single_process",
+        ),
+        notes="Frozen language backbone; evaluate target text preservation separately.",
+    )
+
+
 MM_UNLEARNING_MODELS: dict[str, MMModelRegistration] = {
     "llava15_7b": MMModelRegistration(
         key="llava15_7b",
@@ -660,7 +691,8 @@ MM_UNLEARNING_MODELS: dict[str, MMModelRegistration] = {
         minimum_transformers_version="4.45.0",
         method_compatibility=_seven_b_method_compatibility(
             retain_ft_single_rtx3090_status="configured"
-        ),
+        )
+        + (_vkd_qwen_compatibility(),),
         aliases=("qwen2-vl-7b", "qwen2vl-7b", "qwen2-vl-7b-instruct"),
         notes=(
             "Portability extension: MLLMU-Bench did not use Qwen2-VL, and CLEAR's "

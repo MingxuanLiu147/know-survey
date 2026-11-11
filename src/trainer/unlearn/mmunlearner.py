@@ -30,6 +30,7 @@ class MMUnlearner(MMGradDiff):
         expected_benchmark: str | None = None,
         expected_model_family: str | None = None,
         expected_checkpoint_id: str | None = None,
+        expected_mask_metadata: dict | None = None,
         allow_legacy_mask: bool = False,
         min_mask_coverage: float = 1.0,
         update_schedule: str = "retain_frequency",
@@ -58,6 +59,15 @@ class MMUnlearner(MMGradDiff):
             model = args[0]
         if model is None:
             raise TypeError("MMUnlearner could not resolve the training model")
+        if any(
+            parameter.requires_grad and parameter.dtype != torch.float32
+            for parameter in model.parameters()
+        ):
+            raise ValueError(
+                "MMUnlearner requires FP32 trainable weights (model.torch_dtype=float32) "
+                "with the current optimizer; BF16/FP16 parameters have no FP32 master "
+                "copy and can silently round away small updates."
+            )
 
         loaded_mask, validation_report = load_and_validate_saliency_mask(
             grad_mask_path,
@@ -65,6 +75,7 @@ class MMUnlearner(MMGradDiff):
             expected_benchmark=expected_benchmark,
             expected_model_family=expected_model_family,
             expected_checkpoint_id=expected_checkpoint_id,
+            expected_metadata=expected_mask_metadata,
             allow_legacy_mask=allow_legacy_mask,
             min_mask_coverage=min_mask_coverage,
         )

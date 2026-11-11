@@ -18,6 +18,7 @@ from typing import Dict, Any, Optional, List
 import torch
 from torch.utils.data import Dataset
 from datasets import load_dataset
+from data.utils import append_eos_target, tokenize_causal_pair
 
 logger = logging.getLogger(__name__)
 _MISSING = object()
@@ -100,29 +101,38 @@ def tokenize_inject_pair(
     *,
     tokenizer,
     max_length: int,
+    append_eos: bool = False,
 ) -> Dict[str, Any]:
-    """Tokenize one injection pair while reserving room for its response."""
-    prompt_ids = tokenizer(prompt, return_tensors="pt")["input_ids"][0]
-    full_ids = tokenizer(full_text, return_tensors="pt")["input_ids"][0]
-    response_ids = full_ids[len(prompt_ids) :]
-    if response_ids.numel() == 0:
+    """Keep the generation prompt intact and supervise its complete response."""
+    if max_length < 2:
+        raise ValueError("max_length must be at least 2.")
+    if not full_text.startswith(prompt):
+        raise ValueError("Injection full_text must begin with its generation prompt.")
+    prompt_ids, response_ids = tokenize_causal_pair(
+        tokenizer,
+        prompt,
+        full_text[len(prompt) :].rstrip() if append_eos else full_text[len(prompt) :],
+    )
+    if not response_ids:
         raise ValueError("Injection sample has no response tokens to train on.")
-
-    response_budget = min(response_ids.numel(), max(max_length - 1, 1))
-    prompt_budget = min(prompt_ids.numel(), max_length - response_budget)
-    response_budget = max_length - prompt_budget
-    input_ids = torch.cat((prompt_ids[:prompt_budget], response_ids[:response_budget]))
-    prompt_len = int(prompt_budget)
+    if append_eos:
+        response_ids = append_eos_target(
+            prompt_ids, response_ids, tokenizer, max_length
+        )
+    prompt_len = len(prompt_ids)
+    if prompt_len >= max_length:
+        raise ValueError("The complete prompt leaves no trainable response tokens.")
+    input_ids = torch.tensor((prompt_ids + response_ids)[:max_length], dtype=torch.long)
     attention_mask = torch.ones_like(input_ids)
-    labels = input_ids.clone().unsqueeze(0)
-    labels[0, :prompt_len] = -100
-    if tokenizer.pad_token_id is not None:
-        labels[labels == tokenizer.pad_token_id] = -100
+    labels = input_ids.clone()
+    labels[: max(prompt_len, 1)] = -100
+    if not (labels[1:] != -100).any():
+        raise ValueError("Injection sample has no causal target tokens to train on.")
 
     return {
         "input_ids": input_ids,
         "attention_mask": attention_mask,
-        "labels": labels.squeeze(0),
+        "labels": labels,
         "prompt_length": prompt_len,
         "response_start": prompt_len,
         "train_target_span": int((labels != -100).sum().item()),
@@ -153,6 +163,7 @@ class InjectDataset(Dataset):
         tokenizer=None,
         max_length: int = 2048,
         template_args: Optional[Dict[str, Any]] = None,
+        append_eos: bool = False,
         **kwargs,
     ):
         """初始化注入数据集
@@ -172,6 +183,7 @@ class InjectDataset(Dataset):
         self.tokenizer = tokenizer
         self.max_length = max_length
         self.template_args = template_args or {}
+        self.append_eos = append_eos
         self.format_type = format_type
 
         self.instruction_key = instruction_key
@@ -482,6 +494,7 @@ class InjectDataset(Dataset):
             full_text,
             tokenizer=self.tokenizer,
             max_length=self.max_length,
+            append_eos=self.append_eos,
         )
 
 

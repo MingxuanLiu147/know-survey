@@ -1,9 +1,10 @@
 import { ChevronLeft, ChevronRight, FileQuestion, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 import { ApiError } from "../api";
-import { displayTechnicalText, uiErrorMessage, useI18n } from "../i18n";
+import { displayTechnicalText, resultReasonText, uiErrorMessage, useI18n } from "../i18n";
 import type { ResultSummary } from "../types";
 import { Button, EmptyState, InlineError, LoadingBlock } from "./ui";
+import { metricDisplayLabel } from "./MetricsView";
 
 interface CaseRecord {
   id: string;
@@ -51,6 +52,7 @@ export function CaseInspector({ results, metricId }: { results: ResultSummary[];
   const [error, setError] = useState("");
   const [attempt, setAttempt] = useState(0);
   const activeId = results.some((result) => result.id === selectedId) ? selectedId : results[0]?.id || "";
+  const activeResult = results.find((result) => result.id === activeId);
   const limit = 10;
 
   useEffect(() => {
@@ -84,7 +86,7 @@ export function CaseInspector({ results, metricId }: { results: ResultSummary[];
           </select>
         </label> : null}
       </div>
-      <p className="section-description">{zh ? "查看当前运行保存的输入、参考答案与模型输出。" : "Inspect inputs, reference answers and model outputs saved by this run."}</p>
+      <p className="section-description">{zh ? "查看每个样本的指标变化；已保存文本的样本还可查看输入、参考答案和模型输出。" : "Inspect metric changes for each example, with inputs, references and model outputs when saved."}</p>
       {loading ? <LoadingBlock label={zh ? "正在读取样本" : "Loading examples"} /> : error ? <div>
         <InlineError message={error} />
         <Button variant="secondary" icon={RefreshCw} onClick={() => setAttempt((value) => value + 1)}>{zh ? "重新加载" : "Retry"}</Button>
@@ -93,29 +95,78 @@ export function CaseInspector({ results, metricId }: { results: ResultSummary[];
         <div className="case-list">
           {page.cases.map((item, index) => {
             const teacherForced = item.measurement_kind?.startsWith("teacher_forced") === true;
+            const metric = activeResult?.metrics.find((candidate) => candidate.id === item.metric_id);
+            const predictionAgreement = (item.scoring ?? metric?.scoring) === "pre_post_token_agreement";
+            const nll = item.measurement_kind === "target_token_nll" || metric?.unit === "nll";
+            const hasText = [item.prompt, item.expected, item.before, item.after].some((value) => typeof value === "string");
+            const hasScore = [item.before_score, item.after_score, item.score].some((value) => value !== null && value !== undefined);
+            const pairedScores = item.before_score !== null && item.before_score !== undefined && item.after_score !== null && item.after_score !== undefined;
+            const agreementScore = item.score ?? item.after_score;
+            const scoreColumns = predictionAgreement
+              ? (agreementScore !== null && agreementScore !== undefined
+                ? [{ label: zh ? "前后预测一致率" : "Prediction agreement", value: agreementScore, change: false }] : [])
+              : pairedScores
+              ? [
+                { label: zh ? "更新前" : "Before", value: item.before_score!, change: false },
+                { label: zh ? "更新后" : "After", value: item.after_score!, change: false },
+                { label: zh ? "变化（后 − 前）" : "Change (after − before)", value: item.after_score! - item.before_score!, change: true }
+              ]
+              : [
+                ...(item.before_score !== null && item.before_score !== undefined
+                  ? [{ label: zh ? "更新前" : "Before", value: item.before_score, change: false }] : []),
+                ...(item.after_score !== null && item.after_score !== undefined || item.score !== null && item.score !== undefined
+                  ? [{ label: zh ? "样本指标" : "Score", value: (item.after_score ?? item.score)!, change: false }] : [])
+              ];
+            const scoreLabel = predictionAgreement
+              ? (zh ? "局部性 · 更新前后预测一致率" : "Locality · prediction agreement before and after")
+              : nll
+              ? (item.group === "retain" ? (zh ? "保留集 · 目标答案 NLL" : "Retain set · target NLL") : item.group === "forget" ? (zh ? "遗忘集 · 目标答案 NLL" : "Forget set · target NLL") : (zh ? "目标答案 NLL" : "Target NLL"))
+              : metric ? metricDisplayLabel(metric, activeResult?.metrics || [], language) : displayTechnicalText(item.metric_id);
+            const scoreDirection = predictionAgreement
+              ? (zh ? "1 表示前后逐词预测完全一致，0 表示没有一致词元；即使两次预测都不正确，也可能得到 1。" : "1 means all token predictions stayed the same; 0 means none matched. Two incorrect predictions can still score 1 if they are unchanged.")
+              : nll && item.group === "retain"
+              ? (zh ? "保留集：更新后接近更新前为宜；NLL 上升表示参考答案的概率下降。" : "Retain set: prefer little change; a higher NLL means a lower probability for the reference answer.")
+              : nll && item.group === "forget"
+                ? (zh ? "遗忘集：NLL 上升表示参考答案的概率下降；同时查看保留集变化。" : "Forget set: a higher NLL means a lower probability for the reference answer; also inspect changes on the retain set.")
+                : metric ? ({ higher: t("higherBetter"), lower: t("lowerBetter"), closer_to_zero: t("closerZeroBetter"), context: t("contextOnly") })[metric.direction] : "";
+            const formatScore = (value: number | null) => value === null || value === undefined ? (zh ? "未记录" : "Not recorded") : value.toLocaleString(zh ? "zh-CN" : "en-US", { maximumFractionDigits: 3 });
             const outputTitle = teacherForced ? (zh ? "逐词预测" : "Token predictions") : (zh ? "模型输出" : "Model output");
-            const renderAnswer = (text: string | null, score: number | null, before: boolean) => <div className="answer-block">
+            const renderAnswer = (text: string | null, before: boolean) => typeof text === "string" ? <div className="answer-block">
               <h4>{before ? (zh ? "更新前" : "Before") : (zh ? "更新后" : "After")} · {outputTitle}</h4>
-              {text !== null && text !== undefined ? <pre>{text || (zh ? "（空回答）" : "(Empty answer)")}</pre> : <p className="muted">{zh ? "未采集回答" : "Answer not collected"}</p>}
-              {score !== null && score !== undefined ? <p>{zh ? "指标值" : "Score"}：{score}</p> : null}
-            </div>;
+              <pre>{text || (zh ? "（空回答）" : "(Empty answer)")}</pre>
+            </div> : null;
             return <article className="case-record" key={item.id}>
               <div className="subsection-title">
                 <h4>{zh ? "样本" : "Example"} {offset + index + 1}</h4>
-                <span className="muted">{({correct: zh ? "正确" : "Correct", incorrect: zh ? "不正确" : "Incorrect", measured: zh ? "已计算指标" : "Measured", recorded: zh ? "已记录输出" : "Recorded", unavailable: zh ? "结果不可用" : "Unavailable"} as Record<string, string>)[item.status] || ""}</span>
+                <span className="muted">{predictionAgreement && agreementScore !== null && agreementScore !== undefined
+                  ? (agreementScore === 1 ? (zh ? "预测未变" : "Predictions unchanged") : (zh ? "预测有变化" : "Predictions changed"))
+                  : ({correct: zh ? "正确" : "Correct", incorrect: zh ? "不正确" : "Incorrect", measured: zh ? "已计算指标" : "Measured", recorded: zh ? "已记录输出" : "Recorded", unavailable: zh ? "结果不可用" : "Unavailable"} as Record<string, string>)[item.status] || ""}</span>
               </div>
-              <div className="case-prompt"><strong>{zh ? "输入" : "Input"}</strong><p>{item.prompt ?? (zh ? "未记录输入文本" : "Input text not recorded")}</p></div>
-              <div className="case-prompt"><strong>{zh ? "参考答案" : "Reference answer"}</strong><p>{item.expected ?? (zh ? "未记录参考答案" : "Reference answer not recorded")}</p></div>
-              {teacherForced ? <p className="section-description">{zh ? "逐词预测使用给定的参考上下文，与自由生成回答分别统计。" : "Token predictions use the provided reference context and are measured separately from free generation."}</p> : null}
-              <div className="answer-grid">{renderAnswer(item.before, item.before_score, true)}{renderAnswer(item.after, item.after_score, false)}</div>
-              {item.score !== null && item.score !== undefined ? <p>{zh ? "样本指标" : "Example score"}：{item.score}</p> : null}
-              {item.unavailable_reason ? <p className="section-description">{displayTechnicalText(item.unavailable_reason)}</p> : null}
+              {typeof item.prompt === "string" ? <div className="case-prompt"><strong>{zh ? "输入" : "Input"}</strong><p>{item.prompt || (zh ? "（空文本）" : "(Empty text)")}</p></div> : null}
+              {typeof item.expected === "string" ? <div className="case-prompt"><strong>{predictionAgreement ? (zh ? "参考答案（用于逐词评测）" : "Reference answer (for token evaluation)") : (zh ? "参考答案" : "Reference answer")}</strong><p>{item.expected || (zh ? "（空文本）" : "(Empty text)")}</p></div> : null}
+              {teacherForced && (typeof item.before === "string" || typeof item.after === "string") ? <p className="section-description">{zh ? "逐词预测使用给定的参考上下文，与自由生成回答分别统计。" : "Token predictions use the provided reference context and are measured separately from free generation."}</p> : null}
+              {typeof item.before === "string" || typeof item.after === "string" ? <div className="answer-grid">{renderAnswer(item.before, true)}{renderAnswer(item.after, false)}</div> : null}
+              {hasScore ? <>
+                <div className="table-scroll"><table className="data-table">
+                  <caption>{scoreLabel}</caption>
+                  <thead><tr>
+                    {scoreColumns.map((column) => <th key={column.label}>{column.label}</th>)}
+                  </tr></thead>
+                  <tbody><tr>
+                    {scoreColumns.map((column) => <td key={column.label} title={String(column.value)}>{column.change && column.value > 0 ? "+" : ""}{formatScore(column.value)}</td>)}
+                  </tr></tbody>
+                </table></div>
+                {scoreDirection ? <p className="section-description">{scoreDirection}</p> : null}
+              </> : null}
+              {hasText && item.unavailable_reason ? <p className="section-description">{resultReasonText(item.unavailable_reason, language)}</p> : null}
               <details className="source-details"><summary>{zh ? "查看来源与评测设置" : "Source and evaluation settings"}</summary>
                 <dl className="metadata-grid">
                   <div><dt>{zh ? "来源" : "Source"}</dt><dd className="mono">{item.source}{item.source_pointer ? ` · ${item.source_pointer}` : ""}</dd></div>
                   <div><dt>{zh ? "样本编号" : "Example ID"}</dt><dd>{item.case_index ?? "—"}{item.probe_index !== null && item.probe_index !== undefined ? ` / ${item.probe_index}` : ""}</dd></div>
                   <div><dt>{zh ? "评测协议" : "Evaluation protocol"}</dt><dd>{item.protocol_version ?? "—"}</dd></div>
                   <div><dt>{zh ? "评分方式" : "Scoring"}</dt><dd>{item.scoring ?? item.measurement_kind ?? "—"}</dd></div>
+                  <div><dt>{zh ? "评测来源 / 阶段" : "Evaluator / phase"}</dt><dd>{item.evaluator ?? "—"} / {item.phase ?? "—"}</dd></div>
+                  {item.unavailable_reason ? <div><dt>{zh ? "原始原因" : "Recorded reason"}</dt><dd className="mono">{item.unavailable_reason}</dd></div> : null}
                 </dl>
                 {item.warnings?.map((warning, warningIndex) => <p key={warningIndex}>{displayTechnicalText(warning)}</p>)}
               </details>

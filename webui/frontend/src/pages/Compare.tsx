@@ -18,7 +18,7 @@ import {
   YAxis
 } from "recharts";
 import { api } from "../api";
-import { formatMetric } from "../components/MetricsView";
+import { formatMetric, metricDisplayLabel } from "../components/MetricsView";
 import { CaseInspector } from "../components/CaseInspector";
 import {
   Button,
@@ -28,7 +28,7 @@ import {
   SectionHeader,
   StatusBadge
 } from "../components/ui";
-import { displayTechnicalText, uiErrorMessage, useI18n } from "../i18n";
+import { displayTechnicalText, resultReasonText, uiErrorMessage, useI18n, type Language } from "../i18n";
 import type { ResultDetail, ResultSummary } from "../types";
 
 const chartColors = [
@@ -39,6 +39,17 @@ const chartColors = [
   "var(--chart-green)",
   "var(--chart-pink)"
 ];
+
+function historyDescription(result: ResultSummary, language: Language): string | null {
+  const history = result.metadata.history;
+  if (!history || typeof history !== "object" || Array.isArray(history)) return null;
+  const recorded = history as Record<string, unknown>;
+  const descriptions: string[] = [];
+  if (typeof recorded.step === "number") descriptions.push(language === "zh" ? `步骤 ${recorded.step}` : `Step ${recorded.step}`);
+  if (recorded.reference === "pristine_model") descriptions.push(language === "zh" ? "与原始模型比较" : "Compared with the original model");
+  if (recorded.evaluation_scope === "all_successful_edits_so_far") descriptions.push(language === "zh" ? "评测截至该步骤的全部成功编辑" : "Evaluates all successful edits through this step");
+  return descriptions.join(" · ") || null;
+}
 
 interface Comparison {
   comparable: boolean;
@@ -124,6 +135,8 @@ export function Compare() {
       .map((result, index) => {
         const metric = result.metrics.find((item) => item.id === metricId);
         return {
+          id: result.id,
+          fullName: displayTechnicalText(result.name),
           name: displayTechnicalText(
             result.name.length > 26
               ? result.name.slice(0, 24) + "…"
@@ -137,6 +150,11 @@ export function Compare() {
       .filter((item) => item.value !== null && item.value !== undefined);
   }, [comparison, metricId]);
   const chartMetrics = comparison?.results.flatMap((result) => result.metrics.filter((metric) => metric.id === metricId)) || [];
+  const comparisonMetrics = comparison?.results.flatMap((result) => result.metrics) || [];
+  const metricLabel = (id: string) => {
+    const metric = comparisonMetrics.find((item) => item.id === id);
+    return metric ? metricDisplayLabel(metric, comparisonMetrics, language) : id;
+  };
   const chartCompatible = ["unit", "scoring", "measurement_kind", "protocol_version"].every((key) =>
     new Set(chartMetrics.map((metric) => metric[key as "unit" | "scoring" | "measurement_kind" | "protocol_version"] ?? null)).size <= 1
   );
@@ -182,9 +200,12 @@ export function Compare() {
   const comparisonNote = (text: string): string => {
     if (language !== "zh") return displayTechnicalText(text);
     if (text === "Compares recorded inputs, model revision, record counts, evaluation settings, run limits and environment.") return "按已记录的输入、模型版本、样本数、评测设置、运行设置和环境比较。";
+    if (text === "Compares recorded inputs, model revision, record counts, evaluation settings, run limits, environment, metric protocols and scoring semantics. Unmatched results remain side by side without a ranking.") return "按已记录的输入、模型版本、样本数、评测与运行设置、环境、指标协议和评分方式比较。条件不匹配的结果仅并列展示，不作排名。";
     if (text === "Check that both runs have completed evaluation, share quality metrics, and use matching comparison settings.") return "请检查各运行是否完成评测、具有相同效果指标，并采用一致的比较条件。";
+    if (text === "Metric protocols or scoring semantics are missing or different.") return "部分指标的评测协议或评分方式未记录，或各运行采用的方式不同。";
     return displayTechnicalText(text);
   };
+  const unmatchedConditions = Object.entries(comparison?.fairness || {}).filter(([, item]) => !item.known || !item.equal);
 
   return (
     <div className="page compare-page">
@@ -222,7 +243,7 @@ export function Compare() {
                     className={operation === value ? "active" : ""}
                     onClick={() => setOperation(value)}
                   >
-                    {value === "all" ? t("all") : value}
+                    {value === "all" ? t("all") : language === "zh" ? ({ unlearning: "遗忘", inject: "注入", edit: "编辑", evaluation: "评测" } as Record<string, string>)[value] : ({ unlearning: "Unlearning", inject: "Injection", edit: "Editing", evaluation: "Evaluation" } as Record<string, string>)[value]}
                   </button>
                 )
               )}
@@ -232,6 +253,7 @@ export function Compare() {
             {!visible.length ? <p className="section-description">{language === "zh" ? "没有符合条件的结果。完成任务后可在这里选择对比。" : "No matching results. Complete a task to compare its results here."}</p> : null}
             {visible.map((result) => {
               const selected = selectedIds.includes(result.id);
+              const history = historyDescription(result, language);
               return (
                 <button
                   type="button"
@@ -249,6 +271,7 @@ export function Compare() {
                   )}
                   <div>
                     <strong>{displayTechnicalText(result.name)}</strong>
+                    {history ? <span>{history}</span> : null}
                     <span className="mono">
                       {displayTechnicalText(result.path)}
                     </span>
@@ -293,7 +316,11 @@ export function Compare() {
               {comparison.warnings.length ? <div className="comparison-notes" role="note">
                 {comparison.warnings.map((warning, index) => <p key={index}>{comparisonNote(warning)}</p>)}
               </div> : null}
-              <div className="fairness-grid">
+              <details className="source-details">
+                <summary>{language === "zh" ? "查看比较条件" : "View comparison conditions"} · {unmatchedConditions.length
+                  ? (language === "zh" ? `${unmatchedConditions.length} 项缺失或不同` : `${unmatchedConditions.length} missing or different`)
+                  : (language === "zh" ? "已记录条件一致" : "Recorded conditions match")}</summary>
+                <div className="fairness-grid">
                 {Object.entries(comparison.fairness).map(([key, item]) => (
                   <div
                     className={
@@ -318,7 +345,8 @@ export function Compare() {
                     </details>
                   </div>
                 ))}
-              </div>
+                </div>
+              </details>
 
               {comparison.metric_ids.length ? (
                 <>
@@ -335,12 +363,15 @@ export function Compare() {
                       >
                         {comparison.metric_ids.map((item) => (
                           <option value={item} key={item}>
-                            {comparison.results.flatMap((result) => result.metrics).find((metric) => metric.id === item)?.label[language] || item}
+                            {metricLabel(item)}
                           </option>
                         ))}
                       </select>
                     </label>
                   </div>
+                  {chartMetrics.length > 0 && chartMetrics.every((metric) => metric.scoring === "pre_post_token_agreement") ? <p className="section-description">{language === "zh"
+                    ? "此指标比较更新前后的逐词预测。100% 表示预测未变，不表示参考答案正确率为 100%。"
+                    : "This metric compares token predictions before and after the update. 100% means unchanged predictions, not 100% reference-answer accuracy."}</p> : null}
                   {chartCompatible ? <figure className="comparison-chart">
                     <ResponsiveContainer width="100%" height={300}>
                       <BarChart
@@ -374,9 +405,10 @@ export function Compare() {
                           tickLine={false}
                         />
                         <Tooltip
+                          labelFormatter={(_label, payload) => payload[0]?.payload?.fullName || _label}
                           formatter={(_value, _name, item) => [
                             item.payload.formatted,
-                            metricId
+                            metricLabel(metricId)
                           ]}
                           contentStyle={{
                             background: "var(--surface-raised)",
@@ -391,7 +423,7 @@ export function Compare() {
                           maxBarSize={54}
                         >
                           {chartData.map((item) => (
-                            <Cell key={item.name} fill={item.color} />
+                            <Cell key={item.id} fill={item.color} />
                           ))}
                         </Bar>
                       </BarChart>
@@ -404,7 +436,7 @@ export function Compare() {
                         <tr>
                           <th>{t("run")}</th>
                           {comparison.metric_ids.map((item) => (
-                            <th key={item}>{comparison.results.flatMap((result) => result.metrics).find((metric) => metric.id === item)?.label[language] || item}</th>
+                            <th key={item}>{metricLabel(item)}</th>
                           ))}
                         </tr>
                       </thead>
@@ -413,6 +445,7 @@ export function Compare() {
                           <tr key={result.id}>
                             <td>
                               <strong>{displayTechnicalText(result.name)}</strong>
+                              {historyDescription(result, language) ? <p className="muted">{historyDescription(result, language)}</p> : null}
                               <StatusBadge
                                 level={result.evidence_level}
                                 compact
@@ -425,12 +458,14 @@ export function Compare() {
                               return (
                                 <td key={item}>
                                   {metric && metric.value !== null && metric.value !== undefined ? formatMetric(metric) : (language === "zh" ? "不可用" : "Unavailable")}
-                                  {metric?.unavailable_reason ? <p className="muted">{displayTechnicalText(metric.unavailable_reason)}</p> : null}
+                                  {metric?.unavailable_reason ? <p className="muted">{resultReasonText(metric.unavailable_reason, language)}</p> : null}
                                   {metric ? <details className="source-details"><summary>{language === "zh" ? "指标说明" : "Metric details"}</summary>
                                     <p>{language === "zh" ? "单位" : "Unit"}: {metric.unit || "—"}</p>
                                     <p>{language === "zh" ? "分子 / 分母" : "Numerator / denominator"}: {metric.numerator ?? "—"} / {metric.denominator ?? "—"}</p>
                                     <p>{language === "zh" ? "评分方式" : "Scoring"}: {metric.scoring || metric.measurement_kind || "—"}</p>
                                     <p>{language === "zh" ? "评测协议" : "Protocol"}: {metric.protocol_version || "—"}</p>
+                                    <p>{language === "zh" ? "评测来源 / 阶段" : "Evaluator / phase"}: {metric.evaluator || "—"} / {metric.phase || "—"}</p>
+                                    {metric.unavailable_reason ? <p>{language === "zh" ? "原始原因" : "Recorded reason"}: {metric.unavailable_reason}</p> : null}
                                     <p className="mono">{metric.source}</p>
                                   </details> : null}
                                 </td>

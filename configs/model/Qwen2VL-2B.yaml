@@ -18,6 +18,7 @@ configured_methods:
   - MMSCRUB
   - MMUnlearner
   - MMMANU
+  - MMVKD
   - MM_IKE
   - MM_LORA
   - MM_GRACE

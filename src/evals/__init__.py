@@ -33,6 +33,7 @@ from evals.inject import (
     InjectAccuracyEvaluator,
     InjectRetentionEvaluator,
 )
+from evals.wikidyk import WikiDYKEvaluator
 from evals.mm_edit import (
     MMEditGeneralizationEvaluator,
     MMEditLocalityEvaluator,
@@ -124,3 +125,4 @@ _register_evaluator(MMEditPortabilityEvaluator)
 _register_evaluator(InjectEvaluator)
 _register_evaluator(InjectAccuracyEvaluator)
 _register_evaluator(InjectRetentionEvaluator)
+_register_evaluator(WikiDYKEvaluator)
