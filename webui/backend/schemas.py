@@ -36,6 +36,7 @@ class AgentRequest(BaseModel):
     timeout: int = Field(default=600, ge=1, le=3600)
     configuration: ReviewedConfiguration | None = None
     preview_hash: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    reviewed_config_hash: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
 
     @model_validator(mode="before")
     @classmethod
@@ -59,8 +60,8 @@ class AgentRequest(BaseModel):
                 raise ValueError(
                     "Configuration sessions use the server device environment."
                 )
-        elif self.preview_hash is not None:
-            raise ValueError("preview_hash requires configuration.")
+        elif self.preview_hash is not None or self.reviewed_config_hash is not None:
+            raise ValueError("Preview and review hashes require configuration.")
         return self
 
 
@@ -94,6 +95,7 @@ class RunRequest(ComposeRequest):
         default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,95}$"
     )
     preview_hash: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    reviewed_config_hash: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
 
 
 class ReviewedConfiguration(ComposeRequest):

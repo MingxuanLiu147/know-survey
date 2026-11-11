@@ -1,0 +1,21 @@
+# Factor MEND: Mitchell et al. (ICLR 2022), native audited checkpoint container.
+# These defaults are candidates. Exact matrices and trained weights must be reviewed.
+defaults:
+  - edit/base_editor@_here_
+  - _self_
+
+handler: MENDFactorEditor
+method_args:
+  layers: [25, 26, 27]
+  inner_params: null
+  edit_lr: 1.0e-4
+  rank: 1920
+  n_hidden: 1
+  normalize: true
+  shared: true
+  cedit: 0.1
+  cloc: 1.0
+  max_length: 512
+  max_locality_samples: 1
+  edit_network_path: null
+  require_pretrained: true

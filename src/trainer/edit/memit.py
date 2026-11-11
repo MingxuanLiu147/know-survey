@@ -34,6 +34,7 @@ from trainer.edit.utils.reference import (
     ensure_reference_contexts,
     reference_stats_kwargs,
     validate_reference_profile,
+    validate_statistics_configuration,
 )
 
 logger = logging.getLogger(__name__)
@@ -47,6 +48,55 @@ def _match_weight_shape(matrix: torch.Tensor, shape: torch.Size) -> torch.Tensor
     raise ValueError(
         f"Update matrix shape {matrix.shape} does not match weight shape {shape}"
     )
+
+
+def _solve_covariance_adjusted_keys(
+    keys: torch.Tensor,
+    covariance: torch.Tensor,
+    *,
+    rewrite_name: str,
+    update_weight: float,
+    ridge: float,
+    device_policy: str,
+    factor_cache: dict,
+) -> torch.Tensor:
+    """Solve ``(weight*C + K K.T + ridge*I)^-1 K`` in the input precision.
+
+    MEMIT and AnyEdit share the fixed-C0 factorization. AnyEdit concatenates
+    target and preservation columns, then selects its target columns from the
+    result. Non-positive-definite or asymmetric C0 keeps the dense fallback.
+    """
+    cache_key = (
+        rewrite_name,
+        id(covariance),
+        covariance._version,
+        device_policy,
+        str(keys.device),
+        keys.dtype,
+        float(update_weight),
+        float(ridge),
+    )
+    factor = factor_cache.get(cache_key)
+    if factor is None:
+        base = update_weight * covariance.to(device=keys.device, dtype=keys.dtype)
+        base.diagonal().add_(ridge)
+        if not torch.allclose(base, base.T, rtol=1e-5, atol=1e-7):
+            # Cholesky reads one triangle. Do not silently symmetrize an
+            # external covariance that the old direct solver accepted.
+            return torch.linalg.solve(base + keys @ keys.T, keys)
+        factor, info = torch.linalg.cholesky_ex(base)
+        if info.item() != 0:
+            # A singular C0 may become invertible only after K K^T. Keep
+            # the original solve; never change ridge/precision silently.
+            return torch.linalg.solve(base + keys @ keys.T, keys)
+        factor_cache[cache_key] = factor.cpu()
+    else:
+        factor = factor.to(keys.device)
+    base_keys = torch.cholesky_solve(keys, factor)
+    small = keys.T @ base_keys
+    small.diagonal().add_(1)
+    # Woodbury: (A + K K^T)^-1 K = A^-1 K (I + K^T A^-1 K)^-1.
+    return torch.linalg.solve(small.T, base_keys.T).T
 
 
 class MEMITEditor(EditTrainer):
@@ -79,12 +129,20 @@ class MEMITEditor(EditTrainer):
         lm_head_module: str = "lm_head",
         ln_f_module: str = "model.norm",
         mom2_dataset_config: str | None = None,
+        mom2_data_path: str | None = None,
         mom2_sample_seed: int = 1,
         mom2_batch_tokens: int | None = None,
         mom2_max_length: int | None = None,
+        mom2_attention_policy: str = "model_default",
+        mom2_query_chunk_size: int = 256,
+        mom2_placement_policy: str = "model_default",
+        mom2_require_cached: bool = False,
+        linear_algebra_device: str = "model",
         *args,
         **kwargs,
     ):
+        if linear_algebra_device not in {"model", "cpu"}:
+            raise ValueError("linear_algebra_device must be 'model' or 'cpu'")
         layers = [4, 5, 6, 7, 8] if layers is None else layers
         super().__init__(layers=layers, *args, **kwargs)
 
@@ -122,10 +180,17 @@ class MEMITEditor(EditTrainer):
             else None
         )
         self.mom2_sample_seed = mom2_sample_seed
+        self.mom2_data_path = mom2_data_path
         self.mom2_batch_tokens = mom2_batch_tokens
         self.mom2_max_length = mom2_max_length
+        self.mom2_attention_policy = mom2_attention_policy
+        self.mom2_query_chunk_size = mom2_query_chunk_size
+        self.mom2_placement_policy = mom2_placement_policy
+        self.mom2_require_cached = mom2_require_cached
+        self.linear_algebra_device = linear_algebra_device
         validate_reference_profile(self, "MEMIT")
         self._cov_cache: Dict[str, torch.Tensor] = {}
+        self._cov_factor_cache: Dict[tuple, torch.Tensor] = {}
 
     def edit(
         self, requests: Union[EditRequest, List[EditRequest]], **kwargs
@@ -138,6 +203,7 @@ class MEMITEditor(EditTrainer):
             "edited_count": 0,
             "metrics": {},
             "layers_edited": [],
+            "linear_algebra_device": self.linear_algebra_device,
         }
 
         transaction_state: Optional[Dict[str, Any]] = None
@@ -178,6 +244,7 @@ class MEMITEditor(EditTrainer):
             # Covariance entries are immutable after insertion, so a shallow
             # mapping snapshot avoids duplicating large statistics tensors.
             "cov_cache": dict(self._cov_cache),
+            "cov_factor_cache": dict(self._cov_factor_cache),
             "edit_history": list(self.edit_history),
         }
 
@@ -191,6 +258,7 @@ class MEMITEditor(EditTrainer):
                     value.to(device=parameter.device, dtype=parameter.dtype)
                 )
         self._cov_cache = state["cov_cache"]
+        self._cov_factor_cache = state["cov_factor_cache"]
         self.edit_history = state["edit_history"]
 
     def _apply_memit_edit(
@@ -219,7 +287,7 @@ class MEMITEditor(EditTrainer):
         z_layer = layer_indices[-1]
         req_dicts = [
             {
-                "prompt": request.prompt,
+                "prompt": request.prompt_template or request.prompt,
                 "subject": request.subject,
                 "target_new": request.target_new,
             }
@@ -255,7 +323,7 @@ class MEMITEditor(EditTrainer):
             z_list.append(z)
         zs = torch.stack(z_list, dim=0)
 
-        prompts = [r.prompt for r in requests]
+        prompts = [r.prompt_template or r.prompt for r in requests]
         subjects = [r.subject for r in requests]
 
         for i, layer_idx in enumerate(layer_indices):
@@ -288,7 +356,12 @@ class MEMITEditor(EditTrainer):
                 if self.implementation_variant == REFERENCE_VARIANT
                 else torch.float32
             )
-            layer_ks = layer_keys.T.to(dtype)  # (input_dim, batch)
+            solve_device = (
+                torch.device("cpu")
+                if self.linear_algebra_device == "cpu"
+                else layer_keys.device
+            )
+            layer_ks = layer_keys.T.to(device=solve_device, dtype=dtype)
             resid = targets.to(device=layer_ks.device, dtype=dtype) / max(
                 len(layer_indices) - i, 1
             )
@@ -301,10 +374,17 @@ class MEMITEditor(EditTrainer):
             upd_matrix = _match_weight_shape(upd_matrix, weights[weight_name].shape)
 
             with torch.no_grad():
-                weights[weight_name][...] = weights_copy[weight_name] + upd_matrix.to(
-                    device=weights[weight_name].device,
-                    dtype=weights[weight_name].dtype,
-                )
+                # Upstream casts the FP64 solve result to FP32 for addition,
+                # then rounds the sum once when storing the model weight.
+                updated_weight = (
+                    weights_copy[weight_name]
+                    + upd_matrix.to(
+                        device=weights[weight_name].device, dtype=torch.float32
+                    )
+                ).to(weights[weight_name].dtype)
+                if not torch.isfinite(updated_weight).all():
+                    raise ValueError(f"MEMIT weight overflow at {rewrite_name}")
+                weights[weight_name].copy_(updated_weight)
 
             del layer_ks, adjusted_keys, cur_zs, targets, upd_matrix
             if torch.cuda.is_available():
@@ -320,6 +400,8 @@ class MEMITEditor(EditTrainer):
         self, keys: torch.Tensor, rewrite_name: str
     ) -> torch.Tensor:
         """Return ``(lambda*C + K K^T)^-1 K`` without a cubic identity solve."""
+        if self.linear_algebra_device == "cpu":
+            keys = keys.cpu()
         if not self.mom2_adjustment:
             scale = max(float(self.mom2_update_weight), self.covariance_ridge)
             gram = keys.T @ keys
@@ -331,15 +413,19 @@ class MEMITEditor(EditTrainer):
                 torch.eye(system.shape[0], device=system.device, dtype=system.dtype),
             )
 
-        covariance = self._get_covariance(rewrite_name).to(
-            device=keys.device, dtype=keys.dtype
+        return _solve_covariance_adjusted_keys(
+            keys,
+            self._get_covariance(rewrite_name),
+            rewrite_name=rewrite_name,
+            update_weight=self.mom2_update_weight,
+            ridge=self.covariance_ridge,
+            device_policy=self.linear_algebra_device,
+            factor_cache=self._cov_factor_cache,
         )
-        system = self.mom2_update_weight * covariance + keys @ keys.T
-        system.diagonal().add_(self.covariance_ridge)
-        return torch.linalg.solve(system, keys)
 
     def _get_covariance(self, rewrite_name: str) -> torch.Tensor:
         """Return fixed preservation statistics for this rewrite module."""
+        validate_statistics_configuration(self)
         cache_key = rewrite_name
         if cache_key not in self._cov_cache:
             stats_kwargs = reference_stats_kwargs(self)

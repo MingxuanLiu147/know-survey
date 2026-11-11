@@ -1,0 +1,77 @@
+name: Build release package and image
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11.15"
+      - name: Build wheel and source package
+        run: |
+          sed '/^-e /d' requirements-know.lock > /tmp/build-constraints.txt
+          python -m pip install -c /tmp/build-constraints.txt build setuptools wheel
+          python -m build --no-isolation
+          cp requirements-know.lock dist/
+          cd dist
+          sha256sum *.whl *.tar.gz *.lock > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: know-surgery-package
+          path: dist/
+          if-no-files-found: error
+
+  image:
+    needs: package
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+      - name: Prepare disposable runner disk space
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet
+      - name: Build, verify and push image
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/know-surgery"
+          VERSION="sha-${GITHUB_SHA:0:12}"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          docker build --label "org.opencontainers.image.revision=$GITHUB_SHA" -t "$IMAGE:$VERSION" .
+          docker run --rm --network none "$IMAGE:$VERSION" know-surgery --help
+          docker run --rm --network none "$IMAGE:$VERSION" know-surgery operation=inject experiment=inject/wikidyk/lora --cfg job
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker push "$IMAGE:$VERSION"
+          printf 'Image: `%s:%s`\n' "$IMAGE" "$VERSION" >> "$GITHUB_STEP_SUMMARY"
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [package, image]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v5
+        with:
+          name: know-surgery-package
+          path: dist
+      - name: Publish versioned downloads
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* --verify-tag \
+            --title "Know-Surgery ${GITHUB_REF_NAME#v}" --generate-notes

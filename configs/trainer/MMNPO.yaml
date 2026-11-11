@@ -14,6 +14,10 @@ method_args:
   # probability-ratio objective, evaluated in exact token chunks.
   objective_mode: auto
   probability_chunk_size: 8
+  # The original-NPO recipe selects sequence_log_ratio + NLL (NPO+RT).
+  # Keep the existing MIP/CLEAR pure-NPO recipes unchanged by default.
+  retain_loss_type: none
+  retain_loss_weight: 1.0
   oracle_model_path: null
   # Set e.g. cuda:1 when the frozen 7B oracle cannot share a 24 GB card.
   oracle_device: null

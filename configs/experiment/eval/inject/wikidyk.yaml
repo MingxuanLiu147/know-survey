@@ -1,0 +1,26 @@
+# @package _global_
+# Paper protocol: greedy decoding, 100 output tokens, identical Original reference.
+defaults:
+- override /model: Qwen2.5-1.5B
+- override /eval: wikidyk
+- _self_
+inject_model_path: ???
+seed: 42
+model:
+  model_args:
+    pretrained_model_name_or_path: ${inject_model_path}
+    attn_implementation: sdpa
+    torch_dtype: bfloat16
+    device_map: cuda
+  tokenizer_args:
+    pretrained_model_name_or_path: ${oc.env:WIKIDYK_BASE_MODEL,Qwen/Qwen2.5-1.5B}
+eval:
+  wikidyk:
+    overwrite: true
+    loreft_position: last_prompt_token
+    args:
+      batch_size: 128
+      max_length: 4096
+      max_new_tokens: 100
+      do_sample: false
+    eval_data_path: ${oc.env:WIKIDYK_EVAL_PATH,data/inject/wikidyk/eval.json}

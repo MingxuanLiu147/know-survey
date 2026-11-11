@@ -1,0 +1,61 @@
+# @package _global_
+# Same QA-only data, token-normalized loss and effective batch as Full FT.
+defaults:
+- /experiment/inject/wikidyk/default
+- override /trainer: inject/LoReFT
+- override /collator: DataCollatorForReFTDataset
+- _self_
+task_name: wikidyk_loreft
+model:
+  model_args:
+    torch_dtype: bfloat16
+trainer:
+  args:
+    per_device_train_batch_size: 256
+    gradient_accumulation_steps: 1
+    learning_rate: 0.0002
+  method_args:
+    layer:
+    - 0
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+    - 6
+    - 7
+    - 8
+    - 9
+    - 10
+    - 11
+    - 12
+    - 13
+    - 14
+    - 15
+    - 16
+    - 17
+    - 18
+    - 19
+    - 20
+    - 21
+    - 22
+    - 23
+    - 24
+    - 25
+    - 26
+    - 27
+    component: block_output
+    low_rank_dimension: 8
+    trainable_dtype: float32
+    intervene_on_prompt: true
+    last_k_prompt_tokens: 1
+    allow_legacy_ntp: false
+collator:
+  args:
+    padding_side: left
+    num_interventions: 28
+    last_k_prompt_tokens: 1
+    allow_legacy_ntp: false
+eval:
+  wikidyk:
+    loreft_position: last_prompt_token

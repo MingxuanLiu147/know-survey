@@ -30,6 +30,8 @@ method_args:
   ln_f_module: "model.norm"
   stats_dir: "data/stats"
   mom2_dataset: "wikipedia"
+  mom2_data_path: null  # Optional local corpus; a missing explicit path is an error.
+  mom2_max_length: null  # Statistics cap, separate from editing-data max_length.
   mom2_n_samples: 100000
   mom2_dtype: "float32"
   projection_path: null

@@ -35,6 +35,7 @@ from trainer.edit.utils.reference import (
     ensure_reference_contexts,
     reference_stats_kwargs,
     validate_reference_profile,
+    validate_statistics_configuration,
 )
 
 logger = logging.getLogger(__name__)
@@ -82,11 +83,20 @@ class AlphaEditEditor(RankEditStateMixin, EditTrainer):
         projection_path: Optional[str] = None,
         save_projection: bool = True,
         mom2_dataset_config: str | None = None,
+        mom2_data_path: str | None = None,
         mom2_sample_seed: int = 1,
         mom2_batch_tokens: int | None = None,
+        mom2_max_length: int | None = None,
+        mom2_attention_policy: str = "model_default",
+        mom2_query_chunk_size: int = 256,
+        mom2_placement_policy: str = "model_default",
+        mom2_require_cached: bool = False,
+        linear_algebra_device: str = "model",
         *args,
         **kwargs,
     ):
+        if linear_algebra_device not in {"model", "cpu"}:
+            raise ValueError("linear_algebra_device must be 'model' or 'cpu'")
         layers = [4, 5, 6, 7, 8] if layers is None else layers
         super().__init__(layers=layers, *args, **kwargs)
 
@@ -124,13 +134,34 @@ class AlphaEditEditor(RankEditStateMixin, EditTrainer):
             else None
         )
         self.mom2_sample_seed = mom2_sample_seed
+        self.mom2_data_path = mom2_data_path
         self.mom2_batch_tokens = mom2_batch_tokens
+        self.mom2_max_length = mom2_max_length
+        self.mom2_attention_policy = mom2_attention_policy
+        self.mom2_query_chunk_size = mom2_query_chunk_size
+        self.mom2_placement_policy = mom2_placement_policy
+        self.mom2_require_cached = mom2_require_cached
+        self.linear_algebra_device = linear_algebra_device
         validate_reference_profile(self, "AlphaEdit")
 
         self._cov_cache: Dict[str, torch.Tensor] = {}
         self._projection_cache: Dict[int, torch.Tensor] = {}
         # K_p K_p^T from edits completed by this editor instance.
         self._sequential_key_cache: Dict[int, torch.Tensor] = {}
+
+    def _rank_config(self) -> dict:
+        return {
+            **super()._rank_config(),
+            "linear_algebra_device": self.linear_algebra_device,
+        }
+
+    def _projection_metadata(self) -> dict:
+        # CPU and accelerator SVD kernels may round threshold-adjacent values
+        # differently. Do not silently reuse a projection from another policy.
+        return {
+            **super()._projection_metadata(),
+            "linear_algebra_device": self.linear_algebra_device,
+        }
 
     def edit(
         self, requests: Union[EditRequest, List[EditRequest]], **kwargs
@@ -145,6 +176,7 @@ class AlphaEditEditor(RankEditStateMixin, EditTrainer):
                 "edited_count": 0,
                 "metrics": {},
                 "layers_edited": [],
+                "linear_algebra_device": self.linear_algebra_device,
             }
 
         results: Dict[str, Any] = {
@@ -152,6 +184,7 @@ class AlphaEditEditor(RankEditStateMixin, EditTrainer):
             "edited_count": 0,
             "metrics": {},
             "layers_edited": [],
+            "linear_algebra_device": self.linear_algebra_device,
         }
         transaction_state: Optional[Dict[str, Any]] = None
         try:
@@ -214,6 +247,7 @@ class AlphaEditEditor(RankEditStateMixin, EditTrainer):
         self._sequential_key_cache.clear()
 
     def _get_covariance(self, layer_name: str) -> torch.Tensor:
+        validate_statistics_configuration(self)
         cache_key = layer_name
         if cache_key not in self._cov_cache:
             stats = layer_stats(
@@ -248,15 +282,20 @@ class AlphaEditEditor(RankEditStateMixin, EditTrainer):
         threshold span the null space.  The projection is fixed for all edits
         and may be persisted because it is independent of edit requests.
         """
+        validate_statistics_configuration(self)
         self._load_projection_file()
         computed = False
         for layer_idx in layer_indices:
             if layer_idx in self._projection_cache:
                 continue
             layer_name = self.rewrite_module_tmp.format(layer_idx)
-            projection_device = get_parameter(self.model, f"{layer_name}.weight").device
+            projection_device = (
+                torch.device("cpu")
+                if self.linear_algebra_device == "cpu"
+                else get_parameter(self.model, f"{layer_name}.weight").device
+            )
             covariance = self._get_covariance(layer_name).to(projection_device)
-            eigenvectors, singular_values, _ = torch.linalg.svd(
+            eigenvectors, singular_values, right_vectors = torch.linalg.svd(
                 covariance, full_matrices=False
             )
             null_columns = singular_values < self.nullspace_threshold
@@ -271,7 +310,8 @@ class AlphaEditEditor(RankEditStateMixin, EditTrainer):
                 covariance.shape[0],
                 self.nullspace_threshold,
             )
-            del covariance, eigenvectors, singular_values, null_basis, projection
+            del covariance, eigenvectors, singular_values, right_vectors
+            del null_basis, projection
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
         if computed:
@@ -306,7 +346,7 @@ class AlphaEditEditor(RankEditStateMixin, EditTrainer):
                     model,
                     tok,
                     {
-                        "prompt": request.prompt,
+                        "prompt": request.prompt_template or request.prompt,
                         "subject": request.subject,
                         "target_new": request.target_new,
                     },
@@ -332,7 +372,7 @@ class AlphaEditEditor(RankEditStateMixin, EditTrainer):
                 )
             )
         desired_zs = torch.stack(target_values, dim=0)
-        prompts = [request.prompt for request in requests]
+        prompts = [request.prompt_template or request.prompt for request in requests]
         subjects = [request.subject for request in requests]
 
         for position, layer_idx in enumerate(layer_indices):
@@ -358,7 +398,12 @@ class AlphaEditEditor(RankEditStateMixin, EditTrainer):
             residual = desired_zs.to(current_zs.device) - current_zs
             residual = residual.float() / max(len(layer_indices) - position, 1)
 
-            keys = layer_keys.T.float()
+            device = (
+                torch.device("cpu")
+                if self.linear_algebra_device == "cpu"
+                else layer_keys.device
+            )
+            keys = layer_keys.T.to(device=device, dtype=torch.float32)
             device = keys.device
             projection = projections[layer_idx].to(device)
             prior_gram = self._sequential_key_cache.get(layer_idx)
@@ -385,10 +430,14 @@ class AlphaEditEditor(RankEditStateMixin, EditTrainer):
             weight_name = f"{rewrite_name}.weight"
             update = _match_weight_shape(update, weights[weight_name].shape)
             with torch.no_grad():
-                weights[weight_name][...] = weights_copy[weight_name] + update.to(
-                    device=weights[weight_name].device,
-                    dtype=weights[weight_name].dtype,
-                )
+                # Preserve the solve precision until after adding the base weight.
+                updated_weight = (
+                    weights_copy[weight_name]
+                    + update.to(device=weights[weight_name].device)
+                ).to(weights[weight_name].dtype)
+                if not torch.isfinite(updated_weight).all():
+                    raise ValueError(f"AlphaEdit weight overflow at {rewrite_name}")
+                weights[weight_name].copy_(updated_weight)
 
         # The keys produced by the edited model become K_p in the next call,
         # matching the authors' sequential-edit cache.

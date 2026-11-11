@@ -3,6 +3,9 @@ root_dir: .
 
 # path to data directory
 data_dir: ${paths.root_dir}/data/
+# Optional external dataset roots. Null uses KNOW_SURGERY_DATA_ROOTS; no private
+# machine path is embedded in distributed experiment configurations.
+data_roots: null
 
 # path to dataset configs
 datasets: ${paths.root_dir}/configs/data/datasets

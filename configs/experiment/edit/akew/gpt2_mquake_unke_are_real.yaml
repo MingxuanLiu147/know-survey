@@ -1,0 +1,37 @@
+# @package _global_
+# RTX-3090 engineering smoke: GPT-2 + official AKEW-MQuAKE + UnKE_ARE.
+
+defaults:
+  - override /model: gpt2
+  - override /trainer: edit/AnyEdit
+  - override /data: edit
+  - override /data/datasets@data.edit: AKEW_mquake_unstructured_edit
+  - override /eval: edit
+
+task_name: real_gpt2_akew_mquake_unke_are
+max_edits: 1
+save_edited_model: false
+
+trainer:
+  method_args:
+    layers: [5]
+    strategy: unke_are
+    window_size: 40
+    overlap: 0
+    v_num_grad_steps: 2
+    rewrite_module_tmp: "transformer.h.{}.mlp.c_proj"
+    layer_module_tmp: "transformer.h.{}"
+    ft_lr: 2.0e-4
+    ft_epochs: 2
+    preservation_sample_size: 2
+    preservation_max_length: 64
+
+data:
+  edit:
+    AKEW_mquake_unstructured_edit:
+      handler: AKEWDataset
+      args:
+        subset: mquake-cf
+        target_mode: unstructured
+        max_length: 1024
+        apply_chat_template: false

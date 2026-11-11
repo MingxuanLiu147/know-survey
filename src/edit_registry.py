@@ -371,6 +371,7 @@ def _validate_evidence(
 
     checkpoint_keys = {
         "MENDEditor": "edit_network_path",
+        "MENDFactorEditor": "edit_network_path",
         "MALMENEditor": "archive",
         "InstructEditEditor": "edit_network_path",
     }

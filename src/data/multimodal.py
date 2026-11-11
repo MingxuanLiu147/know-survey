@@ -64,6 +64,21 @@ def _mllmu_text_question(question: str, biography) -> str:
     return anchored
 
 
+def _mllmu_mip_named_question(question: str, biography) -> str:
+    """Render MIP-Editor's named training prompt in either input modality.
+
+    Matches the released ``MMLMU_Dataset.flatten_dataset`` replacements.
+    Biography lookup is by profile ID before this function, never row order.
+    """
+    name = _mllmu_profile_name(biography)
+    if not name:
+        raise ValueError("MLLMU mip_named questions require a biography Name")
+    question = question.replace("person", name).replace("individual", name)
+    if name not in question:
+        question += " " + name
+    return question
+
+
 def load_mllmu_frame(path_or_dir: str) -> pd.DataFrame:
     """Load one parquet file or a parquet directory into a single dataframe."""
     if not os.path.exists(path_or_dir):
@@ -89,15 +104,30 @@ def _maybe_limit_dataset(dataset: Dataset, max_samples: int | None) -> Dataset:
 class MLLMUDataset(Dataset):
     """MLLMU-Bench 数据集，从 Parquet 读取图像+QA 对并展平为单条样本。"""
 
-    def __init__(self, parquet_path: str, *, text_only: bool = False):
+    def __init__(
+        self,
+        parquet_path: str | pd.DataFrame,
+        *,
+        text_only: bool = False,
+        question_mode: str = "original",
+    ):
         super().__init__()
         self.text_only = text_only
-        df = load_mllmu_frame(parquet_path)
+        if question_mode not in {"original", "mip_named"}:
+            raise ValueError(f"Unknown MLLMU question_mode: {question_mode}")
+        self.question_mode = question_mode
+        df = (
+            parquet_path
+            if isinstance(parquet_path, pd.DataFrame)
+            else load_mllmu_frame(parquet_path)
+        )
         self.samples = self._flatten(df)
         logger.info(
             "MLLMUDataset loaded %d samples from %s (text_only=%s)",
             len(self.samples),
-            parquet_path,
+            "selected training rows"
+            if isinstance(parquet_path, pd.DataFrame)
+            else parquet_path,
             text_only,
         )
 
@@ -123,28 +153,34 @@ class MLLMUDataset(Dataset):
                 for qa in metadata:
                     q, a = qa.get("Question", ""), qa.get("Answer", "")
                     if q and a:
+                        if self.question_mode == "mip_named":
+                            q = _mllmu_mip_named_question(q, row.get("biography"))
                         data.append(
                             {
                                 "image": image,
                                 "question": q,
-                                "text_question": _mllmu_text_question(
-                                    q, row.get("biography")
-                                ),
+                                "text_question": q
+                                if self.question_mode == "mip_named"
+                                else _mllmu_text_question(q, row.get("biography")),
                                 "answer": a,
+                                "profile_id": str(row.get("ID", "")),
                             }
                         )
             else:
                 q = row.get("question", "")
                 a = row.get("answer", "")
                 if q and a:
+                    if self.question_mode == "mip_named":
+                        q = _mllmu_mip_named_question(q, row.get("biography"))
                     data.append(
                         {
                             "image": image,
                             "question": q,
-                            "text_question": _mllmu_text_question(
-                                q, row.get("biography")
-                            ),
+                            "text_question": q
+                            if self.question_mode == "mip_named"
+                            else _mllmu_text_question(q, row.get("biography")),
                             "answer": a,
+                            "profile_id": str(row.get("ID", "")),
                         }
                     )
         return data
@@ -553,6 +589,62 @@ def _resolve_mllmu_path(data_cfg: DictConfig, split_name: str) -> str:
     return mapping[split_name]
 
 
+def _mllmu_training_frames(data_cfg: DictConfig) -> dict[str, pd.DataFrame] | None:
+    """Select all training QAs by profile ID, as in MIP-Editor's data loader.
+
+    Split parquet files define membership only. Their single biography QA and
+    evaluation questions never supply training targets in ``ft_data`` mode.
+    Legacy resolved configs without this option keep their original behavior.
+    """
+    source = str(data_cfg.get("training_source", "profile_qa"))
+    if source == "profile_qa":
+        return None
+    if source != "ft_data":
+        raise ValueError(f"Unknown MLLMU training_source: {source}")
+    train_path = data_cfg.get("training_parquet") or os.path.join(
+        str(data_cfg.data_dir), "ft_Data", "train-00000-of-00001.parquet"
+    )
+    frames = {
+        "full": load_mllmu_frame(str(train_path)),
+        "forget": load_mllmu_frame(_resolve_mllmu_path(data_cfg, "forget")),
+        "retain": load_mllmu_frame(_resolve_mllmu_path(data_cfg, "retain")),
+    }
+    ids = {}
+    for name, frame in frames.items():
+        if "ID" not in frame or frame["ID"].isna().any():
+            raise ValueError(f"MLLMU {name} requires non-null profile IDs")
+        frame["ID"] = frame["ID"].astype(str).str.strip()
+        if frame["ID"].eq("").any() or frame["ID"].duplicated().any():
+            raise ValueError(f"MLLMU {name} requires unique, nonempty profile IDs")
+        ids[name] = set(frame["ID"])
+    if "metadata" not in frames["full"]:
+        raise ValueError("MLLMU ft_data requires metadata containing training QAs")
+    if ids["forget"] & ids["retain"]:
+        raise ValueError("MLLMU forget and retain profile IDs overlap")
+    if ids["forget"] | ids["retain"] != ids["full"]:
+        raise ValueError("MLLMU forget/retain IDs must partition the ft_data profiles")
+    for split in ("forget", "retain"):
+        membership = frames[split]
+        selected = frames["full"].loc[frames["full"]["ID"].isin(ids[split])].copy()
+        # Names provide MANU's text-only view; join by ID, never by row position.
+        if "biography" in membership:
+            selected["biography"] = selected["ID"].map(
+                membership.set_index("ID")["biography"]
+            )
+        frames[split] = selected
+    # Full-data reference training needs the same named prompts as both splits.
+    # Only identity metadata is joined; no evaluation question/answer is used.
+    if str(data_cfg.get("question_mode", "original")) == "mip_named":
+        biographies = pd.concat([frames["forget"], frames["retain"]])
+        if "biography" not in biographies:
+            raise ValueError("MLLMU mip_named questions require biography names")
+        frames["full"]["biography"] = frames["full"]["ID"].map(
+            biographies.set_index("ID")["biography"]
+        )
+    frames["retain_shared"] = frames["retain"]
+    return frames
+
+
 def get_mm_data(data_cfg: DictConfig, processor):
     """根据 Hydra 数据配置构建训练 DataLoader。
 
@@ -567,58 +659,75 @@ def get_mm_data(data_cfg: DictConfig, processor):
     max_samples = data_cfg.get("max_samples")
     max_samples = int(max_samples) if max_samples is not None else None
     paired_modalities = bool(data_cfg.get("paired_modalities", False))
+    question_mode = str(data_cfg.get("question_mode", "original"))
+    shuffle = bool(data_cfg.get("shuffle", True))
+    training_frames = _mllmu_training_frames(data_cfg)
+
+    def training_dataset(source, *, text_only=False):
+        if training_frames is not None:
+            if source not in training_frames:
+                raise ValueError(f"Unsupported ft_data reference source: {source}")
+            source_data = training_frames[source]
+        else:
+            source_data = _resolve_mllmu_path(data_cfg, source)
+        return MLLMUDataset(
+            source_data, text_only=text_only, question_mode=question_mode
+        )
 
     if mode == "reference":
         source = str(data_cfg.get("reference_source", "retain")).lower()
         text_only = bool(data_cfg.get("reference_text_only", False))
-        dataset = MLLMUDataset(
-            _resolve_mllmu_path(data_cfg, source), text_only=text_only
-        )
+        dataset = training_dataset(source, text_only=text_only)
         dataset = _maybe_limit_dataset(dataset, max_samples)
         return _make_loader(
             dataset,
             processor,
             batch_size=batch_size,
             ans_only=ans_only,
-            shuffle=True,
+            shuffle=shuffle,
             paired_modalities=paired_modalities,
         ), None
 
-    forget_dataset = MLLMUDataset(_resolve_mllmu_path(data_cfg, "forget"))
+    forget_dataset = training_dataset("forget")
     forget_dataset = _maybe_limit_dataset(forget_dataset, max_samples)
     forget_loader = _make_loader(
         forget_dataset,
         processor,
         batch_size=batch_size,
         ans_only=ans_only,
-        shuffle=True,
+        shuffle=shuffle,
         paired_modalities=paired_modalities,
     )
 
     retain_loader = None
     retain_path = _resolve_mllmu_path(data_cfg, "retain")
-    if os.path.exists(retain_path):
-        retain_dataset = MLLMUDataset(retain_path)
+    if training_frames is not None or os.path.exists(retain_path):
+        retain_dataset = training_dataset("retain")
         retain_dataset = _maybe_limit_dataset(retain_dataset, max_samples)
         retain_loader = _make_loader(
             retain_dataset,
             processor,
             batch_size=batch_size,
             ans_only=ans_only,
-            shuffle=True,
+            shuffle=shuffle,
             paired_modalities=paired_modalities,
         )
 
     full_parquet = data_cfg.get("full_set_parquet", None)
-    if full_parquet and not retain_loader and os.path.exists(full_parquet):
-        retain_dataset = MLLMUDataset(str(full_parquet))
+    if (
+        training_frames is None
+        and full_parquet
+        and not retain_loader
+        and os.path.exists(full_parquet)
+    ):
+        retain_dataset = MLLMUDataset(str(full_parquet), question_mode=question_mode)
         retain_dataset = _maybe_limit_dataset(retain_dataset, max_samples)
         retain_loader = _make_loader(
             retain_dataset,
             processor,
             batch_size=batch_size,
             ans_only=ans_only,
-            shuffle=True,
+            shuffle=shuffle,
             paired_modalities=paired_modalities,
         )
 
@@ -631,17 +740,48 @@ def get_mm_mask_data(data_cfg: DictConfig, processor) -> Dict[str, DataLoader]:
     ans_only = bool(data_cfg.get("mask_ans_only", True))
     max_samples = data_cfg.get("mask_max_samples")
     max_samples = int(max_samples) if max_samples is not None else None
+    question_mode = str(data_cfg.get("question_mode", "original"))
 
+    training_frames = _mllmu_training_frames(data_cfg)
     forget_dataset = _maybe_limit_dataset(
-        MLLMUDataset(_resolve_mllmu_path(data_cfg, "forget")), max_samples
+        MLLMUDataset(
+            training_frames["forget"]
+            if training_frames is not None
+            else _resolve_mllmu_path(data_cfg, "forget"),
+            question_mode=question_mode,
+        ),
+        max_samples,
     )
     retain_dataset = _maybe_limit_dataset(
-        MLLMUDataset(_resolve_mllmu_path(data_cfg, "retain")), max_samples
+        MLLMUDataset(
+            training_frames["retain"]
+            if training_frames is not None
+            else _resolve_mllmu_path(data_cfg, "retain"),
+            question_mode=question_mode,
+        ),
+        max_samples,
     )
-    full_text_dataset = MLLMUTextKnowledgeDataset(
-        _resolve_mllmu_path(data_cfg, "full"),
-        max_samples=max_samples,
-    )
+    if training_frames is not None:
+        # The evaluation Full_Set contains classification answers. In ft_data
+        # mode the language mask must see only text views of the training QA.
+        text_frame = pd.concat(
+            [training_frames["forget"], training_frames["retain"]], ignore_index=True
+        )
+        full_text_dataset = MLLMUDataset(
+            text_frame, text_only=True, question_mode=question_mode
+        )
+        for sample in full_text_dataset.samples:
+            sample["question"] = sample["text_question"]
+        full_text_dataset = _maybe_limit_dataset(full_text_dataset, max_samples)
+    else:
+        logger.warning(
+            "Legacy MMUnlearner profile_qa mask uses Full_Set evaluation labels; "
+            "choose training_source=ft_data for train-only mask calibration."
+        )
+        full_text_dataset = MLLMUTextKnowledgeDataset(
+            _resolve_mllmu_path(data_cfg, "full"),
+            max_samples=max_samples,
+        )
 
     vision_preserve_dataset = retain_dataset
     language_preserve_dataset = ConcatDataset([full_text_dataset, retain_dataset])

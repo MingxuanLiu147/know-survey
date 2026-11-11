@@ -7,6 +7,17 @@ built React interface. Keep model weights, datasets and run outputs in mounted
 folders. GPU execution requires a compatible host NVIDIA driver and NVIDIA
 Container Toolkit; configuration previews can run without a GPU.
 
+## Versioned downloads
+
+The `v0.2.0` release workflow builds a wheel, source package, dependency lock and
+SHA256 checksums, and publishes the container as
+`ghcr.io/mingxuanliu147/know-surgery:0.2.0`. Check the successful
+[release workflow](https://github.com/MingxuanLiu147/know-survey/actions/workflows/release.yml)
+before using that tag; pushing source code alone does not publish an image.
+The workflow uses GitHub's built-in token, with no server credentials in the image.
+The full environment targets Linux x86-64 with NVIDIA CUDA. CPU-only machines can
+preview configurations, but the full GPU lock is not a macOS environment.
+
 ## Declared environment
 
 These are the defaults in the [Dockerfile](../Dockerfile), not versions measured
@@ -18,12 +29,12 @@ revision.
 | Runtime base | `nvidia/cuda:12.1.1-devel-ubuntu22.04` |
 | Ubuntu | 22.04 |
 | CUDA toolkit | 12.1.1 |
-| Python | 3.11.13 |
-| uv | 0.8.22 |
+| Python | 3.11.15 |
+| uv | 0.13.7 |
 | Frontend build stage | `node:22.18.0-bookworm-slim` |
 | Node.js | 22.18.0 |
 
-Both base images are also pinned by SHA-256 digest in the Dockerfile. The Node
+Both base images are pinned by SHA-256 digest; the uv archive is checksum-verified. The Node
 stage builds the frontend; Node is not installed in the final runtime stage.
 
 The [dependency lock](../requirements-know.lock) fixes these main library versions:
@@ -48,10 +59,10 @@ diagnosing compatibility.
 From the repository root:
 
 ```bash
-docker build --tag know-surgery:local .
-docker run --rm --network none know-surgery:local know-surgery --help
-docker run --rm --network none know-surgery:local \
-  know-surgery operation=edit experiment=edit/smoke/ft_counterfact --cfg job
+docker build --tag know-surgery:0.2.0 .
+docker run --rm --network none know-surgery:0.2.0 know-surgery --help
+docker run --rm --network none know-surgery:0.2.0 \
+  know-surgery operation=edit experiment=edit/counterfact/ft --cfg job
 ```
 
 The Dockerfile builds the frontend with Node and installs Python 3.11 and the
@@ -61,9 +72,12 @@ cache; the image does not contain model weights. Its default command opens a
 shell. The source workbench is `/workspace/know-surgery`.
 
 Optional build arguments are `BASE_IMAGE`, `NODE_IMAGE`, `UV_VERSION` and
-`PYTHON_VERSION`. Changing them changes the environment and may require checking
-model and CUDA compatibility again. The build rejects restricted implementation
-modules and `.dockerignore` excludes local caches, datasets, outputs and secrets.
+`PYTHON_VERSION` and `UV_SHA256`. Changing them changes the environment and may require checking
+model and CUDA compatibility again. `.dockerignore` excludes local caches,
+datasets, outputs, secrets and the restricted implementation modules
+`unke_editor.py`, `preservation.py` and `research_unke_backend.py`. The Dockerfile
+and package build retain checks that reject these modules if they enter the
+source being distributed.
 
 ## Local environment with uv
 
@@ -71,18 +85,19 @@ modules and `.dockerignore` excludes local caches, datasets, outputs and secrets
 [`requirements-know.in`](../requirements-know.in). This repository has no
 `uv.lock`; use `uv pip`, rather than `uv sync`, for this workflow.
 
-With uv available, run from the repository root:
+Use uv 0.13.7 ([official release](https://github.com/astral-sh/uv/releases/tag/0.13.7)).
+Run from the repository root:
 
 ```bash
-uv python install 3.11.13
-uv venv --python 3.11.13 .venv
+uv python install 3.11.15
+uv venv --python 3.11.15 .venv
 uv pip install --python .venv/bin/python --requirement requirements-know.lock
 source .venv/bin/activate
 know-surgery --help
 ```
 
-This installs the full pip lock, including its optional tools and editable source
-package. Docker installs the runtime requirements plus `lm-eval==0.4.8`, using
+This installs the full pip lock, including `[dev,gpu,reft,webui,lm-eval]` extras
+and the editable source package. Docker installs the runtime requirements plus `lm-eval==0.4.8`, using
 the same lock as version constraints. These commands use the Dockerfile's Python
 version and existing dependency pins; they do not regenerate the lock. Installing
 only `requirements.txt` allows newer versions for dependencies with lower bounds.
@@ -106,8 +121,8 @@ docker run --rm --gpus all --shm-size 16g \
   -v "$MODEL_DIR:/models/base:ro" \
   -v "$DATA_DIR:/inputs:ro" \
   -v "$RESULT_DIR:/results" \
-  know-surgery:local \
-  know-surgery operation=edit experiment=edit/smoke/ft_counterfact \
+  know-surgery:0.2.0 \
+  know-surgery operation=edit experiment=edit/counterfact/ft \
   task_name=ft_example max_edits=1 \
   model.model_args.pretrained_model_name_or_path=/models/base \
   model.tokenizer_args.pretrained_model_name_or_path=/models/base \
@@ -115,7 +130,8 @@ docker run --rm --gpus all --shm-size 16g \
   paths.output_dir=/results/ft_example --cfg job
 ```
 
-Inspect the composed configuration before removing `--cfg job` for an actual run.
+Inspect the composed configuration, run with `--preflight` to obtain its review hash,
+then execute with `--reviewed-config YOUR_REVIEW_HASH`.
 Change the model and experiment together when their layer mappings differ.
 Use `--gpus '"device=0"'` to expose a particular device, or omit GPU options for a
 CPU-compatible configuration. Mounted outputs survive container removal.
@@ -124,7 +140,7 @@ CPU-compatible configuration. Mounted outputs survive container removal.
 
 ```bash
 docker run --rm -p 127.0.0.1:7860:7860 \
-  know-surgery:local \
+  know-surgery:0.2.0 \
   python -m uvicorn webui.backend.app:app --host 0.0.0.0 --port 7860
 ```
 
@@ -136,7 +152,7 @@ image, configuration exports and version control.
 The same environment can run skills, for example:
 
 ```bash
-docker run --rm know-surgery:local \
+docker run --rm know-surgery:0.2.0 \
   python .claude/skills/inspect-repo/scripts/run.py --help
 ```
 

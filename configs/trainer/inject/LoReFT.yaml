@@ -14,4 +14,7 @@ method_args:
   layer: 8
   component: block_output
   low_rank_dimension: 4
+  trainable_dtype: float32
   intervene_on_prompt: true
+  last_k_prompt_tokens: 1
+  allow_legacy_ntp: false

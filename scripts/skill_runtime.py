@@ -24,6 +24,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT / "src") not in sys.path:
     sys.path.insert(0, str(ROOT / "src"))
+
 OPERATIONS = {"unlearning", "inject", "edit"}
 EVIDENCE_LEVELS = {
     "planned",
@@ -217,6 +218,8 @@ def _model_from_intent(text: str) -> str:
         return "gpt2"
     if re.search(r"\b7b\b", lowered):
         return "Qwen2.5-7B-Instruct"
+    if "wikidyk" in lowered:
+        return "Qwen2.5-1.5B"
     return "gpt2"
 
 
@@ -251,14 +254,16 @@ def _dataset_from_intent(text: str, operation: str) -> tuple[str, str]:
         return "UnKE_edit", "free_text"
     if "counterfact" in lowered:
         return "CounterFact_edit", "fact"
+    if operation == "inject" and "wikidyk" in lowered:
+        return "WikiDYK_train_inject", "fact"
     if "tofu" in lowered:
-        return "TOFU_local_smoke_forget", "fact"
+        return "TOFU_workbench_forget", "fact"
     if "ruletaker" in lowered or "rule" in lowered or "规则" in lowered:
         return "RuleTaker_train_inject", "rule"
     if "wikihow" in lowered or "procedure" in lowered or "过程" in lowered:
         return "WikiHow_train_inject", "procedural"
     defaults = {
-        "unlearning": ("TOFU_local_smoke_forget", "fact"),
+        "unlearning": ("TOFU_workbench_forget", "fact"),
         "inject": ("Alpaca_inject", "free_text"),
         "edit": ("CounterFact_edit", "fact"),
     }
@@ -334,13 +339,7 @@ def _experiments(
     result: dict[str, str | None] = {}
     for method in methods:
         experiment = None
-        if (
-            dataset == "TOFU_local_smoke_forget"
-            and model == "gpt2"
-            and method == "GradAscent"
-        ):
-            experiment = "unlearn/tofu/gpt2_quickstart"
-        elif dataset == "CounterFact_edit" and model == "Qwen2.5-1.5B-Instruct":
+        if dataset == "CounterFact_edit" and model == "Qwen2.5-1.5B-Instruct":
             if method == "ROME":
                 experiment = "edit/counterfact/qwen25_1_5b_rome_100"
             elif method == "MEMIT":
@@ -395,7 +394,13 @@ def _experiments(
             for row in rows:
                 if (operation is None or row.get("operation") == operation) and (
                     Path(row.get("model", "")).stem == model
-                    and Path(row.get("method", "")).stem == method
+                    and Path(row.get("method", "")).stem
+                    in {
+                        method,
+                        f"{method}_Official",
+                        f"{method}Official",
+                        f"{method}_official",
+                    }
                     and any(
                         Path(value).stem == dataset
                         for value in row.get("datasets", {}).values()
@@ -493,6 +498,8 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
         "inject": ["task_accuracy", "knowledge_retention"],
         "edit": ["reliability", "generalization", "locality", "portability"],
     }[operation]
+    if operation == "inject" and dataset == "WikiDYK_train_inject":
+        evaluators = ["acquisition", "generalization", "retention"]
     if modality == "multimodal" and operation == "inject":
         evaluators = [
             "train_tf_token_accuracy_before_after",
@@ -514,29 +521,22 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
             "Only the 7B size was explicit; selected Qwen2.5-7B-Instruct because registered long-text recipes target it."
         )
     experiments = _experiments(model, dataset, methods, operation)
-    if modality == "multimodal" and operation == "unlearning":
+    if (
+        modality == "multimodal"
+        and operation == "unlearning"
+        and model == "Qwen2.5-VL-3B"
+        and dataset == "MLLMU_Bench_unlearn"
+    ):
+        recipes = {
+            "MMGradAscent": "mllmu_ga_qwen25vl3b",
+            "MMGradDiff": "mllmu_mip_qwen25vl3b",
+            "MMNPO": "mllmu_npo_rt_qwen25vl3b",
+            "MMManu": "manu_mip_qwen25vl3b_mllmu",
+            "MMVKD": "vkd_qwen25vl3b_mllmu",
+        }
         for method in methods:
-            for path in sorted(
-                (ROOT / "configs/experiment/unlearn/multimodal").glob("smoke_*.yaml")
-            ):
-                config = yaml.safe_load(path.read_text())
-                defaults = {
-                    key: value
-                    for row in config.get("defaults", [])
-                    if isinstance(row, dict)
-                    for key, value in row.items()
-                }
-                benchmark = "clear" if dataset == "CLEAR_unlearn" else "mllmu"
-                if (
-                    defaults.get("override /model") == model
-                    and defaults.get("override /data") == benchmark
-                ):
-                    experiments[method] = (
-                        path.relative_to(ROOT / "configs/experiment")
-                        .with_suffix("")
-                        .as_posix()
-                    )
-                    break
+            if method in recipes:
+                experiments[method] = "unlearn/multimodal/" + recipes[method]
     if args.dataset_id:
         registry = ROOT / "configs/extensions/recipes.yaml"
         rows = (
@@ -985,7 +985,38 @@ def _bind_plan_cases(plan: dict[str, Any], source: Path, plan_path: Path) -> Non
     )
 
 
+def _encode_hydra_override(value: Any, *, nested: bool = False) -> str:
+    """Serialize typed plan values using Hydra's unquoted mapping-key syntax."""
+    if isinstance(value, dict):
+        entries = []
+        for key, item in value.items():
+            if not isinstance(key, str) or not re.fullmatch(
+                r"[A-Za-z_][A-Za-z0-9_./@-]*", key
+            ):
+                raise ValueError(f"Invalid nested override key: {key}")
+            entries.append(f"{key}: {_encode_hydra_override(item, nested=True)}")
+        return "{" + ", ".join(entries) + "}"
+    if isinstance(value, list):
+        return (
+            "["
+            + ", ".join(_encode_hydra_override(item, nested=True) for item in value)
+            + "]"
+        )
+    if isinstance(value, str):
+        if "${" in value or any(ord(char) < 32 for char in value):
+            raise ValueError("Unsafe override value")
+        # Top-level strings may intentionally contain Hydra list/group syntax.
+        if nested:
+            from hydra.core.override_parser.types import Quote, QuotedString
+
+            return QuotedString(value, Quote.double).with_quotes()
+        return value
+    return json.dumps(value, ensure_ascii=False, allow_nan=False)
+
+
 def _plan_command(plan: dict[str, Any], method: str, *, preview: bool) -> list[str]:
+    from know_surgery.resources import reference_trainer_for_experiment
+
     operation = plan["operation"]
     modality = plan.get("modality", "text")
     if modality not in {"text", "multimodal"}:
@@ -995,6 +1026,9 @@ def _plan_command(plan: dict[str, Any], method: str, *, preview: bool) -> list[s
     trainer = (
         "inject/" if operation == "inject" else "edit/" if operation == "edit" else ""
     ) + method
+    trainer = reference_trainer_for_experiment(
+        plan.get("experiments", {}).get(method), trainer
+    )
     for kind, value in (
         ("model", plan["model_id"]),
         ("trainer", trainer),
@@ -1018,6 +1052,26 @@ def _plan_command(plan: dict[str, Any], method: str, *, preview: bool) -> list[s
     command.extend([f"model={plan['model_id']}", f"trainer={trainer}"])
     inputs = plan.get("inputs")
     if inputs:
+        if experiment:
+            from surgery import _compose_config
+
+            recipe, _ = _compose_config(
+                [
+                    f"operation={operation}",
+                    f"modality={modality}",
+                    f"experiment={experiment}",
+                ]
+            )
+            edit_datasets = recipe.get("data", {}).get("edit", {})
+            if any(
+                dataset.get("args", {}).get("expected_sha256")
+                for dataset in edit_datasets.values()
+            ):
+                raise ValueError(
+                    "This experiment pins a benchmark snapshot and cannot be combined "
+                    "with bound custom cases. Use the benchmark data_path override or "
+                    "select a custom-data experiment. / 固定基准配置不能混入自定义样本。"
+                )
         roles = (
             {"forget", "retain"}
             if operation == "unlearning"
@@ -1113,14 +1167,43 @@ def _plan_command(plan: dict[str, Any], method: str, *, preview: bool) -> list[s
             "${" in value or any(ord(c) < 32 for c in value)
         ):
             raise ValueError(f"Unsafe override value for {key}")
-        encoded = (
-            json.dumps(value, ensure_ascii=False)
-            if not isinstance(value, str)
-            else value
-        )
+        encoded = _encode_hydra_override(value)
         command.append(f"{key}={encoded}")
     if preview:
         command.extend(["--cfg", "job"])
+    return command
+
+
+def _reviewed_plan_command(plan, method, args, *, smoke=False):
+    """Forward only an explicitly supplied review; previews never grant consent."""
+    preflight = getattr(args, "preflight", False)
+    if preflight and args.execute:
+        raise ValueError("Choose either --preflight or --execute.")
+    command = _plan_command(plan, method, preview=not (args.execute or preflight))
+    if smoke and plan["operation"] in {"unlearning", "inject"}:
+        command.append("++trainer.args.max_steps=1")
+    if preflight:
+        command.append("--preflight")
+    reviews = {}
+    for item in getattr(args, "reviewed_config", None) or []:
+        name, separator, digest = item.partition("=")
+        if (
+            not separator
+            or name not in plan["methods"]
+            or not re.fullmatch(r"[0-9a-f]{64}", digest)
+        ):
+            raise ValueError(
+                "Use --reviewed-config METHOD=HASH for a method in this plan."
+            )
+        if name in reviews:
+            raise ValueError(f"Duplicate configuration review for {name}")
+        reviews[name] = digest
+    if args.execute:
+        if method not in reviews:
+            raise ValueError(
+                "Review --preflight output, then supply --reviewed-config METHOD=HASH. / 请先检查并确认层数、参数和数据。"
+            )
+        command.extend(["--reviewed-config", reviews[method]])
     return command
 
 
@@ -1133,7 +1216,7 @@ def cmd_run_operation(args: argparse.Namespace) -> int:
     methods = [args.method] if args.method else list(plan["methods"])
     results = []
     for method in methods:
-        command = _plan_command(plan, method, preview=not args.execute)
+        command = _reviewed_plan_command(plan, method, args)
         result = _run(
             command,
             timeout=args.timeout,
@@ -1332,20 +1415,22 @@ def cmd_smoke(args: argparse.Namespace) -> int:
     methods = [args.method] if args.method else list(plan["methods"])
     results = []
     for method in methods:
-        command = _plan_command(plan, method, preview=not args.execute)
-        if args.execute and plan["operation"] in {"unlearning", "inject"}:
-            command.append("++trainer.args.max_steps=1")
+        command = _reviewed_plan_command(plan, method, args, smoke=True)
         result = _run(
             command,
             timeout=args.timeout,
             env={"CUDA_VISIBLE_DEVICES": args.cuda} if args.cuda else None,
         )
+        overrides = {
+            key.lstrip("+"): value for key, value in plan.get("overrides", {}).items()
+        }
+        output_keys = (
+            ("output_dir", "trainer.args.output_dir", "paths.output_dir")
+            if plan.get("modality") == "multimodal"
+            else ("trainer.args.output_dir", "paths.output_dir", "output_dir")
+        )
         output_dir = next(
-            (
-                value
-                for key, value in plan.get("overrides", {}).items()
-                if key.lstrip("+") in {"trainer.args.output_dir", "output_dir"}
-            ),
+            (overrides[key] for key in output_keys if key in overrides),
             None,
         )
         run_dirs = _run_artifact_candidates(
@@ -2067,6 +2152,8 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--operation", required=True, choices=sorted(OPERATIONS))
     run.add_argument("--method")
     run.add_argument("--execute", action="store_true")
+    run.add_argument("--preflight", action="store_true")
+    run.add_argument("--reviewed-config", action="append", metavar="METHOD=HASH")
     run.add_argument("--cuda")
     run.add_argument("--timeout", type=int, default=120)
     run.add_argument("--output", default="artifacts/run/trace.json")
@@ -2076,6 +2163,8 @@ def build_parser() -> argparse.ArgumentParser:
     smoke.add_argument("--plan", required=True)
     smoke.add_argument("--method")
     smoke.add_argument("--execute", action="store_true")
+    smoke.add_argument("--preflight", action="store_true")
+    smoke.add_argument("--reviewed-config", action="append", metavar="METHOD=HASH")
     smoke.add_argument("--cuda")
     smoke.add_argument("--timeout", type=int, default=300)
     smoke.add_argument("--output", default="artifacts/smoke-test/trace.json")

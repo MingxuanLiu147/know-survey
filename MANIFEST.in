@@ -2,7 +2,7 @@ include README.md README.zh-CN.md LICENSE THIRD_PARTY_NOTICES.md
 include requirements.txt requirements-know.in requirements-know.lock Makefile Dockerfile .dockerignore
 recursive-include LICENSES *.txt
 recursive-include assets *.png *.svg
-recursive-include configs *.yaml
+recursive-include configs *.yaml *.json
 recursive-include src *.py
 recursive-include .claude/skills *.md *.py *.json *.yaml
 recursive-include docs *.md
@@ -22,6 +22,9 @@ include scripts/train_mend_edit_network.py
 include scripts/train_malmen_auxiliary_network.py
 include scripts/validate_extension.py
 include scripts/run_mm_generate_mask.py
+include scripts/prepare_rank_statistics.py
+include scripts/prepare_zsre_scope.py
+include scripts/prepare_workbench_data.py
 prune webui/frontend/node_modules
 prune webui/frontend/dist
 prune webui/frontend/test-results

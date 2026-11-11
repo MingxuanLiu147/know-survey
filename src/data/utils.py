@@ -14,6 +14,57 @@ IGNORE_INDEX = (
 logger = logging.getLogger("data")
 
 
+def tokenize_causal_pair(
+    tokenizer,
+    prompt: str,
+    response: str,
+    *,
+    add_special_tokens: bool = True,
+) -> tuple[list[int], list[int]]:
+    """Encode a causal pair while preserving the exact generation prompt IDs.
+
+    A jointly encoded continuation is reused only when its prompt IDs match
+    exactly, preserving safe SentencePiece and whitespace behavior. Otherwise
+    encode the response separately to prevent a boundary merge from absorbing
+    its first token. Explicit EOS tokens are preserved. Truncation belongs to
+    the caller.
+    """
+
+    def encode(text, special_tokens):
+        ids = tokenizer(text, add_special_tokens=special_tokens)["input_ids"]
+        if hasattr(ids, "tolist"):
+            ids = ids.tolist()
+        if ids and isinstance(ids[0], list):
+            if len(ids) != 1:
+                raise ValueError("Causal pair tokenization requires one sequence.")
+            ids = ids[0]
+        return list(ids)
+
+    if not isinstance(prompt, str) or not isinstance(response, str):
+        raise TypeError("Causal prompt and response must be strings.")
+    prompt_ids = encode(prompt, add_special_tokens)
+    full_ids = encode(prompt + response, add_special_tokens)
+    if full_ids[: len(prompt_ids)] == prompt_ids:
+        return prompt_ids, full_ids[len(prompt_ids) :]
+    return prompt_ids, encode(response, False)
+
+
+def append_eos_target(prompt_ids, response_ids, tokenizer, max_length):
+    """Terminate a complete target, rejecting truncation that would teach a false end."""
+    eos = tokenizer.eos_token_id
+    if eos is None:
+        raise ValueError("append_eos requires tokenizer.eos_token_id.")
+    response_ids = list(response_ids)
+    if not response_ids or response_ids[-1] != eos:
+        response_ids.append(eos)
+    if len(prompt_ids) + len(response_ids) > max_length:
+        raise ValueError(
+            "Complete training target plus EOS exceeds max_length; increase the "
+            "limit or explicitly filter this sample instead of truncating its end."
+        )
+    return response_ids
+
+
 def load_hf_dataset(path, **kwargs):
     """封装 datasets.load_dataset 的简单辅助函数。
 
@@ -71,11 +122,16 @@ def preprocess_chat_instance(
     Returns:
         Dict[str, torch.Tensor]: A dictionary containing 'input_ids', 'labels', and 'attention_mask' tensors for model input.
     """
-    # prompt / response 必须成对出现（包括 few-shot 情况）
-    assert len(prompt_msgs) == len(response_msgs)
     if isinstance(prompt_msgs, str):
-        assert isinstance(response_msgs, str)
+        if not isinstance(response_msgs, str):
+            raise ValueError("A string prompt requires a string response.")
         prompt_msgs, response_msgs = [prompt_msgs], [response_msgs]
+    if isinstance(response_msgs, str) or len(prompt_msgs) != len(response_msgs):
+        raise ValueError("Prompt and response messages must be paired.")
+    if not prompt_msgs:
+        raise ValueError("At least one prompt/response pair is required.")
+    if max_length < 2:
+        raise ValueError("max_length must be at least 2.")
 
     # 分两种模式：
     # 1）使用 tokenizer.apply_chat_template（推荐，适配 Llama 等 chat 模型）
@@ -91,18 +147,24 @@ def preprocess_chat_instance(
         # 某些模板会使用日期信息（可选）
         date_str = template_config.get("date_string", None)
         date_info = {"date_string": date_str} if date_str is not None else {}
-        # chat_ids：完整对话（包括最后一条 assistant 回复），用于训练或作为 labels
-        chat_ids = tokenizer.apply_chat_template(
-            chat, tokenize=True, add_generation_prompt=False, **date_info
+        full_text = tokenizer.apply_chat_template(
+            chat, tokenize=False, add_generation_prompt=False, **date_info
         )
         # all except last response are in-context examples
         # wrapped_prompt：只包含到“最后一条 user 提示”为止的文本，用于构造 prompt_ids
         wrapped_prompt = tokenizer.apply_chat_template(
             chat[:-1], tokenize=False, add_generation_prompt=True, **date_info
         )
-        # prompt_ids：只包含前面（包括 few-shot + 最后一条 user）的 token id
-        prompt_ids = tokenizer.apply_chat_template(
-            chat[:-1], tokenize=True, add_generation_prompt=True, **date_info
+        if not full_text.startswith(wrapped_prompt):
+            raise ValueError(
+                "The chat template does not preserve the generation prompt "
+                "as a prefix of the full conversation."
+            )
+        prompt_ids, response_ids = tokenize_causal_pair(
+            tokenizer,
+            wrapped_prompt,
+            full_text[len(wrapped_prompt) :],
+            add_special_tokens=False,
         )
     else:
         # 不使用内置 chat_template，手动按照自定义模板拼接
@@ -134,27 +196,24 @@ def preprocess_chat_instance(
             + template_config["user_end_tag"]
             + template_config["asst_start_tag"]
         )
-        # chat_ids：完整对话（prompt + response）
-        chat_ids = tokenizer(
-            wrapped_prompt + final_response,
-            add_special_tokens=True,
-            max_length=max_length,
-            truncation=True,
-        )["input_ids"]
-
-        # prompt_ids：只有 prompt 部分，用于决定 labels 中哪一部分需要参与损失
-        prompt_ids = tokenizer(
+        prompt_ids, response_ids = tokenize_causal_pair(
+            tokenizer,
             wrapped_prompt,
+            final_response,
             add_special_tokens=True,
-            max_length=max_length,
-            truncation=True,
-        )["input_ids"]
+        )
 
+    chat_ids = prompt_ids + response_ids
     # 确保以 EOS 结尾，便于模型学习停止位置
-    if chat_ids[-1] != tokenizer.eos_token_id:
+    if not chat_ids:
+        raise ValueError("The prompt/response pair produced no tokens.")
+    if tokenizer.eos_token_id is not None and chat_ids[-1] != tokenizer.eos_token_id:
         chat_ids += [tokenizer.eos_token_id]
+    chat_ids = chat_ids[:max_length]
 
     len_matched = len(prompt_ids)
+    if len_matched >= len(chat_ids):
+        raise ValueError("The complete prompt leaves no trainable response tokens.")
 
     item = {}
     if predict_with_generate:
@@ -163,17 +222,10 @@ def preprocess_chat_instance(
     else:
         # 训练模式：input_ids = 完整对话；labels 只在“答案 token”上计算损失
         item["input_ids"] = chat_ids
+        len_matched = max(len_matched, 1)
         labels = [IGNORE_INDEX] * len_matched + chat_ids[len_matched:]
-        if len(prompt_ids) == len(chat_ids):
-            # Rarely, tokenization can result in this condition being entered.
-            # Say a input prompt is ABC and target output is D, tokenizer(ABCD)
-            # can be [AB, CD] and tokenizer(ABC) can be [AB, C]. In this case,
-            # we ignore loss on all indices in the labels. So, there is no way
-            # to use this for next token prediction. Be careful while
-            # interpreting results of such instances.
-            logger.warning(
-                "Tokenization mismatch: no valid target tokens for loss computation"
-            )
+        if not any(label != IGNORE_INDEX for label in labels[1:]):
+            raise ValueError("The prompt/response pair has no causal target tokens.")
 
     item["labels"] = labels
     item["attention_mask"] = [1] * len(item["input_ids"])
@@ -205,21 +257,24 @@ def preprocess_pretraining_instance(
     Returns:
         Dict[str, torch.Tensor]: A dictionary containing 'input_ids', 'labels', and 'attention_mask' tensors for model input.
     """
-    # 将 prefix + text_content 拼成一段长文本后一次性 tokenize
-    full_seq_ids = tokenizer(
-        prefix + (" " if insert_space else "") + text_content, add_special_tokens=True
-    )["input_ids"]
-    # prefix 单独 tokenize，用于确定前缀长度
-    prefix_ids = tokenizer(prefix, add_special_tokens=True)["input_ids"]
+    if max_length < 1:
+        raise ValueError("max_length must allow at least one content token.")
+    prefix_ids, content_ids = tokenize_causal_pair(
+        tokenizer,
+        prefix,
+        (" " if insert_space else "") + text_content,
+        add_special_tokens=True,
+    )
     prefix_len = len(prefix_ids)
-    # 手动截断：只保留 prefix_len + max_length 长度，避免超长
-    full_seq_ids = full_seq_ids[: prefix_len + max_length]  # manual truncation
+    full_seq_ids = prefix_ids + content_ids[:max_length]
 
     len_matched = prefix_len
     if len_matched == 0:  # never give loss on index 0, when prefix is empty
         len_matched = 1
     # prefix 部分全部置为 IGNORE_INDEX，只在正文部分计算损失
     labels = [IGNORE_INDEX] * len_matched + full_seq_ids[len_matched:]
+    if not any(label != IGNORE_INDEX for label in labels[1:]):
+        raise ValueError("Pretraining sample has no causal target tokens.")
     item = {}
     if predict_with_generate:
         item["input_ids"] = prefix_ids

@@ -1,0 +1,32 @@
+# UNKE: Unstructured Knowledge Editing
+# Paper: https://arxiv.org/abs/2405.15349
+
+defaults:
+  - edit/base_editor@_here_
+  - _self_
+
+handler: UNKEEditor
+
+method_args:
+  # Official UnKE Qwen/Llama setup edits the complete transformer layer 7.
+  layers: [7]
+  v_lr: 0.5
+  v_num_grad_steps: 25
+  v_weight_decay: 1.0e-3
+  v_loss_layer: 27
+  clamp_norm_factor: 4.0
+  ft_lr: 2.0e-4
+  ft_epochs: 50
+  edit_loss_weight: 1.0
+  preservation_loss_weight: 1.0
+  preservation_data_path: "data/edit/preservation/alpaca_data.json"
+  preservation_sample_size: 20
+  preservation_seed: 2024
+  preservation_max_length: 256
+  require_preservation: true
+  # UnKE optimises the final question token for unstructured QA targets.
+  fact_token: "last"
+  rewrite_module_tmp: "model.layers.{}.mlp.down_proj"
+  layer_module_tmp: "model.layers.{}"
+  lm_head_module: "lm_head"
+  ln_f_module: "model.norm"

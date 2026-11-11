@@ -13,6 +13,7 @@ EasyEdit 独立演示检索: zjunlp/EasyEdit@14cea8245f06715684592ab55184939b99d
 语料字段、持久化、不同长度记录的近邻映射是本仓库适配，非论文分数复现。
 """
 
+import copy
 import json
 import hashlib
 import logging
@@ -24,6 +25,7 @@ from typing import Any, Dict, List, Optional, Union
 import torch
 
 from trainer.edit.base import EditTrainer, EditRequest
+from know_surgery.edit_data import scope_key
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +105,8 @@ class IKEEditor(EditTrainer):
         self.demonstration_fact_indices = []
         self.demonstration_embeddings = None
         self.demonstration_sha256 = None
+        self._retrieval_diagnostics = None
+        self._independent_prefix_cache = None
         if self._independent_protocol():
             if retrieval_backend != "sentence_transformer" or not use_icl_examples:
                 raise ValueError(
@@ -256,7 +260,7 @@ class IKEEditor(EditTrainer):
 
     @staticmethod
     def _normalized_text(text):
-        return " ".join(text.casefold().split())
+        return scope_key(text)
 
     def _check_demonstration_split(self, request):
         def prompts(value):
@@ -297,9 +301,33 @@ class IKEEditor(EditTrainer):
             )
 
     def _independent_icl_prompt(self):
+        self._retrieval_diagnostics = None
         if not self.knowledge_store:
             return ""
         entry = self.knowledge_store[-1]
+        cache_key = None
+        if self.protocol == "paper_copy_update_retain":
+            embeddings = self.demonstration_embeddings
+            cache_key = (
+                entry["fact"],
+                entry["prompt"],
+                self.protocol,
+                self.demonstration_seed,
+                tuple(self._retrieval_config().items()),
+                self.demonstration_sha256,
+                id(self.demonstration_records),
+                id(self.demonstration_sentences),
+                id(self.demonstration_fact_indices),
+                id(embeddings),
+                embeddings._version,
+                embeddings.device,
+                embeddings.dtype,
+                id(self._sentence_model),
+            )
+            cached = getattr(self, "_independent_prefix_cache", None)
+            if cached is not None and cached[0] == cache_key:
+                self._retrieval_diagnostics = copy.deepcopy(cached[2])
+                return cached[1]
         query = f"New Fact: {entry['fact']}\nPrompt: {entry['prompt']}\n\n"
         embeddings = self._encode_queries([query]).to(
             self.demonstration_embeddings.device
@@ -358,7 +386,11 @@ class IKEEditor(EditTrainer):
             rng = random.Random(self.demonstration_seed)
             rng.shuffle(kinds)
             selected = []
-            for index, kind in zip(indices, kinds):
+            records = []
+            score_values = scores.detach().float().cpu().tolist()
+            similarity_values = similarities.detach().float().cpu().tolist()
+            owner_values = owners.detach().cpu().tolist()
+            for rank, (index, kind) in enumerate(zip(indices, kinds)):
                 row = self.demonstration_records[index]
                 fact = f"{row['prompt']} {row['target_new']}"
                 prompt = (
@@ -373,19 +405,102 @@ class IKEEditor(EditTrainer):
                 target = (
                     row["locality_ground_truth"] if kind == 2 else row["target_new"]
                 )
-                selected.append(f"New Fact: {fact}\nPrompt: {prompt} {target}\n\n")
+                text = f"New Fact: {fact}\nPrompt: {prompt} {target}\n\n"
+                selected.append(text)
+                source_demos = [
+                    position
+                    for position, owner in enumerate(owner_values)
+                    if owner == index
+                ]
+                best_demo = max(source_demos, key=similarity_values.__getitem__)
+                records.append(
+                    {
+                        "source_id": row["id"],
+                        "fact_index": index,
+                        "retrieval_rank": rank,
+                        "score": score_values[index],
+                        "score_aggregation": "max_over_fact_demonstrations",
+                        "best_matching_demo_index": best_demo,
+                        "best_matching_demo_sha256": self._text_digest(
+                            self.demonstration_sentences[best_demo]
+                        ),
+                        "type": ("copy", "update", "retain")[kind],
+                        "selected_prompt_sha256": self._text_digest(prompt),
+                        "text_sha256": self._text_digest(text),
+                    }
+                )
             selected.reverse()
+            records.reverse()
             selected.append(f"New Fact: {entry['fact']}\nPrompt: {entry['fact']}\n\n")
-            return "".join(selected)
+            records.append(
+                {
+                    "source_id": None,
+                    "fact_index": None,
+                    "retrieval_rank": None,
+                    "score": None,
+                    "type": "active_fact_copy",
+                    "text_sha256": self._text_digest(selected[-1]),
+                }
+            )
+            for position, record in enumerate(records):
+                record["prompt_order"] = position
+            result = "".join(selected)
+            self._retrieval_diagnostics = {
+                "method": "IKE",
+                "protocol": self.protocol,
+                "corpus_sha256": self.demonstration_sha256,
+                "retrieval_query_sha256": self._text_digest(query),
+                "prompt_sha256": self._text_digest(result),
+                "demonstrations": records,
+            }
+            self._independent_prefix_cache = (
+                cache_key,
+                result,
+                copy.deepcopy(self._retrieval_diagnostics),
+            )
+            return result
         hits = st_util.semantic_search(
             embeddings,
             self.demonstration_embeddings,
             score_function=st_util.dot_score,
             top_k=min(self.k, len(self.demonstration_sentences)),
         )
-        return "".join(
+        result = "".join(
             self.demonstration_sentences[hit["corpus_id"]] for hit in hits[0]
         )
+        self._retrieval_diagnostics = {
+            "method": "IKE",
+            "protocol": self.protocol,
+            "corpus_sha256": self.demonstration_sha256,
+            "retrieval_query_sha256": self._text_digest(query),
+            "prompt_sha256": self._text_digest(result),
+            "demonstrations": [
+                {
+                    "source_id": self.demonstration_records[hit["corpus_id"] // 3][
+                        "id"
+                    ],
+                    "fact_index": hit["corpus_id"] // 3,
+                    "demo_index": hit["corpus_id"],
+                    "retrieval_rank": rank,
+                    "prompt_order": rank,
+                    "score": float(hit["score"]),
+                    "type": ("copy", "update", "retain")[hit["corpus_id"] % 3],
+                    "text_sha256": self._text_digest(
+                        self.demonstration_sentences[hit["corpus_id"]]
+                    ),
+                }
+                for rank, hit in enumerate(hits[0])
+            ],
+        }
+        return result
+
+    @staticmethod
+    def _text_digest(text):
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+    def get_probe_diagnostics(self):
+        """Return metadata for the retrieval already used by the latest query."""
+        return copy.deepcopy(getattr(self, "_retrieval_diagnostics", None))
 
     @property
     def sentence_model(self):
@@ -518,6 +633,10 @@ class IKEEditor(EditTrainer):
             "sentence_model_failed": self._sentence_model_failed,
             "runtime_present": runtime_present,
             "runtime": getattr(self.model, "_edit_runtime", None),
+            "retrieval_diagnostics": getattr(self, "_retrieval_diagnostics", None),
+            "independent_prefix_cache": getattr(
+                self, "_independent_prefix_cache", None
+            ),
         }
 
     def _restore_runtime_state(self, snapshot: Dict[str, Any]) -> None:
@@ -527,6 +646,8 @@ class IKEEditor(EditTrainer):
         self.knowledge_embeddings = snapshot["knowledge_embeddings"]
         self._sentence_model = snapshot["sentence_model"]
         self._sentence_model_failed = snapshot["sentence_model_failed"]
+        self._retrieval_diagnostics = snapshot["retrieval_diagnostics"]
+        self._independent_prefix_cache = snapshot["independent_prefix_cache"]
         if snapshot["runtime_present"]:
             self.model._edit_runtime = snapshot["runtime"]
         elif hasattr(self.model, "_edit_runtime"):
@@ -702,6 +823,7 @@ class IKEEditor(EditTrainer):
             return results
 
         snapshot = self._snapshot_runtime_state()
+        self._independent_prefix_cache = None
         try:
             for request in requests:
                 self._store_edit(request)
@@ -712,6 +834,8 @@ class IKEEditor(EditTrainer):
             results["icl_examples"] = [
                 self.get_icl_prompt(request.prompt) for request in requests
             ]
+            if self._independent_protocol():
+                results["retrieval_diagnostics"] = self.get_probe_diagnostics()
         except Exception as exc:
             self._restore_runtime_state(snapshot)
             logger.error("IKE edit transaction failed: %s", exc)
@@ -846,9 +970,15 @@ class IKEEditor(EditTrainer):
                 "IKE embedding model returned an incompatible batch shape: "
                 f"expected {len(queries)} rows, got {tuple(embeddings.shape)}"
             )
-        embeddings = st_util.normalize_embeddings(embeddings.to(device))
-        if not torch.isfinite(embeddings).all():
-            raise ValueError("IKE embedding model returned non-finite values")
+        embeddings = embeddings.to(device)
+        if (
+            not torch.isfinite(embeddings).all()
+            or not (embeddings.norm(dim=-1) > 0).all()
+        ):
+            raise ValueError(
+                "IKE embedding model returned non-finite or zero-norm values"
+            )
+        embeddings = st_util.normalize_embeddings(embeddings)
         return embeddings
 
     def get_icl_prompt(self, query_prompt: str) -> str:
@@ -862,6 +992,7 @@ class IKEEditor(EditTrainer):
         """
         if self._independent_protocol():
             return self._independent_icl_prompt()
+        self._retrieval_diagnostics = None
         if not self.use_icl_examples or not self.knowledge_store:
             return ""
 
@@ -1065,6 +1196,8 @@ class IKEEditor(EditTrainer):
         self.knowledge_queries = queries
         self.knowledge_embeddings = embeddings
         self._sentence_model_failed = sentence_model_failed
+        self._retrieval_diagnostics = None
+        self._independent_prefix_cache = None
         self.model._edit_runtime = self
 
     def save_model(
@@ -1080,6 +1213,8 @@ class IKEEditor(EditTrainer):
         self.knowledge_sentences.clear()
         self.knowledge_queries.clear()
         self.knowledge_embeddings = None
+        self._retrieval_diagnostics = None
+        self._independent_prefix_cache = None
         if getattr(self.model, "_edit_runtime", None) is self:
             delattr(self.model, "_edit_runtime")
         logger.info("Knowledge store cleared")

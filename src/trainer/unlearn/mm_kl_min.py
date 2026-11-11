@@ -42,6 +42,7 @@ def retain_kl_divergence(
     batch: dict,
     *,
     chunk_size: int = 16,
+    normalization: str = "token_mean",
 ) -> torch.Tensor:
     """Compute exact token-mean KL in bounded-memory token chunks.
 
@@ -57,12 +58,16 @@ def retain_kl_divergence(
     chunk_size = int(chunk_size)
     if chunk_size <= 0:
         raise ValueError(f"KL token chunk size must be positive; got {chunk_size}")
+    if normalization not in {"token_mean", "mip_batchmean_all_tokens"}:
+        raise ValueError(f"Unknown retain KL normalization: {normalization}")
 
     token_mask = batch.get("attention_mask")
     if token_mask is None:
         labels = batch.get("labels")
         if labels is not None:
             token_mask = labels.ne(-100)
+    if normalization == "mip_batchmean_all_tokens":
+        token_mask = None
     if token_mask is not None and tuple(token_mask.shape) == tuple(
         current_logits.shape[:-1]
     ):
@@ -93,16 +98,24 @@ def retain_kl_divergence(
             current_chunk = current_flat.index_select(0, chunk_indices)
             reference_chunk = reference_flat.index_select(0, chunk_indices)
 
-        current_log_probs = F.log_softmax(current_chunk, dim=-1)
-        reference_probs = F.softmax(reference_chunk, dim=-1)
+        # BF16 rounding can create a negative KL and a spurious retain gradient
+        # even for identical models. Only upcast the bounded token chunk.
+        current_log_probs = F.log_softmax(current_chunk.float(), dim=-1)
+        reference_log_probs = F.log_softmax(reference_chunk.float(), dim=-1)
         chunk_kl = F.kl_div(
             current_log_probs,
-            reference_probs,
+            reference_log_probs,
             reduction="sum",
+            log_target=True,
         )
         total_kl = chunk_kl if total_kl is None else total_kl + chunk_kl
 
-    return total_kl / token_count
+    denominator = (
+        current_logits.shape[0]
+        if normalization == "mip_batchmean_all_tokens"
+        else token_count
+    )
+    return total_kl / denominator
 
 
 class MMKLMin(MMGradDiff):
@@ -116,6 +129,7 @@ class MMKLMin(MMGradDiff):
         retain_loader=None,
         *,
         kl_chunk_size: int = 16,
+        kl_normalization: str = "token_mean",
         reference_model=None,
         reference_device: str | None = None,
         schedule_mode: str = "paired",
@@ -124,6 +138,9 @@ class MMKLMin(MMGradDiff):
         **kwargs,
     ):
         self.kl_chunk_size = int(kl_chunk_size)
+        self.kl_normalization = kl_normalization
+        if kl_normalization not in {"token_mean", "mip_batchmean_all_tokens"}:
+            raise ValueError(f"Unknown retain KL normalization: {kl_normalization}")
         self.reference_device = reference_device
         normalized_benchmark = str(benchmark).lower() if benchmark is not None else None
         self.retain_ce_weight = (
@@ -189,6 +206,7 @@ class MMKLMin(MMGradDiff):
             retain_out_vanilla.logits.to(retain_out_current.logits.device),
             batch,
             chunk_size=self.kl_chunk_size,
+            normalization=self.kl_normalization,
         )
         return retain_kl + self.retain_ce_weight * retain_out_current.loss
 
@@ -203,6 +221,7 @@ class MMKLMin(MMGradDiff):
                 ),
                 "retain_ce_weight": self.retain_ce_weight,
                 "kl_chunk_size": self.kl_chunk_size,
+                "kl_normalization": self.kl_normalization,
             }
         )
         return summary

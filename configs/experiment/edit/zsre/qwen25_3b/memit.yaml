@@ -1,10 +1,13 @@
 # @package _global_
-# Qwen2.5-3B-Instruct full benchmark; inherits the adapted MEMIT protocol.
-
+# Candidate settings: inspect --preflight and review layers before execution.
 defaults:
-  - /experiment/edit/zsre/qwen25_7b/memit
-  - override /model: Qwen2.5-3B-Instruct
+  - /experiment/edit/zsre/qwen25_3b/base
+  - override /trainer: edit/MEMIT_Official
   - _self_
 
-task_name: qwen25_3b_zsre_memit_independent1301
-max_edits: 1301
+task_name: qwen25_3b_zsre_memit_reviewed1301
+trainer:
+  method_args:
+    layers: [4, 5, 6, 7, 8]
+    v_loss_layer: 35
+    mom2_adjustment: true

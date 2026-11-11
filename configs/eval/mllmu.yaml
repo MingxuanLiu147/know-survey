@@ -26,9 +26,11 @@ splits:
   - retain_shared
   - retain_celebrity
   - test
-test_data_dir: data/MLLMU-Bench/Test_Set
-retain_celebrity_data: data/MLLMU-Bench/Retain_Set/train-00000-of-00001.parquet
-few_shot_parquet: data/MLLMU-Bench/Full_Set/train-00000-of-00001.parquet
+test_data_dir: ${eval.data_dir}/Test_Set
+retain_celebrity_data: ${eval.data_dir}/Retain_Set/train-00000-of-00001.parquet
+few_shot_parquet: ${eval.data_dir}/Full_Set/train-00000-of-00001.parquet
+# Missing requested native tasks must not produce a completed run summary.
+require_all_splits: true
 shot_num: zero_shot
 max_records: null
 max_new_tokens: 50

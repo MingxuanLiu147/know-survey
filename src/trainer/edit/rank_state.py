@@ -6,21 +6,56 @@ from dataclasses import asdict
 from pathlib import Path
 
 import torch
-from datasets import load_dataset
 
 from trainer.edit.checkpoint_identity import (
     build_base_model_identity,
     validate_base_model_identity,
 )
 from trainer.edit.utils.cache_identity import model_cache_identity, tokenizer_identity
-from trainer.edit.utils.layer_stats import _atomic_save
+from trainer.edit.utils.layer_stats import (
+    _atomic_save,
+    _load_statistics_split,
+    _resolve_max_length,
+    statistics_data_identity,
+)
 from trainer.edit.utils.nethook import get_module
 
 
 class RankEditStateMixin:
     """Persist caches and history needed to continue editing saved model weights."""
 
+    def _validate_rank_attention_policy(self, *, source_identity=None):
+        """Check computation policy without rehashing edited weights as C0."""
+        from trainer.edit.utils.reference import validate_statistics_configuration
+
+        policy = getattr(self.model.config, "_attn_implementation", None)
+        source = (
+            getattr(self, "_projection_source_identity", None)
+            if source_identity is None
+            else source_identity
+        )
+        statistics = getattr(self, "_statistics_configuration", None)
+        if (
+            source is not None
+            and (
+                not isinstance(source, dict)
+                or "attention_implementation" not in source
+                or source["attention_implementation"] != policy
+            )
+        ) or (
+            statistics is not None
+            and statistics.get("attention_implementation") != policy
+        ):
+            raise ValueError(
+                "Rank cache attention policy changed or is missing from its source identity; "
+                "restore the original policy or prepare a fresh editor/state from the base model"
+            )
+        validate_statistics_configuration(self, bind=False)
+        return policy
+
     def _rank_config(self) -> dict:
+        from trainer.edit.utils.reference import statistics_execution_metadata
+
         names = (
             "layers",
             "rewrite_module_tmp",
@@ -31,6 +66,14 @@ class RankEditStateMixin:
             "mom2_dataset",
             "mom2_n_samples",
             "mom2_dtype",
+            "mom2_dataset_config",
+            "mom2_sample_policy",
+            "mom2_sample_seed",
+            "mom2_batch_tokens",
+            "mom2_max_length",
+            "mom2_attention_policy",
+            "mom2_query_chunk_size",
+            "mom2_placement_policy",
             "mom2_adjustment",
             "l2",
             "strategy",
@@ -60,7 +103,10 @@ class RankEditStateMixin:
         config = {
             "shared_utilities_revision": "mit_memit_20260921_v2",
             **{name: getattr(self, name) for name in names if hasattr(self, name)},
+            **statistics_execution_metadata(self),
         }
+        if getattr(self, "mom2_data_path", None) is not None:
+            config["mom2_local_source"] = statistics_data_identity(self.mom2_data_path)
         if getattr(
             self, "implementation_variant", "native_adapted"
         ) == "official_reference" and hasattr(self, "mom2_sample_seed"):
@@ -74,25 +120,38 @@ class RankEditStateMixin:
         return config
 
     def _projection_metadata(self) -> dict:
+        from trainer.edit.utils.reference import (
+            statistics_execution_metadata,
+            validate_statistics_configuration,
+        )
+
+        self._validate_rank_attention_policy()
         if not hasattr(self, "_projection_source_identity"):
-            self._projection_source_identity = model_cache_identity(self.model)
-        if not hasattr(self, "_projection_dataset_identity"):
-            dataset = self.mom2_dataset
-            split = load_dataset(
-                dataset,
-                getattr(self, "mom2_dataset_config", None)
-                or {"wikitext": "wikitext-103-raw-v1", "wikipedia": "20220301.en"}.get(
-                    dataset, dataset
-                ),
-            )["train"]
-            fingerprint = getattr(split, "_fingerprint", None)
-            if fingerprint is None:
-                raise ValueError(
-                    "Projection caches require a versioned dataset fingerprint"
-                )
-            self._projection_dataset_identity = fingerprint
+            source_identity = model_cache_identity(self.model)
+            if statistics_execution_metadata(self):
+                validate_statistics_configuration(self)
+            self._projection_source_identity = source_identity
+        dataset = self.mom2_dataset
+        dataset_config = getattr(self, "mom2_dataset_config", None) or {
+            "wikitext": "wikitext-103-raw-v1",
+            "wikipedia": "20220301.en",
+        }.get(dataset, dataset)
+        data_path = getattr(self, "mom2_data_path", None)
+        local_source = statistics_data_identity(data_path)
+        split = _load_statistics_split(dataset, dataset_config, data_path)
+        fingerprint = getattr(split, "_fingerprint", None)
+        if fingerprint is None:
+            raise ValueError(
+                "Projection caches require a versioned dataset fingerprint"
+            )
+        self._projection_dataset_identity = fingerprint
+        model_limit = _resolve_max_length(self.model.config)
+        length_override = getattr(self, "mom2_max_length", None)
+        max_length = min(model_limit, length_override or model_limit)
+        batch_tokens = getattr(self, "mom2_batch_tokens", None) or max_length * 3
         metadata = {
-            "schema_version": 3,
+            **statistics_execution_metadata(self),
+            "schema_version": 4,
             "shared_utilities_revision": "mit_memit_20260921_v2",
             "source_model": self._projection_source_identity,
             "tokenizer": tokenizer_identity(self.tokenizer),
@@ -101,19 +160,23 @@ class RankEditStateMixin:
             "layer_module_tmp": self.layer_module_tmp,
             "threshold": self.nullspace_threshold,
             "dataset": self.mom2_dataset,
+            "dataset_config": dataset_config,
             "dataset_fingerprint": self._projection_dataset_identity,
             "sample_size": self.mom2_n_samples,
             "precision": self.mom2_dtype,
+            "sample_policy": getattr(self, "mom2_sample_policy", "sequential_rows"),
+            "max_length": min(max_length, batch_tokens),
+            "batch_tokens": batch_tokens,
         }
+        if local_source is not None:
+            metadata["local_source"] = local_source
         if getattr(
             self, "implementation_variant", "native_adapted"
         ) == "official_reference" and hasattr(self, "mom2_sample_seed"):
             metadata.update(
                 implementation_variant="official_reference",
-                dataset_config=self.mom2_dataset_config,
                 sample_policy="upstream_random",
                 sample_seed=self.mom2_sample_seed,
-                batch_tokens=self.mom2_batch_tokens,
             )
         return metadata
 
@@ -141,6 +204,7 @@ class RankEditStateMixin:
         return result
 
     def _load_rank_projections(self) -> None:
+        self._validate_rank_attention_policy()
         if (
             self._projection_cache
             or not self.projection_path
@@ -165,6 +229,7 @@ class RankEditStateMixin:
         self._projection_cache = projections
 
     def _save_rank_projections(self) -> None:
+        self._validate_rank_attention_policy()
         if self.projection_path and getattr(self, "save_projection", True):
             _atomic_save(
                 {
@@ -176,9 +241,11 @@ class RankEditStateMixin:
 
     def save_editor_state(self, path: str | Path) -> None:
         """Save continuation state paired with the current edited HF checkpoint."""
+        policy = self._validate_rank_attention_policy()
         payload = {
             "schema_version": 1,
             "method": type(self).__name__,
+            "attention_implementation": policy,
             "implementation_variant": getattr(
                 self, "implementation_variant", "native_adapted"
             ),
@@ -203,6 +270,7 @@ class RankEditStateMixin:
         """Validate the entire state before changing any live editor cache."""
         from trainer.edit.base import EditRequest
 
+        policy = self._validate_rank_attention_policy()
         payload = torch.load(path, map_location="cpu", weights_only=True)
         expected_config = self._rank_config()
         reference_contexts = None
@@ -229,6 +297,22 @@ class RankEditStateMixin:
             or payload.get("tokenizer") != tokenizer_identity(self.tokenizer)
         ):
             raise ValueError("Rank editor state method/config/tokenizer mismatch")
+        has_cached_state = any(
+            bool(payload.get(name))
+            for name in ("projections", "sequential_keys", "covariances")
+            if isinstance(payload.get(name), dict)
+        )
+        if has_cached_state and (
+            "attention_implementation" not in payload
+            or payload["attention_implementation"] != policy
+        ):
+            raise ValueError(
+                "Rank editor state cache attention policy is missing or differs from the model; "
+                "prepare new state from the base model with the intended policy"
+            )
+        self._validate_rank_attention_policy(
+            source_identity=payload.get("projection_source_identity")
+        )
         validate_base_model_identity(
             self.model,
             payload.get("edited_model_identity"),
@@ -250,6 +334,9 @@ class RankEditStateMixin:
         ):
             raise ValueError("Invalid saved covariance cache")
         history = [EditRequest(**request) for request in payload["history"]]
+        from trainer.edit.utils.reference import validate_statistics_configuration
+
+        validate_statistics_configuration(self)
         self._projection_cache = projections
         self._sequential_key_cache = sequential
         self._cov_cache = covariances

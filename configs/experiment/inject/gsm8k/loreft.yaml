@@ -1,0 +1,21 @@
+# @package _global_
+# A LoReFT QA baseline; BREP is a distinct method and is not implemented here.
+defaults:
+  - /experiment/inject/gsm8k/default
+  - override /trainer: inject/LoReFT
+  - override /collator: DataCollatorForReFTDataset
+  - _self_
+trainer:
+  args:
+    learning_rate: 2e-4
+    remove_unused_columns: false
+    # PyReFT's dynamic intervention hooks do not survive checkpoint recomputation.
+    gradient_checkpointing: false
+  method_args:
+    layer: [8, 16, 24]
+    low_rank_dimension: 8
+    trainable_dtype: float32
+collator:
+  args:
+    padding_side: left
+    num_interventions: 3

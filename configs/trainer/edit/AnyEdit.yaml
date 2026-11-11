@@ -29,6 +29,7 @@ method_args:
   mom2_update_weight: 15000.0
   mom2_adjustment: true
   mom2_dataset: "wikipedia"
+  mom2_data_path: null  # Optional local corpus; a missing explicit path is an error.
   mom2_n_samples: 100000
   mom2_dtype: "float32"
   mom2_dataset_config: null

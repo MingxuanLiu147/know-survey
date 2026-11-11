@@ -90,7 +90,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload)
     }),
-  startRun: (payload: ComposePayload & { gpu?: number | null; request_id?: string; preview_hash?: string }) =>
+  startRun: (payload: ComposePayload & { gpu?: number | null; request_id?: string; preview_hash?: string; reviewed_config_hash?: string }) =>
     request<RunRecord>("/runs", {
       method: "POST",
       body: JSON.stringify(payload)

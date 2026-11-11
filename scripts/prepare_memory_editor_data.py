@@ -43,6 +43,7 @@ def questions(row, include_training=True):
         "locality",
         "locality_inputs",
         "locality_prompt",
+        "locality_prompts",
         "neighborhood_prompts",
         "portability",
         "portability_inputs",
@@ -61,16 +62,27 @@ def validate_disjoint(training, heldout):
     train_questions = set().union(*(questions(row) for row in training))
     heldout_questions = set().union(*(questions(row) for row in heldout))
     train_subjects = {
-        normalized(row["subject"]) for row in training if row.get("subject")
-    }
+        normalized(
+            row.get("subject", row.get("requested_rewrite", {}).get("subject", ""))
+        )
+        for row in training
+    } - {""}
     heldout_subjects = {
         normalized(
             row.get("subject", row.get("requested_rewrite", {}).get("subject", ""))
         )
         for row in heldout
     } - {""}
-    train_ids = {str(row["id"]) for row in training if row.get("id") is not None}
-    heldout_ids = {str(row["id"]) for row in heldout if row.get("id") is not None}
+    train_ids = {
+        str(row.get("id", row.get("case_id")))
+        for row in training
+        if row.get("id", row.get("case_id")) is not None
+    }
+    heldout_ids = {
+        str(row.get("id", row.get("case_id")))
+        for row in heldout
+        if row.get("id", row.get("case_id")) is not None
+    }
     if (
         train_questions & heldout_questions
         or train_subjects & heldout_subjects
@@ -182,6 +194,11 @@ def prepare(
         )
         for row in heldout
     } - {""}
+    reserved_ids = {
+        str(row.get("id", row.get("case_id")))
+        for row in heldout
+        if row.get("id", row.get("case_id")) is not None
+    }
     evaluation, rejected = [], []
     for index, row in enumerate(heldout):
         try:
@@ -194,7 +211,7 @@ def prepare(
         evaluation.append(case)
         if len(evaluation) == heldout_count:
             break
-    selected, used, used_subjects = [], set(), set()
+    selected, used, used_subjects, used_ids = [], set(), set(), set()
     for index, row in enumerate(auxiliary):
         try:
             case = canonical(row, index, "auxiliary")
@@ -203,8 +220,9 @@ def prepare(
             if (
                 question_set & (reserved | used)
                 or subject in reserved_subjects | used_subjects
+                or case["id"] in reserved_ids | used_ids
             ):
-                raise ValueError("prompt_or_subject_overlap")
+                raise ValueError("prompt_subject_or_source_id_overlap")
             if not case["rephrase_prompts"] or not case["locality_inputs"]:
                 raise ValueError("missing_auxiliary_rephrase_or_labeled_locality")
             positives = {
@@ -226,6 +244,7 @@ def prepare(
         selected.append(case)
         used.update(question_set)
         used_subjects.add(subject)
+        used_ids.add(case["id"])
         if len(selected) == train_count + validation_count + negative_count:
             break
     if (

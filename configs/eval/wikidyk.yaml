@@ -1,0 +1,13 @@
+# One generation pass produces two score views, plus paired baseline locality.
+# Set both paths to local files/checkpoints before an offline execution.
+wikidyk:
+  handler: WikiDYKEvaluator
+  output_dir: ${paths.output_dir}/eval
+  overwrite: true
+  eval_data_path: ${oc.env:WIKIDYK_EVAL_PATH,data/inject/wikidyk/eval.json}
+  original_model_path: ${oc.env:WIKIDYK_BASE_MODEL,Qwen/Qwen2.5-1.5B}
+  args:
+    batch_size: 128
+    max_length: 4096
+    max_new_tokens: 100
+    do_sample: false

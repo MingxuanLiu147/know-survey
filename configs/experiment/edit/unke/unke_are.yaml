@@ -1,0 +1,31 @@
+# @package _global_
+# Official AnyEdit UnKE_ARE (AnyEdit*) protocol on UnKEBench.
+
+defaults:
+  - override /model: Qwen2.5-7B-Instruct
+  - override /trainer: edit/AnyEdit
+  - override /data: edit
+  - override /data/datasets@data.edit: UnKE_edit
+  - override /eval: edit
+
+task_name: unke_unke_are
+
+trainer:
+  method_args:
+    strategy: unke_are
+    layers: [7]
+    window_size: 50
+    overlap: 0
+    ft_lr: 2.0e-4
+    ft_epochs: 50
+    preservation_sample_size: 20
+
+data:
+  edit:
+    UnKE_edit:
+      handler: UnKEDataset
+      args:
+        version: v3
+        max_length: 2048
+        apply_chat_template: true
+

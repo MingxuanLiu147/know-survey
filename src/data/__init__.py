@@ -35,6 +35,7 @@ from data.mm_editing import MMEditCaptionDataset, MMEditVQADataset, MMKEBenchDat
 
 # Knowledge Injection 数据集
 from data.inject import InjectDataset, AlpacaDataset, ShareGPTDataset
+from data.wikidyk import WikiDYKDataset
 
 # 统一管理数据集类的注册表：
 #   key: 类名字符串（如 "QADataset"）
@@ -219,6 +220,7 @@ _register_data(MMKEBenchDataset)
 _register_data(InjectDataset)
 _register_data(AlpacaDataset)
 _register_data(ShareGPTDataset)
+_register_data(WikiDYKDataset)
 
 # Register collators
 _register_collator(DataCollatorForSupervisedDataset)

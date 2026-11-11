@@ -20,17 +20,27 @@ Know-Surgery brings model knowledge updates into one configurable workflow. Choo
 | Learn new knowledge | `inject` | Supervised examples and evaluation data |
 | Correct existing knowledge | `edit` | New answers, paraphrases and unrelated probes |
 
+## Three operation guides
+
+| Operation | Guide | Current paper benchmark |
+|---|---|---|
+| `inject` | [Learn new knowledge](docs/injection.md) | WikiDYK · Qwen2.5-1.5B Base |
+| `edit` | [Correct knowledge](docs/editing.md) | zsRE · Qwen2.5-7B-Instruct |
+| `unlearning` | [Forget selected knowledge](docs/unlearning.md) | MLLMU-Bench · Qwen2.5-VL-3B-Instruct |
+
 ## Quickstart
 
 Use Python **3.11+** and a PyTorch environment suited to your hardware. Install from the [GitHub repository](https://github.com/MingxuanLiu147/know-survey):
 
 ```bash
-git clone https://github.com/MingxuanLiu147/know-survey.git
+git clone --branch v0.2.0 --depth 1 https://github.com/MingxuanLiu147/know-survey.git
 cd know-survey
 python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[webui]"
 ```
+
+For the pinned Linux environment and container build, see [uv and Docker](docs/docker.md).
 
 Optional extras are `[gpu]` for DeepSpeed/bitsandbytes, `[reft]` for PyReFT and `[lm-eval]` for downstream evaluation. Model weights and datasets are prepared separately.
 
@@ -42,7 +52,7 @@ know-surgery operation=edit \
   task_name=first_edit --cfg job
 ```
 
-To run this example, set paths to a local GPT-2 checkpoint and CounterFact JSON file. Select an available GPU, review the configuration, then remove `--cfg job`:
+To run this example, set paths to a local GPT-2 checkpoint and CounterFact JSON file. Select an available GPU, inspect `--preflight`, then execute with `--reviewed-config YOUR_REVIEW_HASH`:
 
 ```bash
 export MODEL_PATH=/path/to/gpt2
@@ -80,10 +90,10 @@ TOFU unlearning requires the intended starting checkpoint. The RuleTaker recipe 
 | Weight editing | FT, ROME, MEMIT, AlphaEdit | Check layers and statistics; ROME/MEMIT/AlphaEdit offer explicit reference profiles |
 | Long-target editing | AnyEdit with MEMIT/AlphaEdit ARE | Set target chunks, model mappings and preservation statistics |
 | Memory / adapter editing | IKE, GRACE, WISE, SERAC | IKE needs demonstrations; WISE needs scope negatives; SERAC needs trained auxiliary networks |
-| Auxiliary-network editing | MEND, MALMEN, InstructEdit | Compact implementations requiring matching trained checkpoints |
+| Auxiliary-network editing | MEND, MALMEN, InstructEdit | MEND offers a factor-network profile; each requires a matching trained checkpoint |
 | Image–text updates | Multimodal unlearning, LoRA injection and editing adapters | Experimental, model/method-specific; [local image/text injection](docs/components.md#imagetext-injection) |
 
-Text configurations cover GPT-2/XL, GPT-J, Llama, Qwen2.5, Phi, Gemma, Zephyr and DeepSeek distillations. Dataset adapters include TOFU, CounterFact, zsRE, LEME, ELKEN, AKEW, WikiHow, RuleTaker, RuleArena, Alpaca/ShareGPT, ConceptEdit and image–text datasets. A configuration does not guarantee compatibility with every method.
+Text configurations cover GPT-2/XL, GPT-J, Llama, Qwen2.5, Phi, Gemma, Zephyr and DeepSeek distillations. Dataset adapters include WikiDYK, TOFU, CounterFact, zsRE, LEME, ELKEN, AKEW, WikiHow, RuleTaker, RuleArena, Alpaca/ShareGPT, ConceptEdit and image–text datasets. A configuration does not guarantee compatibility with every method.
 
 Use [editing methods](docs/editing.md) for prerequisites and commands, [components](docs/components.md) for your own model or data, and [evaluation](docs/evaluation.md) to interpret results. Reference profiles reproduce specified mechanisms with model adapters; they do not promise the original paper's scores on every model.
 

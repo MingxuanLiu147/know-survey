@@ -1,0 +1,10 @@
+task_accuracy:
+  handler: InjectAccuracyEvaluator
+  output_dir: ${paths.output_dir}/eval
+  eval_data_path: ${oc.env:GSM8K_EVAL_PATH,${paths.root_dir}/data/inject/gsm8k/validation.json}
+  strict: true
+  args:
+    eval_method: generation
+    scoring: gsm8k_numeric
+    max_length: 2048
+    max_new_tokens: 1024

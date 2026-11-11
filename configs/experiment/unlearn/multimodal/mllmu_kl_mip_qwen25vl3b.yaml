@@ -1,0 +1,19 @@
+# @package _global_
+defaults:
+  - /experiment/unlearn/multimodal/mllmu_mip_qwen25vl3b
+  - override /trainer: MMKLMin
+
+trainer:
+  method_args:
+    schedule_mode: sequential
+    retain_ce_weight: 1.0
+    reference_model_path: ${model.model_path}
+    # Upstream unlearning.py:122-131 sums KL over T,V and divides by B,
+    # including prompt, image and padding positions. Compute it in FP32.
+    kl_normalization: mip_batchmean_all_tokens
+
+benchmark_protocol:
+  kl_source: https://github.com/PreckLi/MIP-Editor/blob/db8e6d2350c5e188f58a6bd38d92d2cebcb037cd/unlearning.py
+  adaptation_notes:
+    - learning-rate-2e-5-from-Table-A1-upstream-code-hardcodes-1e-5
+    - answer-only-CE-is-kept-for-this-comparison-upstream-uses-full-conversation-CE

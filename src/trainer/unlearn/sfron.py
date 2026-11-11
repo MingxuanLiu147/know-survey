@@ -301,7 +301,11 @@ def compute_fisher(
             for name, parameter in selected.items():
                 if parameter.grad is None:
                     continue
-                contribution = parameter.grad.detach().cpu().square()
+                contribution = (
+                    parameter.grad.detach()
+                    .to(device="cpu", dtype=torch.float32)
+                    .square()
+                )
                 if gradients[name] is None:
                     gradients[name] = contribution
                 else:
@@ -393,6 +397,19 @@ def generate_saliency_mask(
         "benchmark": artifact_metadata.get("benchmark"),
         "forget_ratio": artifact_metadata.get("forget_ratio"),
         "mask_scope": artifact_metadata.get("mask_scope"),
+        "parameter_dtypes": sorted({str(p.dtype) for p in model.parameters()}),
+        "fisher_accumulation_dtype": "float32",
+        **{
+            key: artifact_metadata.get(key)
+            for key in (
+                "training_source",
+                "training_parquet",
+                "language_preservation_source",
+                "data_sha256",
+                "processor_config",
+                "seed",
+            )
+        },
     }
     artifact_metadata.update(identity)
     artifact_metadata.update(
@@ -534,6 +551,7 @@ def load_and_validate_saliency_mask(
     expected_benchmark: str | None = None,
     expected_model_family: str | None = None,
     expected_checkpoint_id: str | os.PathLike[str] | None = None,
+    expected_metadata: Mapping[str, Any] | None = None,
     allow_legacy_mask: bool = False,
     min_mask_coverage: float = 1.0,
 ) -> tuple[dict[str, torch.Tensor], dict[str, Any]]:
@@ -606,6 +624,15 @@ def load_and_validate_saliency_mask(
             raise ValueError(
                 f"MMUnlearner mask/model compatibility mismatch: {mismatches}"
             )
+    protocol_mismatches = {
+        field: {"mask": metadata.get(field), "runtime": expected}
+        for field, expected in (expected_metadata or {}).items()
+        if metadata.get(field) != expected
+    }
+    if protocol_mismatches:
+        raise ValueError(
+            f"MMUnlearner mask/data protocol mismatch: {protocol_mismatches}"
+        )
 
     model_parameters = dict(model.named_parameters())
     validated: dict[str, torch.Tensor] = {}

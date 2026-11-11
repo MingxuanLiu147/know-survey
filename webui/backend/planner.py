@@ -13,6 +13,8 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from src.know_surgery.resources import reference_trainer_for_experiment
+
 from .catalog import ROOT, RepositoryCatalog
 from .schemas import ComposeRequest, PlanRequest
 
@@ -619,6 +621,7 @@ def configuration_from_plan(
     if max_steps is not None and operation != "edit":
         overrides["++trainer.args.max_steps"] = max_steps
     trainer = ("" if operation == "unlearning" else f"{operation}/") + method
+    trainer = reference_trainer_for_experiment(experiment, trainer)
     evaluation = (
         None
         if experiment or modality == "multimodal" and operation == "inject"

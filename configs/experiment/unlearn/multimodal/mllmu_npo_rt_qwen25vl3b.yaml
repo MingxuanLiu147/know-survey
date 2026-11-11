@@ -1,0 +1,64 @@
+# @package _global_
+# NPO+RT: physical batch 32; preserve the original 4-QA logical loss groups.
+defaults:
+- override /model: Qwen2.5-VL-3B
+- override /data: mllmu
+- override /trainer: MMNPO
+model:
+  model_path: ???
+  processor_path: ${model.model_path}
+  preserve_saved_processor: true
+  lora:
+    enabled: true
+    r: 8
+    alpha: 16
+    dropout: 0.1
+    init_lora_weights: true
+    target_policy: explicit-language-projections
+    target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - up_proj
+    - gate_proj
+    - down_proj
+data:
+  mode: unlearn
+  training_source: ft_data
+  training_parquet: ${data.data_dir}/ft_Data/train-00000-of-00001.parquet
+  forget_split_ratio: 5
+  batch_size: 32
+  ans_only: true
+  max_samples: null
+trainer:
+  args:
+    lr: 1e-5
+    num_epochs: 10
+    optimizer: adamw
+    weight_decay: 0.01
+    gradient_accumulation_steps: 1
+    warmup_steps: steps_per_epoch
+  method_args:
+    beta: 0.1
+    objective_mode: sequence_log_ratio
+    retain_loss_type: NLL
+    retain_loss_weight: 1.0
+    logical_microbatch_size: 4
+    oracle_model_path: ${model.model_path}
+    probability_chunk_size: 8
+benchmark_protocol:
+  paper: https://arxiv.org/html/2404.05868v2
+  code: https://github.com/licong-lin/negative-preference-optimization/tree/1207bbe9a1abf502bc2d7b43a0a467d9524b4036
+  method: NPO+RT
+  reference: frozen-vanilla
+  status: configured
+  exact_replication: false
+  adaptation_notes:
+  - Qwen2.5-VL-and-MLLMU-replace-Llama2-and-TOFU
+  - existing-Vanilla-is-reused-with-a-fresh-language-LoRA-adapter
+  - original-TOFU-default-used-full-parameter-training
+  - shuffled-retain-batches-are-paired-with-each-forget-batch
+  - effective-batch-32-assumes-one-process-reduce-accumulation-for-more-processes
+  - final-partial-batches-are-kept-in-the-epoch-budget
+output_dir: saves/unlearning/mllmu_npo_rt_qwen25vl3b/${now:%Y-%m-%d_%H-%M-%S}

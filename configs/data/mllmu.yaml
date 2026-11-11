@@ -8,6 +8,9 @@ forget_split_ratio: 5
 batch_size: 4
 ans_only: false
 mode: unlearn
+# Keep legacy experiments reproducible; paper-aligned recipes opt into ft_data.
+training_source: profile_qa
+training_parquet: null
 reference_source: retain
 reference_text_only: false
 max_samples: null

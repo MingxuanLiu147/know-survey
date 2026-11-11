@@ -1,41 +1,17 @@
 # @package _global_
-# Qwen2.5-7B-Instruct + FT, zsRE independent-100 benchmark.
-
+# Candidate settings: inspect --preflight and review layers before execution.
 defaults:
-  - override /model: Qwen2.5-7B-Instruct
+  - /experiment/edit/zsre/qwen25_7b/base
   - override /trainer: edit/FT
-  - override /data: edit
-  - override /data/datasets@data.edit: ZSRE_edit
-  - override /eval: edit_benchmark
   - _self_
 
-task_name: qwen25_7b_zsre_ft_independent100
-edit_type: independent
-max_edits: 100
-save_edit_summary: true
-save_edited_model: false
-
-model:
-  model_args:
-    attn_implementation: eager
-
+task_name: qwen25_7b_zsre_ft_reviewed1301
 trainer:
-  args:
-    output_dir: ${paths.output_dir}
-    do_eval: true
-    bf16: true
-    seed: 42
   method_args:
+    # Layer-restricted target-only FT baseline; review layers for this model.
     layers: [23]
     ft_lr: 5.0e-5
     num_steps: 25
     weight_decay: 0.0
     edit_layers_only: true
-
-data:
-  edit:
-    ZSRE_edit:
-      handler: ZSREDataset
-      args:
-        split: test
-        max_length: 512
+    max_length: 512

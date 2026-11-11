@@ -23,7 +23,6 @@ from PIL import Image
 from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
-random.seed(42)
 
 UPSTREAM_REPOSITORY = "https://github.com/franciscoliu/MLLMU-Bench"
 UPSTREAM_COMMIT = "0e3098e5ea7e4878ce4f19cdf873de1410b4d427"
@@ -116,13 +115,18 @@ def _to_list(value: Any) -> list[Any]:
 
 def _select_record_image(record: dict[str, Any]):
     if record.get("image") is not None:
-        return _decode_image(record.get("image"))
-
-    candidates = [_decode_image(item) for item in _to_list(record.get("images"))]
-    candidates = [candidate for candidate in candidates if candidate is not None]
-    if not candidates:
-        return None
-    return random.choice(candidates)
+        candidates = [_decode_image(record["image"])]
+        index = 0
+    else:
+        candidates = [_decode_image(item) for item in _to_list(record.get("images"))]
+        index = random.randrange(len(candidates)) if candidates else 0
+    if not candidates or any(candidate is None for candidate in candidates):
+        raise ValueError(
+            f"MLLMU profile {record.get('ID')} has missing or invalid images"
+        )
+    image = candidates[index]
+    image.info["mllmu_image_index"] = index
+    return image
 
 
 def _prepare_inputs_from_content(
@@ -153,6 +157,18 @@ def _generate_from_content(
     ).strip()
 
 
+def _generate_many(processor, model, requests, max_new_tokens):
+    """Use the same ordered prompts and scorers for native and batched inference."""
+    if hasattr(model, "generate_content_batch"):
+        return model.generate_content_batch(processor, requests, max_new_tokens)
+    return [
+        _generate_from_content(
+            processor, model, content, images=images, max_new_tokens=max_new_tokens
+        )
+        for content, images in requests
+    ]
+
+
 def _generate_text(
     processor, model, question: str, image=None, *, max_new_tokens: int = 50
 ) -> str:
@@ -175,11 +191,21 @@ def _formulate_prompt_with_options(question: str, options: dict[str, str]) -> st
     return f"{question}\n{options_text}\nJust give ONE letter representing the answer directly."
 
 
-def _normalize_blank_prompt(question: str) -> str:
+def _normalize_blank_prompt(question: str, official: bool = False) -> str:
+    only = "**ONLY**" if official else "ONLY"
     return (
         question.replace("__", "[Blank]")
-        + "\nPlease ONLY provide the correct answer that should replace the [Blank]."
+        + f"\nPlease {only} provide the correct answer that should replace the [Blank]."
     )
+
+
+def _official_response(text: str, *, generation: bool = False) -> str:
+    """Apply upstream's response-prefix extraction after model-template decoding."""
+    if "ASSISTANT:" in text:
+        return text.split("ASSISTANT:")[1].strip()
+    if generation and "Answer:" in text:
+        return text.split("Answer:")[1].strip()
+    return text.strip()
 
 
 def _safe_rouge_scorer():
@@ -289,8 +315,10 @@ def _finalize_generation_counter(counter: dict[str, float]) -> dict[str, Any]:
 
 
 def _maybe_filter_frame(df: pd.DataFrame, filter_ids: set[str] | None) -> pd.DataFrame:
-    if not filter_ids or "ID" not in df.columns:
+    if filter_ids is None:
         return df
+    if "ID" not in df.columns or df["ID"].isna().any():
+        raise ValueError("MLLMU filtered evaluation requires non-null profile IDs")
     return df[df["ID"].astype(str).isin(filter_ids)].reset_index(drop=True)
 
 
@@ -312,13 +340,15 @@ def _parse_shot_num(shot_num: str) -> int:
     raise ValueError(f"Unsupported shot_num={shot_num}")
 
 
-def _sample_few_shot_ids(df: pd.DataFrame, shot_count: int) -> list[str]:
+def _sample_few_shot_ids(
+    df: pd.DataFrame, shot_count: int, seed: int = 42
+) -> list[str]:
     if shot_count <= 0 or "ID" not in df.columns:
         return []
     ids = df["ID"].astype(str).unique().tolist()
     if not ids:
         return []
-    rng = random.Random(42)
+    rng = random.Random(seed)
     return rng.sample(ids, min(shot_count, len(ids)))
 
 
@@ -359,7 +389,9 @@ def _build_image_content(prompt: str, image, exemplars: list[dict[str, Any]]):
     return content, images or None
 
 
-def _build_classification_few_shots(df: pd.DataFrame, selected_ids: list[str]):
+def _build_classification_few_shots(
+    df: pd.DataFrame, selected_ids: list[str], official: bool = False
+):
     exemplars = {"image_textual": [], "pure_text": []}
     skip_map: dict[str, dict[str, set[int]]] = {}
     if not selected_ids:
@@ -384,7 +416,14 @@ def _build_classification_few_shots(df: pd.DataFrame, selected_ids: list[str]):
             exemplars["image_textual"].append(
                 {
                     "image": image,
-                    "prompt": _formulate_prompt_with_options(question, options),
+                    "prompt": (
+                        "Question: "
+                        + _formulate_prompt_with_options(question, options).rsplit(
+                            "\n", 1
+                        )[0]
+                        if official
+                        else _formulate_prompt_with_options(question, options)
+                    ),
                     "answer": correct,
                 }
             )
@@ -398,7 +437,14 @@ def _build_classification_few_shots(df: pd.DataFrame, selected_ids: list[str]):
                 continue
             exemplars["pure_text"].append(
                 {
-                    "prompt": _formulate_prompt_with_options(question, options),
+                    "prompt": (
+                        "Question: "
+                        + _formulate_prompt_with_options(question, options).rsplit(
+                            "\n", 1
+                        )[0]
+                        if official
+                        else _formulate_prompt_with_options(question, options)
+                    ),
                     "answer": correct,
                 }
             )
@@ -407,7 +453,9 @@ def _build_classification_few_shots(df: pd.DataFrame, selected_ids: list[str]):
     return exemplars, skip_map
 
 
-def _build_fill_blank_few_shots(df: pd.DataFrame, selected_ids: list[str]):
+def _build_fill_blank_few_shots(
+    df: pd.DataFrame, selected_ids: list[str], official: bool = False
+):
     exemplars = {"image_textual": [], "pure_text": []}
     skip_map: dict[str, dict[str, set[int]]] = {}
     if not selected_ids:
@@ -435,7 +483,7 @@ def _build_fill_blank_few_shots(df: pd.DataFrame, selected_ids: list[str]):
             exemplars[label].append(
                 {
                     "image": image if label == "image_textual" else None,
-                    "prompt": _normalize_blank_prompt(question),
+                    "prompt": _normalize_blank_prompt(question, official),
                     "answer": answer,
                 }
             )
@@ -453,15 +501,17 @@ def evaluate_classification(
     filter_ids: set[str] | None = None,
     few_shot_df: pd.DataFrame | None = None,
     shot_count: int = 0,
+    official: bool = False,
+    few_shot_seed: int = 42,
     max_records: int | None = None,
     return_records: bool = False,
 ):
     df = _maybe_limit_frame(
         _maybe_filter_frame(_load_parquet_frame(parquet_path), filter_ids), max_records
     )
-    selected_ids = _sample_few_shot_ids(df, shot_count)
+    selected_ids = _sample_few_shot_ids(df, shot_count, few_shot_seed)
     few_shot_examples, skip_map = (
-        _build_classification_few_shots(few_shot_df, selected_ids)
+        _build_classification_few_shots(few_shot_df, selected_ids, official)
         if shot_count > 0 and few_shot_df is not None
         else ({"image_textual": [], "pure_text": []}, {})
     )
@@ -471,96 +521,71 @@ def evaluate_classification(
         "pure_text": _new_counter(),
     }
     records: list[dict[str, Any]] = []
-
+    requests = []
     for row_index, row in tqdm(df.iterrows(), total=len(df), desc="Classification"):
         record = row.to_dict()
         row_id = str(record.get("ID") or "")
         image = _select_record_image(record)
         tasks = record.get("Classification_Task") or {}
-
-        for idx, question_data in enumerate(
-            _to_list(tasks.get("Image_Textual_Questions"))
+        for field, label in (
+            ("Image_Textual_Questions", "image_textual"),
+            ("Pure_Text_Questions", "pure_text"),
         ):
-            if idx in skip_map.get(row_id, {}).get("image_textual", set()):
-                continue
-            question = str(question_data.get("Question") or "").strip()
-            options = dict(question_data.get("Options") or {})
-            correct = str(question_data.get("Correct_Answer") or "").strip().upper()
-            if not question or not options or not correct:
-                continue
-
-            prompt = _formulate_prompt_with_options(question, options)
-            content, images = _build_image_content(
-                prompt, image, few_shot_examples["image_textual"]
-            )
-            generated = _generate_from_content(
-                processor,
-                model,
-                content,
-                images=images,
-                max_new_tokens=max_new_tokens,
-            )
-            cleaned = re.sub(r"[^a-zA-Z0-9]", "", generated)
-            predicted = cleaned[0].upper() if cleaned else None
-            if predicted == correct:
-                counters["image_textual"]["correct"] += 1
-            counters["image_textual"]["total"] += 1
-            records.append(
-                {
-                    "row_index": int(row_index),
-                    "id": row_id,
-                    "task": "classification",
-                    "modality": "image_textual",
-                    "question_index": idx,
-                    "question": question,
-                    "options": options,
-                    "prediction": predicted,
-                    "raw_prediction": generated,
-                    "ground_truth": correct,
-                    "correct": predicted == correct,
-                }
-            )
-
-        for idx, question_data in enumerate(_to_list(tasks.get("Pure_Text_Questions"))):
-            if idx in skip_map.get(row_id, {}).get("pure_text", set()):
-                continue
-            question = str(question_data.get("Question") or "").strip()
-            options = dict(question_data.get("Options") or {})
-            correct = str(question_data.get("Correct_Answer") or "").strip().upper()
-            if not question or not options or not correct:
-                continue
-
-            prompt = _build_text_only_prompt(
-                _formulate_prompt_with_options(question, options),
-                few_shot_examples["pure_text"],
-            )
-            generated = _generate_text(
-                processor,
-                model,
-                prompt,
-                image=None,
-                max_new_tokens=max_new_tokens,
-            )
-            cleaned = re.sub(r"[^a-zA-Z0-9]", "", generated)
-            predicted = cleaned[0].upper() if cleaned else None
-            if predicted == correct:
-                counters["pure_text"]["correct"] += 1
-            counters["pure_text"]["total"] += 1
-            records.append(
-                {
-                    "row_index": int(row_index),
-                    "id": row_id,
-                    "task": "classification",
-                    "modality": "pure_text",
-                    "question_index": idx,
-                    "question": question,
-                    "options": options,
-                    "prediction": predicted,
-                    "raw_prediction": generated,
-                    "ground_truth": correct,
-                    "correct": predicted == correct,
-                }
-            )
+            for idx, qa in enumerate(_to_list(tasks.get(field))):
+                if idx in skip_map.get(row_id, {}).get(label, set()):
+                    continue
+                question = str(qa.get("Question") or "").strip()
+                options = dict(qa.get("Options") or {})
+                correct = str(qa.get("Correct_Answer") or "").strip().upper()
+                if not question or not options or not correct:
+                    continue
+                prompt = _formulate_prompt_with_options(question, options)
+                if label == "image_textual":
+                    content, images = _build_image_content(
+                        prompt, image, few_shot_examples[label]
+                    )
+                else:
+                    content = [
+                        {
+                            "type": "text",
+                            "text": _build_text_only_prompt(
+                                prompt, few_shot_examples[label]
+                            ),
+                        }
+                    ]
+                    images = None
+                requests.append((content, images))
+                records.append(
+                    {
+                        "row_index": int(row_index),
+                        "id": row_id,
+                        "task": "classification",
+                        "modality": label,
+                        "question_index": idx,
+                        "question": question,
+                        "options": options,
+                        "ground_truth": correct,
+                        "gold_in_options": correct
+                        in {str(key).upper() for key in options},
+                        "image_index": image.info["mllmu_image_index"]
+                        if label == "image_textual"
+                        else None,
+                    }
+                )
+    predictions = _generate_many(processor, model, requests, max_new_tokens)
+    for record, generated in zip(records, predictions, strict=True):
+        if official:
+            generated = _official_response(generated)
+        cleaned = (
+            generated.strip() if official else re.sub(r"[^a-zA-Z0-9]", "", generated)
+        )
+        predicted = cleaned[0].upper() if cleaned else None
+        if official and predicted not in record["options"]:
+            predicted = None
+        correct = predicted == record["ground_truth"]
+        counters[record["modality"]]["correct"] += int(correct)
+        counters[record["modality"]]["total"] += 1
+        record.update(prediction=predicted, raw_prediction=generated, correct=correct)
 
     total_counter = {
         "correct": counters["image_textual"]["correct"]
@@ -571,6 +596,28 @@ def evaluate_classification(
         "image_textual": _finalize_counter(counters["image_textual"]),
         "pure_text": _finalize_counter(counters["pure_text"]),
         "total": _finalize_counter(total_counter),
+    }
+    # Keep the native/legacy denominator for comparison, and expose annotation
+    # defects separately instead of silently repairing a published benchmark.
+    for modality, metric in metrics.items():
+        selected = [
+            item
+            for item in records
+            if modality == "total" or item["modality"] == modality
+        ]
+        valid = [item for item in selected if item["gold_in_options"]]
+        metric["invalid_gold_count"] = len(selected) - len(valid)
+        metric["unscored_profile_count"] = len(df) - len(
+            {item["id"] for item in selected}
+        )
+        metric["validated"] = _finalize_counter(
+            {"correct": sum(item["correct"] for item in valid), "total": len(valid)}
+        )
+    metrics["few_shot"] = {
+        "seed": few_shot_seed,
+        "selected_ids": selected_ids,
+        "used_profile_ids": sorted(skip_map),
+        "example_counts": {k: len(v) for k, v in few_shot_examples.items()},
     }
     return (metrics, records) if return_records else metrics
 
@@ -584,15 +631,17 @@ def evaluate_fill_in_the_blank(
     filter_ids: set[str] | None = None,
     few_shot_df: pd.DataFrame | None = None,
     shot_count: int = 0,
+    official: bool = False,
+    few_shot_seed: int = 42,
     max_records: int | None = None,
     return_records: bool = False,
 ):
     df = _maybe_limit_frame(
         _maybe_filter_frame(_load_parquet_frame(parquet_path), filter_ids), max_records
     )
-    selected_ids = _sample_few_shot_ids(df, shot_count)
+    selected_ids = _sample_few_shot_ids(df, shot_count, few_shot_seed)
     few_shot_examples, skip_map = (
-        _build_fill_blank_few_shots(few_shot_df, selected_ids)
+        _build_fill_blank_few_shots(few_shot_df, selected_ids, official)
         if shot_count > 0 and few_shot_df is not None
         else ({"image_textual": [], "pure_text": []}, {})
     )
@@ -602,52 +651,40 @@ def evaluate_fill_in_the_blank(
         "pure_text": _new_counter(),
     }
     records: list[dict[str, Any]] = []
-
+    requests = []
     for row_index, row in tqdm(df.iterrows(), total=len(df), desc="FillBlank"):
         record = row.to_dict()
         row_id = str(record.get("ID") or "")
         image = _select_record_image(record)
-
-        for idx, question_data in enumerate(_to_list(record.get("Mask_Task"))):
-            question = str(question_data.get("Question") or "").strip()
-            answer = str(question_data.get("Ground_Truth") or "").strip()
-            qa_type = str(question_data.get("Type") or "").strip()
+        for idx, qa in enumerate(_to_list(record.get("Mask_Task"))):
+            question = str(qa.get("Question") or "").strip()
+            answer = str(qa.get("Ground_Truth") or "").strip()
+            qa_type = str(qa.get("Type") or "").strip()
             if (
                 not question
                 or not answer
                 or qa_type not in {"Image_Textual", "Pure_Text"}
             ):
                 continue
-
             label = "image_textual" if qa_type == "Image_Textual" else "pure_text"
             if idx in skip_map.get(row_id, {}).get(label, set()):
                 continue
-
-            prompt = _normalize_blank_prompt(question)
+            prompt = _normalize_blank_prompt(question, official)
             if label == "image_textual":
                 content, images = _build_image_content(
                     prompt, image, few_shot_examples[label]
                 )
-                generated = _generate_from_content(
-                    processor,
-                    model,
-                    content,
-                    images=images,
-                    max_new_tokens=max_new_tokens,
-                )
             else:
-                generated = _generate_text(
-                    processor,
-                    model,
-                    _build_text_only_prompt(prompt, few_shot_examples[label]),
-                    image=None,
-                    max_new_tokens=max_new_tokens,
-                )
-
-            is_correct = answer.lower() in generated.lower()
-            if is_correct:
-                counters[label]["correct"] += 1
-            counters[label]["total"] += 1
+                content = [
+                    {
+                        "type": "text",
+                        "text": _build_text_only_prompt(
+                            prompt, few_shot_examples[label]
+                        ),
+                    }
+                ]
+                images = None
+            requests.append((content, images))
             records.append(
                 {
                     "row_index": int(row_index),
@@ -656,12 +693,21 @@ def evaluate_fill_in_the_blank(
                     "modality": label,
                     "question_index": idx,
                     "question": question,
-                    "prediction": generated,
                     "ground_truth": answer,
-                    "correct": is_correct,
                     "match_rule": "case_insensitive_ground_truth_substring",
+                    "image_index": image.info["mllmu_image_index"]
+                    if label == "image_textual"
+                    else None,
                 }
             )
+    predictions = _generate_many(processor, model, requests, max_new_tokens)
+    for record, generated in zip(records, predictions, strict=True):
+        if official:
+            generated = _official_response(generated)
+        correct = record["ground_truth"].lower() in generated.lower()
+        counters[record["modality"]]["correct"] += int(correct)
+        counters[record["modality"]]["total"] += 1
+        record.update(prediction=generated, correct=correct)
 
     total_counter = {
         "correct": counters["image_textual"]["correct"]
@@ -672,6 +718,12 @@ def evaluate_fill_in_the_blank(
         "image_textual": _finalize_counter(counters["image_textual"]),
         "pure_text": _finalize_counter(counters["pure_text"]),
         "total": _finalize_counter(total_counter),
+    }
+    metrics["few_shot"] = {
+        "seed": few_shot_seed,
+        "selected_ids": selected_ids,
+        "used_profile_ids": sorted(skip_map),
+        "example_counts": {k: len(v) for k, v in few_shot_examples.items()},
     }
     return (metrics, records) if return_records else metrics
 
@@ -684,6 +736,7 @@ def evaluate_generation(
     output_dir: str,
     split_name: str,
     max_new_tokens: int = 200,
+    official: bool = False,
     filter_ids: set[str] | None = None,
     max_records: int | None = None,
 ):
@@ -696,12 +749,11 @@ def evaluate_generation(
         "pure_text": _new_generation_counter(),
     }
     records = []
-
+    requests = []
     for row_index, row in tqdm(df.iterrows(), total=len(df), desc="Generation"):
         record = row.to_dict()
         image = _select_record_image(record)
-
-        for question_index, qa in enumerate(_to_list(record.get("Generation_Task"))):
+        for idx, qa in enumerate(_to_list(record.get("Generation_Task"))):
             question = str(qa.get("Question") or "").strip()
             answer = str(qa.get("Ground_Truth") or "").strip()
             qa_type = str(qa.get("Type") or "").strip()
@@ -711,49 +763,55 @@ def evaluate_generation(
                 or qa_type not in {"Image_Textual", "Pure_Text"}
             ):
                 continue
-
             label = "image_textual" if qa_type == "Image_Textual" else "pure_text"
-            generated = _generate_text(
-                processor,
-                model,
-                question,
-                image=image if label == "image_textual" else None,
-                max_new_tokens=max_new_tokens,
-            )
-
-            example_scores = {
-                "rouge1": None,
-                "rouge2": None,
-                "rougeL": None,
-                "bleu": None,
-            }
-            if scorer is not None:
-                rouge_scores = scorer.score(answer, generated)
-                for metric_name in ("rouge1", "rouge2", "rougeL"):
-                    value = rouge_scores[metric_name].fmeasure
-                    counters[label][metric_name] += value
-                    example_scores[metric_name] = value
-                counters[label]["rouge_count"] += 1
-            bleu = _compute_bleu(answer, generated)
-            if bleu is not None:
-                counters[label]["bleu"] += bleu
-                counters[label]["bleu_count"] += 1
-                example_scores["bleu"] = bleu
-            counters[label]["total"] += 1
-
+            prompt = question
+            if official:
+                accurately = " accurately" if label == "image_textual" else ""
+                prompt += (
+                    "\nAnswer the question based on your trained knowledge "
+                    f"in one sentence{accurately} in ENGLISH."
+                )
+            content = [{"type": "text", "text": prompt}]
+            images = None
+            if label == "image_textual":
+                content.insert(0, {"type": "image"})
+                images = [image]
+            requests.append((content, images))
             records.append(
                 {
                     "row_index": int(row_index),
                     "id": str(record.get("ID") or ""),
                     "task": "generation",
+                    "prompt": prompt,
                     "modality": label,
-                    "question_index": question_index,
+                    "question_index": idx,
                     "question": question,
-                    "prediction": generated,
                     "ground_truth": answer,
-                    "scores": example_scores,
+                    "image_index": image.info["mllmu_image_index"]
+                    if label == "image_textual"
+                    else None,
                 }
             )
+    predictions = _generate_many(processor, model, requests, max_new_tokens)
+    for record, generated in zip(records, predictions, strict=True):
+        if official:
+            record["raw_prediction"] = generated
+            generated = _official_response(generated, generation=True)
+        label, answer = record["modality"], record["ground_truth"]
+        scores = {"rouge1": None, "rouge2": None, "rougeL": None, "bleu": None}
+        if scorer is not None:
+            rouge_scores = scorer.score(answer, generated)
+            for name in ("rouge1", "rouge2", "rougeL"):
+                scores[name] = rouge_scores[name].fmeasure
+                counters[label][name] += scores[name]
+            counters[label]["rouge_count"] += 1
+        bleu = _compute_bleu(answer, generated)
+        if bleu is not None:
+            counters[label]["bleu"] += bleu
+            counters[label]["bleu_count"] += 1
+            scores["bleu"] = bleu
+        counters[label]["total"] += 1
+        record.update(prediction=generated, scores=scores)
 
     os.makedirs(output_dir, exist_ok=True)
     detail_file = os.path.join(output_dir, f"{split_name}_generation_results.json")
@@ -825,6 +883,12 @@ class MLLMUEvaluator:
         )
         self.shot_num = str(eval_cfg.get("shot_num", "zero_shot"))
         self.shot_count = _parse_shot_num(self.shot_num)
+        self.official = bool(eval_cfg.get("official_prompt_scoring", False))
+        self.classification_shots = int(
+            eval_cfg.get("classification_shots", self.shot_count)
+        )
+        self.cloze_shots = int(eval_cfg.get("cloze_shots", self.shot_count))
+        self.few_shot_seed = int(eval_cfg.get("few_shot_seed", 42))
         self.task_semantics = str(
             eval_cfg.get("task_semantics", "full_multimodal_deletion")
         ).lower()
@@ -882,6 +946,15 @@ class MLLMUEvaluator:
                 "cloze_generation_fields": ["Question", "Ground_Truth", "Type"],
             },
             "shot_num": self.shot_num,
+            "official_prompt_scoring": self.official,
+            "classification_shot_profiles": self.classification_shots,
+            "cloze_shot_profiles": self.cloze_shots,
+            "few_shot_seed": self.few_shot_seed,
+            "generation_max_new_tokens": self.generation_max_new_tokens,
+            "model_wrapper": "saved_processor_chat_template",
+            "protocol_name": self.eval_cfg.get("protocol", {}).get(
+                "name", "legacy_zero_shot"
+            ),
             "task_semantics": self.task_semantics,
             "modality_aggregation_policy": (
                 "report_image_textual_and_pure_text_separately"
@@ -973,7 +1046,7 @@ class MLLMUEvaluator:
 
         few_shot_df = None
         few_shot_issue = None
-        if self.shot_count > 0:
+        if max(self.classification_shots, self.cloze_shots) > 0:
             try:
                 few_shot_df = _load_parquet_frame(self.few_shot_parquet)
             except FileNotFoundError as exc:
@@ -1026,7 +1099,9 @@ class MLLMUEvaluator:
                     max_new_tokens=self.max_new_tokens,
                     filter_ids=split_filter_ids,
                     few_shot_df=few_shot_df,
-                    shot_count=self.shot_count,
+                    shot_count=self.classification_shots,
+                    official=self.official,
+                    few_shot_seed=self.few_shot_seed,
                     max_records=self.max_records,
                     return_records=True,
                 )
@@ -1042,7 +1117,9 @@ class MLLMUEvaluator:
                     max_new_tokens=self.max_new_tokens,
                     filter_ids=split_filter_ids,
                     few_shot_df=few_shot_df,
-                    shot_count=self.shot_count,
+                    shot_count=self.cloze_shots,
+                    official=self.official,
+                    few_shot_seed=self.few_shot_seed,
                     max_records=self.max_records,
                     return_records=True,
                 )
@@ -1058,6 +1135,7 @@ class MLLMUEvaluator:
                     output_dir=self.output_dir,
                     split_name=split_name,
                     max_new_tokens=self.generation_max_new_tokens,
+                    official=self.official,
                     filter_ids=split_filter_ids,
                     max_records=self.max_records,
                 )

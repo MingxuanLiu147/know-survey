@@ -18,6 +18,7 @@ configured_methods:
   - MMSCRUB
   - MMUnlearner
   - MMMANU
+  - MMVKD
 
 # Qwen2-VL-7B is a portability target, not an original model in either paper.
 # MLLMU-Bench used LLaVA-1.5-7B/Idefics2-8B; CLEAR used LLaVA and reported an

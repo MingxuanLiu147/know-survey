@@ -33,6 +33,7 @@ from trainer.edit.utils.reference import (
     ensure_reference_contexts,
     reference_stats_kwargs,
     validate_reference_profile,
+    validate_statistics_configuration,
 )
 
 logger = logging.getLogger(__name__)
@@ -68,8 +69,14 @@ class ROMEEditor(EditTrainer):
         mlp_module_tmp: str = "model.layers.{}.mlp",
         context_template_length_params: Optional[List[List[int]]] = None,
         mom2_dataset_config: str | None = None,
+        mom2_data_path: str | None = None,
         mom2_sample_seed: int = 1,
         mom2_batch_tokens: int | None = None,
+        mom2_max_length: int | None = None,
+        mom2_attention_policy: str = "model_default",
+        mom2_query_chunk_size: int = 256,
+        mom2_placement_policy: str = "model_default",
+        mom2_require_cached: bool = False,
         *args,
         **kwargs,
     ):
@@ -113,7 +120,13 @@ class ROMEEditor(EditTrainer):
             else None
         )
         self.mom2_sample_seed = mom2_sample_seed
+        self.mom2_data_path = mom2_data_path
         self.mom2_batch_tokens = mom2_batch_tokens
+        self.mom2_max_length = mom2_max_length
+        self.mom2_attention_policy = mom2_attention_policy
+        self.mom2_query_chunk_size = mom2_query_chunk_size
+        self.mom2_placement_policy = mom2_placement_policy
+        self.mom2_require_cached = mom2_require_cached
         validate_reference_profile(self, "ROME")
         self._inv_cov_cache: Dict[str, torch.Tensor] = {}
 
@@ -163,8 +176,9 @@ class ROMEEditor(EditTrainer):
         model, tok = self.model, self.tokenizer
         rewrite_name = self.rewrite_module_tmp.format(layer_idx)
         weight = get_parameter(model, f"{rewrite_name}.weight")
+        request_prompt = request.prompt_template or request.prompt
         req_dict = {
-            "prompt": request.prompt,
+            "prompt": request_prompt,
             "subject": request.subject,
             "target_new": request.target_new,
         }
@@ -198,7 +212,7 @@ class ROMEEditor(EditTrainer):
             ),
         )
 
-        prompts, subjects = [request.prompt], [request.subject]
+        prompts, subjects = [request_prompt], [request.subject]
         keys, _ = get_module_input_output_at_words(
             model,
             tok,
@@ -269,7 +283,11 @@ class ROMEEditor(EditTrainer):
                         f"ROME update {tuple(delta.shape)} does not match "
                         f"{rewrite_name}.weight {tuple(weight.shape)}"
                     )
-            weight.add_(delta.to(device=weight.device, dtype=weight.dtype))
+            # Add the FP32 update before rounding the sum to the model dtype.
+            updated_weight = (weight + delta.to(device=weight.device)).to(weight.dtype)
+            if not torch.isfinite(updated_weight).all():
+                raise ValueError(f"ROME weight overflow at {rewrite_name}")
+            weight.copy_(updated_weight)
 
         logger.info(
             "ROME edit applied at layer %d: %s -> %s (residual_norm=%.4f)",
@@ -284,6 +302,7 @@ class ROMEEditor(EditTrainer):
         if not self.mom2_adjustment:
             return key / key.norm().clamp(min=1e-12)
 
+        validate_statistics_configuration(self)
         cache_key = f"{self.model.config._name_or_path}:{rewrite_name}"
         if cache_key not in self._inv_cov_cache:
             stats = layer_stats(

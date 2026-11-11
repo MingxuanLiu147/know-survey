@@ -7,6 +7,10 @@ defaults:
   - override /data/datasets@data.edit: CounterFact_edit
   - override /eval: edit
 
+model:
+  model_args:
+    torch_dtype: float32
+
 trainer:
   method_args:
     layers:

@@ -70,7 +70,7 @@ flowchart TD
 
 编辑模式也必须区分：`single` 一条；`batch` 一次传入列表，是否联合求解取决于方法；`sequential` 在已编辑模型上累计修改；`independent` 每条编辑后评测并恢复。它们产生的分数回答不同实验问题。
 
-当前 ROME/MEMIT/AlphaEdit 已有 `native_adapted` 与 `official_reference` 配置。参考配置存在，并不能替代原论文规模和协议的复现证据。MEND/MALMEN/InstructEdit 等仍有 compact/checkpoint-specific 条件；SERAC 与 SERACCompact 也应分别标注。
+当前 ROME/MEMIT/AlphaEdit 已有 `native_adapted` 与 `official_reference` 配置。参考配置存在，并不能替代原论文规模和协议的复现证据。MEND 分为 factor-network 与 compact 路径；MALMEN/InstructEdit 保留各自的辅助网络与 checkpoint 条件；SERAC 与 SERACCompact 也应分别标注。
 
 ### 评测与保存
 

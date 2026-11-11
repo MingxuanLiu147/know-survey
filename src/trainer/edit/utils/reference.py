@@ -24,6 +24,84 @@ from trainer.edit.utils.compute_z import (
 REFERENCE_VARIANT = "official_reference"
 
 
+def statistics_execution_options(editor) -> dict:
+    """Expose an explicit statistics implementation without changing edit attention."""
+    attention = getattr(editor, "mom2_attention_policy", "model_default")
+    placement = getattr(editor, "mom2_placement_policy", "model_default")
+    if attention == "model_default" and placement == "model_default":
+        return {}
+    options = {
+        "attention_policy": attention,
+        "query_chunk_size": getattr(editor, "mom2_query_chunk_size", 256),
+        "placement_policy": placement,
+    }
+    device = getattr(editor, "mom2_execution_device", None)
+    if device is not None:
+        options["execution_backend"] = torch.device(device).type
+    return options
+
+
+def statistics_execution_metadata(editor) -> dict:
+    """Bind alternative C0/projection computation to its actual implementation."""
+    options = statistics_execution_options(editor)
+    if not options:
+        return {}
+    from trainer.edit.utils.statistics_context import statistics_execution_identity
+
+    return {
+        "statistics_execution": statistics_execution_identity(editor.model, **options)
+    }
+
+
+def validate_statistics_configuration(editor, *, bind: bool = True) -> None:
+    """Keep fixed base-model statistics from crossing a changed editor setup.
+
+    Sequential weight updates intentionally retain C0. Replacing the model,
+    tokenizer or corpus requires a fresh editor, rather than reusing that C0.
+    """
+    from trainer.edit.utils.layer_stats import statistics_data_identity
+
+    identity = {
+        "model_instance": id(editor.model),
+        "tokenizer_instance": id(editor.tokenizer),
+        "model_dtype": str(next(editor.model.parameters()).dtype),
+        "attention_implementation": getattr(
+            editor.model.config, "_attn_implementation", None
+        ),
+        "local_source": statistics_data_identity(
+            getattr(editor, "mom2_data_path", None)
+        ),
+        **statistics_execution_metadata(editor),
+        **{
+            name: getattr(editor, name, None)
+            for name in (
+                "implementation_variant",
+                "mom2_dataset",
+                "mom2_dataset_config",
+                "mom2_n_samples",
+                "mom2_dtype",
+                "mom2_sample_policy",
+                "mom2_sample_seed",
+                "mom2_batch_tokens",
+                "mom2_max_length",
+                "mom2_attention_policy",
+                "mom2_query_chunk_size",
+                "mom2_placement_policy",
+                "rewrite_module_tmp",
+                "covariance_ridge",
+            )
+        },
+    }
+    previous = getattr(editor, "_statistics_configuration", None)
+    if previous is not None and previous != identity:
+        raise ValueError(
+            "Model/tokenizer/statistics configuration or attention policy changed after C0 initialization; "
+            "restore the original policy or prepare a fresh editor/state from the base model"
+        )
+    if bind:
+        editor._statistics_configuration = identity
+
+
 def validate_reference_profile(editor, method: str) -> None:
     """Reject a mislabeled profile rather than silently changing its objective."""
     if editor.implementation_variant not in {"native_adapted", REFERENCE_VARIANT}:
@@ -53,15 +131,30 @@ def validate_reference_profile(editor, method: str) -> None:
 
 
 def reference_stats_kwargs(editor) -> dict:
-    """Keep native cache identities intact; reference statistics opt in explicitly."""
-    if editor.implementation_variant != REFERENCE_VARIANT:
-        return {}
-    return {
-        "dataset_config": editor.mom2_dataset_config,
-        "sample_policy": "upstream_random",
-        "sample_seed": editor.mom2_sample_seed,
-        "batch_tokens": editor.mom2_batch_tokens,
+    """Honor explicit corpus/resource choices in native and reference profiles."""
+    options = {
+        key: value
+        for key, value in (
+            ("dataset_config", getattr(editor, "mom2_dataset_config", None)),
+            ("data_path", getattr(editor, "mom2_data_path", None)),
+            ("batch_tokens", getattr(editor, "mom2_batch_tokens", None)),
+            ("max_length", getattr(editor, "mom2_max_length", None)),
+            ("execution_device", getattr(editor, "mom2_execution_device", None)),
+            (
+                "checkpoint_every_batches",
+                getattr(editor, "mom2_checkpoint_every_batches", None),
+            ),
+        )
+        if value is not None
     }
+    if editor.implementation_variant == REFERENCE_VARIANT:
+        options.update(
+            sample_policy="upstream_random", sample_seed=editor.mom2_sample_seed
+        )
+    options.update(statistics_execution_options(editor))
+    if getattr(editor, "mom2_require_cached", False):
+        options["cache_only"] = True
+    return options
 
 
 def _generate_contexts(model, tok, prompts, count, length):

@@ -28,7 +28,14 @@ from data import get_data
 from evals import get_evaluators
 from evals.mm_edit import MMEditLocalityEvaluator
 from model.multimodal import get_mm_model
+from know_surgery.mm_resume_identity import (
+    RESUME_IDENTITY_VERSION,
+    build_mm_resume_identity,
+    validate_mm_resume_identity,
+)
 from trainer import load_trainer
+from trainer.edit.checkpoint_identity import build_base_model_identity
+from trainer.edit.utils.cache_identity import tokenizer_identity
 from trainer.edit.pipeline import (
     build_edit_requests,
     execute_edit_requests,
@@ -36,6 +43,8 @@ from trainer.edit.pipeline import (
     to_jsonable,
 )
 from trainer.utils import seed_everything
+
+from know_surgery.runtime import resolve_device as _resolve_runtime_device
 
 logger = logging.getLogger(__name__)
 
@@ -311,31 +320,6 @@ def _save_standard_trace_files(output_path: Path, manifest: Mapping[str, Any]) -
     )
 
 
-def _resolve_runtime_device(cfg: DictConfig) -> str:
-    device = str(cfg.get("device", "cuda"))
-    require_cuda = bool(cfg.get("require_cuda", device.startswith("cuda")))
-    cuda_available = torch.cuda.is_available()
-
-    logger.info(
-        "Runtime device check: device=%s, require_cuda=%s, cuda_available=%s",
-        device,
-        require_cuda,
-        cuda_available,
-    )
-
-    if device.startswith("cuda") and not cuda_available:
-        hint = (
-            "CUDA is not available for mm_edit. "
-            "Override with `device=cpu require_cuda=false` for a CPU smoke run."
-        )
-        if require_cuda:
-            raise RuntimeError(hint)
-        logger.warning("%s", hint)
-        return "cpu"
-
-    return device
-
-
 def _runtime_edit_data(edit_requests) -> list[dict[str, Any]]:
     """Expose request fields to evaluators while retaining live PIL images."""
     runtime_data = []
@@ -480,11 +464,36 @@ def _requires_mm_locality_baseline(eval_cfgs: Any) -> bool:
     return False
 
 
-def _prepare_independent_root(cfg: DictConfig, requests, output_dir: str) -> str:
-    """Persist enough identity before a long run to make interruption auditable."""
+def _prepare_independent_root(
+    cfg: DictConfig, requests, output_dir: str, *, model, processor
+) -> str:
+    """Validate content identity before resuming or replacing root metadata."""
     output_path = Path(output_dir)
-    output_path.mkdir(parents=True, exist_ok=True)
     resolved = OmegaConf.to_container(cfg, resolve=True)
+    image_processor = getattr(processor, "image_processor", None)
+    resume_identity = build_mm_resume_identity(
+        resolved,
+        requests,
+        checkpoint_identity=build_base_model_identity(model),
+        processor_identity={
+            "tokenizer": tokenizer_identity(processor.tokenizer),
+            "processor": processor.to_dict(),
+            "image_processor": image_processor.to_dict()
+            if image_processor is not None
+            else None,
+        },
+    )
+    identity_path = output_path / "independent_identity.json"
+    if bool(cfg.get("resume_independent", True)):
+        if identity_path.is_file():
+            validate_mm_resume_identity(
+                json.loads(identity_path.read_text(encoding="utf-8")), resume_identity
+            )
+        elif any((output_path / "independent_cases").glob("*/case_record.json")):
+            validate_mm_resume_identity(None, resume_identity)
+
+    output_path.mkdir(parents=True, exist_ok=True)
+    _write_json_atomic(identity_path, resume_identity)
     (output_path / "resolved_config.yaml").write_text(
         OmegaConf.to_yaml(cfg, resolve=True), encoding="utf-8"
     )
@@ -492,7 +501,7 @@ def _prepare_independent_root(cfg: DictConfig, requests, output_dir: str) -> str
         shlex.join([sys.executable, *sys.argv]) + "\n", encoding="utf-8"
     )
     _write_json_atomic(output_path / "edit_requests_preview.json", requests)
-    identity = _sha256_json(resolved)
+    identity = resume_identity["run_identity"]
     _write_json_atomic(
         output_path / "independent_progress.json",
         {
@@ -536,12 +545,19 @@ def _run_mm_independent_edit_benchmark(
         case_dir = cases_root / f"{index:05d}"
         record_path = case_dir / "case_record.json"
         case_identity = _sha256_json(
-            {"run_identity": run_identity, "case_index": index, "request": request}
+            {
+                "resume_identity_version": RESUME_IDENTITY_VERSION,
+                "run_identity": run_identity,
+                "case_index": index,
+            }
         )
 
         if record_path.is_file() and resume:
             cached = json.loads(record_path.read_text(encoding="utf-8"))
-            if cached.get("case_identity") != case_identity:
+            if (
+                cached.get("resume_identity_version") != RESUME_IDENTITY_VERSION
+                or cached.get("case_identity") != case_identity
+            ):
                 raise RuntimeError(
                     f"Independent case {index} has a mismatched resume identity; "
                     "use a new output directory instead of mixing runs"
@@ -595,6 +611,7 @@ def _run_mm_independent_edit_benchmark(
             summary = _flatten_mm_case_metrics(eval_results)
             record = {
                 "case_index": index,
+                "resume_identity_version": RESUME_IDENTITY_VERSION,
                 "case_identity": case_identity,
                 "success": True,
                 "elapsed_seconds": time.perf_counter() - case_started,
@@ -606,6 +623,7 @@ def _run_mm_independent_edit_benchmark(
         except Exception as exc:
             record = {
                 "case_index": index,
+                "resume_identity_version": RESUME_IDENTITY_VERSION,
                 "case_identity": case_identity,
                 "success": False,
                 "elapsed_seconds": time.perf_counter() - case_started,
@@ -815,7 +833,11 @@ def main(cfg: DictConfig):
                 "edit_type=independent requires trainer.args.do_eval=true and MM evaluators"
             )
         run_identity = _prepare_independent_root(
-            cfg, edit_requests, trainer_args.output_dir
+            cfg,
+            edit_requests,
+            trainer_args.output_dir,
+            model=model,
+            processor=processor,
         )
         try:
             edit_summary = _run_mm_independent_edit_benchmark(

@@ -569,6 +569,8 @@ class WISEEditor(EditTrainer):
             "editing_total_cnt": adapter.editing_total_cnt,
             "weight_mask": self._clone_optional_tensor(adapter.weight_mask),
             "min_act": adapter._min_act,
+            "attention_mask": self._clone_optional_tensor(adapter.attention_mask),
+            "positive_rows": getattr(adapter, "positive_rows", 1),
             "original_layer_output": self._clone_optional_tensor(
                 adapter.original_layer_output
             ),
@@ -603,6 +605,9 @@ class WISEEditor(EditTrainer):
         adapter.editing_total_cnt = state["editing_total_cnt"]
         adapter.weight_mask = state["weight_mask"]
         adapter._min_act = state["min_act"]
+        adapter.attention_mask = state["attention_mask"]
+        if hasattr(adapter, "positive_rows"):
+            adapter.positive_rows = state["positive_rows"]
         adapter.original_layer_output = state["original_layer_output"]
         adapter.new_weight_layer_output = state["new_weight_layer_output"]
         self._edit_history = state["edit_history"]
@@ -809,7 +814,9 @@ class WISEEditor(EditTrainer):
         """Validate explicit training negatives while keeping probes held out."""
 
         def normalize(prompt):
-            return " ".join(prompt.split()).casefold()
+            from know_surgery.edit_data import scope_key
+
+            return scope_key(prompt)
 
         def probe_prompts(value):
             if isinstance(value, str):

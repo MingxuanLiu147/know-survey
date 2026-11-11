@@ -1,0 +1,36 @@
+# @package _global_
+# 512-example pilot, full-solution supervision. NOT BREP's prefix-training method.
+defaults:
+  - override /model: Qwen2.5-1.5B
+  - override /trainer: inject/LoRA
+  - override /data: inject
+  - override /data/datasets@data.train: GSM8K_train_inject
+  - override /eval: gsm8k
+  - _self_
+model:
+  model_args:
+    pretrained_model_name_or_path: ${oc.env:GSM8K_BASE_MODEL,Qwen/Qwen2.5-1.5B}
+    attn_implementation: sdpa
+  tokenizer_args:
+    pretrained_model_name_or_path: ${model.model_args.pretrained_model_name_or_path}
+  template_args:
+    # Override Math-Instruct's implicit boxed-answer system prompt: targets use ####.
+    system_prompt: "You are a helpful assistant. Follow the user's requested answer format."
+trainer:
+  args:
+    num_train_epochs: 2
+    per_device_train_batch_size: 2
+    gradient_accumulation_steps: 16
+    learning_rate: 1e-4
+    warmup_ratio: 0.05
+    weight_decay: 0.0
+    lr_scheduler_type: linear
+    gradient_checkpointing: true
+    gradient_checkpointing_kwargs:
+      use_reentrant: false
+    logging_steps: 4
+    save_strategy: epoch
+    save_total_limit: 2
+    do_eval: false
+    eval_strategy: 'no'
+    seed: 42

@@ -108,14 +108,3 @@ class DoRATrainer(InjectTrainer):
         except ImportError:
             logger.error("peft library not installed. Please run: pip install peft")
             raise
-
-    def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
-        """计算 DoRA 微调损失"""
-        outputs = model(
-            input_ids=inputs["input_ids"],
-            attention_mask=inputs["attention_mask"],
-            labels=inputs["labels"],
-        )
-        loss = outputs.loss
-
-        return (loss, outputs) if return_outputs else loss

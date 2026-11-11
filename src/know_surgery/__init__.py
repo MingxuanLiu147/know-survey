@@ -1,3 +1,7 @@
 """Know-Surgery's installed command and configuration resources."""
 
-__version__ = "0.1.0"
+from know_surgery.api import run_surgery
+
+__all__ = ["run_surgery"]
+
+__version__ = "0.2.0"

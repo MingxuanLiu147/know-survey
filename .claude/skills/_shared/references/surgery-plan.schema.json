@@ -22,6 +22,7 @@
     "schema_version": {"const": "1.0"},
     "intent": {"type": "string", "minLength": 1},
     "operation": {"enum": ["unlearning", "inject", "edit"]},
+    "modality": {"enum": ["text", "multimodal"], "default": "text"},
     "knowledge_type": {
       "enum": ["fact", "event", "procedural", "rule", "free_text", "concept", "multimodal"]
     },

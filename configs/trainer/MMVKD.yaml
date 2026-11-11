@@ -1,7 +1,8 @@
-# Registered extension point only. The paper calls the method VKD.
+# Paper-based implementation of arXiv:2512.11325v2 equations 3--11.
+# Hyperparameters below are LOCAL starting values: the public paper omits them.
 handler: MMVKD
-status: Planned
-runnable: false
+status: Prototype
+runnable: true
 paper_arxiv: "2512.11325"
 
 args:
@@ -10,8 +11,30 @@ args:
   max_grad_norm: 1.0
   gradient_accumulation_steps: 1
   warmup_steps: 0
+  optimizer: adam
+  weight_decay: 0.0
+  max_steps: -1
 
 method_args:
-  teacher_model_path: null
-  visual_feature_layers: null
-  vision_only_updates: true
+  forget_alpha: 1.0
+  distill_beta: 1.0
+  prune_threshold: 2.0
+  fisher_threshold: 1.0
+  vision_layer_fraction: 0.5
+  calibration_max_samples: null
+  epsilon: 1e-12
+  visual_fp32: true
+
+method_contract:
+  source: https://arxiv.org/html/2512.11325v2
+  implementation: paper_based_qwen_visual_extension
+  hyperparameter_source: local_defaults_not_reported_in_paper
+  target: visual_entity_unlearning_with_text_preservation
+  teacher: frozen_incoming_vanilla_visual_module_before_pruning
+  requires_lora_disabled: true
+  requires_single_process: true
+  selection: deeper_half_vision_encoder_mlp
+  trainable: vision_encoder_and_projector
+  forget_mask_scope: selected_vision_mlp_only
+  retain_gradient_scope: all_visual_parameters
+  feature_loss: token_mean_squared_l2

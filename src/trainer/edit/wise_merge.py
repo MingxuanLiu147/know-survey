@@ -15,6 +15,7 @@ usage and compatibility limits; no benchmark reproduction is implied.
 from __future__ import annotations
 
 import copy
+import math
 import string
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,7 @@ from transformers.activations import ACT2FN
 from trainer.edit.wise import WISEAdapter, WISEEditor, _activation_distance
 from trainer.edit.base import EditTrainer
 from trainer.edit.utils.nethook import replace_module
+from know_surgery.edit_data import scope_key
 
 
 UPSTREAM_REVISION = "14cea8245f06715684592ab55184939b99d70784"
@@ -85,6 +87,13 @@ class WISEMergeAdapter(WISEAdapter):
 
     activation_name = "linear"
     positive_rows = 1
+    capture_probe_diagnostics = False
+    _probe_diagnostics = None
+
+    def take_probe_diagnostics(self):
+        """Consume the bounded record from an explicitly observed forward."""
+        result, self._probe_diagnostics = self._probe_diagnostics, None
+        return result
 
     def distance(self, a, b, mask=None, *, per_sample=False, inference=False):
         act = ACT2FN[self.activation_name]
@@ -174,6 +183,50 @@ class WISEMergeAdapter(WISEAdapter):
             result = torch.where(
                 use.reshape(-1, *([1] * (candidate.ndim - 1))), candidate, result
             )
+        if self.capture_probe_diagnostics:
+            # Observation uses the distances and decisions above. It does not
+            # run another forward or alter the gate, weights, or random state.
+            count = min(16, selected.numel())
+            values = distances.reshape(2, -1)[:, :count].detach().float().cpu().tolist()
+            choices = selected.reshape(-1)[:count].detach().cpu().tolist()
+            passed = (maximum.reshape(-1)[:count] >= threshold).detach().cpu().tolist()
+            if original.ndim > 2:
+                if self.attention_mask is None:
+                    lengths = [original.shape[-2]] * count
+                else:
+                    lengths = (
+                        self.attention_mask[:count, -original.shape[-2] :]
+                        .bool()
+                        .sum(-1)
+                        .cpu()
+                        .tolist()
+                    )
+            else:
+                lengths = [1] * count
+            self._probe_diagnostics = {
+                "method": "WISE-Merge",
+                "epsilon": self._min_act if math.isfinite(self._min_act) else None,
+                "threshold": threshold if math.isfinite(threshold) else None,
+                "gate_initialized": math.isfinite(threshold),
+                "batch_rows": selected.numel(),
+                "recorded_rows": count,
+                "truncated_rows": max(0, selected.numel() - count),
+                "rows": [
+                    {
+                        "row_index": index,
+                        "base_distance": 0.0,
+                        "merged_distance": values[0][index],
+                        "active_distance": values[1][index],
+                        "candidate_branch": ("merged", "active")[choices[index]],
+                        "selected_branch": ("merged", "active")[choices[index]]
+                        if passed[index]
+                        else "base",
+                        "valid_tokens": lengths[index],
+                        "distance_reduction": "max" if lengths[index] > 100 else "mean",
+                    }
+                    for index in range(count)
+                ],
+            }
         return result
 
 
@@ -386,7 +439,7 @@ class WISEMergeEditor(WISEEditor):
                         yield from probes(item)
 
         held_out = {
-            " ".join(prompt.split()).casefold()
+            scope_key(prompt)
             for group in (
                 request.rephrase_prompts,
                 request.locality_inputs,
@@ -394,9 +447,7 @@ class WISEMergeEditor(WISEEditor):
             )
             for prompt in probes(group)
         }
-        if held_out.intersection(
-            " ".join(prompt.split()).casefold() for prompt in positive
-        ):
+        if held_out.intersection(scope_key(prompt) for prompt in positive):
             raise ValueError(
                 "WISE-Merge training contexts overlap held-out evaluation probes"
             )
@@ -464,6 +515,7 @@ class WISEMergeEditor(WISEEditor):
 
     def _apply_wise_edit(self, request) -> dict[str, Any]:
         adapter = self._get_adapter()
+        adapter._probe_diagnostics = None
         tokens, act_mask, deact_mask, n_positive, n_negative = self._training_batch(
             request
         )
@@ -553,11 +605,16 @@ class WISEMergeEditor(WISEEditor):
                         )
                 previous_loss = value
             with torch.no_grad():
-                self.model(
+                final_outputs = self.model(
                     input_ids=tokens["input_ids"],
                     attention_mask=tokens["attention_mask"],
                 )
             adapter.save_editing_activation()
+            with torch.no_grad():
+                final_diagnostics = self._post_update_diagnostics(
+                    adapter, final_outputs, tokens, act_mask, deact_mask, n_positive
+                )
+            del final_outputs
         finally:
             adapter.editing = False
             for module, training in states:
@@ -579,5 +636,92 @@ class WISEMergeEditor(WISEEditor):
             "upstream_revision": UPSTREAM_REVISION,
             "uses_evaluation_probes": False,
             "optimizer_steps": iterations,
+            "loss_timing": "last_optimization_forward_before_update_or_stop",
+            "post_update_diagnostics": final_diagnostics,
             **last_values,
+        }
+
+    def _post_update_diagnostics(
+        self, adapter, outputs, tokens, act_mask, deact_mask, n_positive
+    ):
+        """Observe the existing final forward, before saving/merging the shard."""
+        logits = outputs.logits[:n_positive, :-1]
+        targets = tokens["labels"][:n_positive, 1:].to(logits.device)
+        losses = F.cross_entropy(
+            logits.reshape(-1, logits.size(-1)),
+            targets.reshape(-1),
+            reduction="none",
+        ).reshape_as(targets)
+        target_mask = targets.ne(-100)
+        ft_loss = ((losses * target_mask).sum(-1) / target_mask.sum(-1)).mean()
+        original, edited = (
+            adapter.original_layer_output,
+            adapter.new_weight_layer_output,
+        )
+        in_scope = adapter.distance(
+            original[:n_positive], edited[:n_positive], act_mask, per_sample=True
+        )
+        if self.activation_scope == "subject":
+            out_scope = adapter.distance(
+                original[:n_positive],
+                edited[:n_positive],
+                deact_mask,
+                per_sample=True,
+            )
+        else:
+            out_scope = adapter.distance(
+                original[n_positive:],
+                edited[n_positive:],
+                tokens["attention_mask"][n_positive:],
+                per_sample=True,
+            )
+        components = {
+            "separation": positive_mean(
+                out_scope[:, None] - in_scope[None, :] + self.gamma
+            ),
+            "out_scope_upper_bound": positive_mean(out_scope - self.alpha),
+            "in_scope_lower_bound": positive_mean(self.beta - in_scope),
+        }
+        act_loss = activation_margin(
+            in_scope, out_scope, self.alpha, self.beta, self.gamma
+        )
+        # epsilon is sampled over each positive's full valid sequence, also in
+        # subject-scope mode. Record that actual rule separately from act_mask.
+        epsilon_observation = adapter.distance(
+            original[:n_positive],
+            edited[:n_positive],
+            tokens["attention_mask"][:n_positive],
+        )
+        delta = adapter.new_weight.detach() - adapter._original_weight_cpu.to(
+            adapter.new_weight
+        )
+        mask = adapter.weight_mask.view_as(delta).bool()
+        inside_count = int(mask.sum())
+        outside = delta[~mask]
+        return {
+            "timing": "after_final_optimizer_step_before_shard_save_or_merge",
+            "extra_model_forwards": 0,
+            "ft_loss": float(ft_loss),
+            "activation_loss": float(act_loss),
+            "total_loss": float(ft_loss + act_loss.to(ft_loss.device)),
+            "margin_components": {
+                name: float(value) for name, value in components.items()
+            },
+            "in_scope_distances": in_scope.float().cpu().tolist(),
+            "out_scope_distances": out_scope.float().cpu().tolist(),
+            "epsilon_scope": "positive_full_valid_sequence_mean",
+            "epsilon_observation": float(epsilon_observation),
+            "epsilon": adapter._min_act,
+            "threshold": adapter._min_act * adapter.act_ratio,
+            "mask": {
+                "delta_reference": "active_shard_minus_immutable_base",
+                "density": inside_count / mask.numel(),
+                "zero_delta_inside_mask_fraction": int((delta[mask] == 0).sum())
+                / inside_count
+                if inside_count
+                else None,
+                "max_abs_delta_outside_mask": float(outside.abs().max())
+                if outside.numel()
+                else 0.0,
+            },
         }

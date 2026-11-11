@@ -1,0 +1,50 @@
+# @package _global_
+# Separate visual-entity unlearning experiment; not a MIP full-deletion baseline.
+defaults:
+  - override /model: Qwen2.5-VL-3B
+  - override /data: mllmu
+  - override /trainer: MMUnlearner
+
+model:
+  model_path: ???
+  processor_path: ${model.model_path}
+  preserve_saved_processor: true
+  torch_dtype: float32
+  lora:
+    enabled: false
+
+data:
+  mode: unlearn
+  training_source: ft_data
+  training_parquet: ${data.data_dir}/ft_Data/train-00000-of-00001.parquet
+  forget_split_ratio: 5
+  batch_size: 4
+  ans_only: true
+  max_samples: null
+
+trainer:
+  args:
+    lr: 1e-5
+    num_epochs: 2
+    optimizer: adamw
+    weight_decay: 0.0
+    gradient_accumulation_steps: 1
+  method_args:
+    grad_mask_path: null
+    expected_mask_metadata:
+      training_source: ft_data
+      forget_ratio: ${data.forget_split_ratio}
+      language_preservation_source: training_qa_text_views_plus_retain_qa
+      # Bind file-content hashes from this run's mask manifest before training.
+      data_sha256: ???
+
+benchmark_protocol:
+  paper: https://arxiv.org/abs/2502.11051
+  status: configured_pending_mask_and_memory_validation
+  task_semantics: visual_entity_unlearning
+  exact_replication: false
+  adaptation_notes:
+    - training-QA-text-views-replace-upstream-evaluation-label-preservation-pool
+    - Qwen2.5-VL-3B-replaces-original-model-and-requires-resource-validation
+
+output_dir: saves/unlearning/mllmu_mmunlearner_trainonly_qwen25vl3b/${now:%Y-%m-%d_%H-%M-%S}

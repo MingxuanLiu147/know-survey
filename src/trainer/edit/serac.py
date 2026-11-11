@@ -17,9 +17,11 @@ import hashlib
 import json
 import math
 from pathlib import Path
+import random
 import tempfile
 from typing import Any
 
+import numpy as np
 import torch
 from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoTokenizer
 
@@ -30,6 +32,7 @@ from trainer.edit.checkpoint_identity import (
     validate_base_model_identity,
 )
 from trainer.edit.utils.cache_identity import identity_digest, tokenizer_identity
+from know_surgery.edit_data import file_sha256
 
 
 def _text_hash(text: str) -> str:
@@ -91,6 +94,58 @@ def _vocabulary_identity(tokenizer):
     for key in ("class", "padding_side", "truncation_side", "model_max_length"):
         value.pop(key, None)
     return identity_digest(value)
+
+
+def _require_finite_tensors(values, label):
+    checks = {}
+    for value in values:
+        if isinstance(value, torch.Tensor) and (
+            value.is_floating_point() or value.is_complex()
+        ):
+            checks.setdefault(value.device, []).append(torch.isfinite(value).all())
+    if any(not bool(torch.stack(group).all()) for group in checks.values()):
+        raise ValueError(f"{label} contains non-finite tensors")
+
+
+def _training_rng_state(device):
+    """Represent every RNG as tensors or primitives for weights-only loading."""
+    numpy_state = np.random.get_state()
+    return {
+        "python": random.getstate(),
+        "numpy": (
+            numpy_state[0],
+            numpy_state[1].tolist(),
+            numpy_state[2],
+            numpy_state[3],
+            numpy_state[4],
+        ),
+        "torch_cpu": torch.get_rng_state(),
+        # Both auxiliary models run on this device. Inspecting every visible
+        # GPU would initialize CUDA contexts on cards owned by other jobs.
+        "torch_cuda": torch.cuda.get_rng_state(device)
+        if device.type == "cuda"
+        else None,
+    }
+
+
+def _restore_training_rng(state, device):
+    cuda_state = state["torch_cuda"]
+    if (cuda_state is not None) != (device.type == "cuda"):
+        raise ValueError("SERAC checkpoint RNG device type differs from runtime")
+    numpy_state = state["numpy"]
+    np.random.set_state(
+        (
+            numpy_state[0],
+            np.asarray(numpy_state[1], dtype=np.uint32),
+            numpy_state[2],
+            numpy_state[3],
+            numpy_state[4],
+        )
+    )
+    random.setstate(state["python"])
+    torch.set_rng_state(state["torch_cpu"])
+    if cuda_state is not None:
+        torch.cuda.set_rng_state(cuda_state, device)
 
 
 class SERACEditor(EditTrainer):
@@ -379,6 +434,10 @@ class SERACEditor(EditTrainer):
         cedit: float = 1.0,
         cloc: float = 1.0,
         source: str | None = None,
+        checkpoint_path: str | Path | None = None,
+        checkpoint_every: int = 100,
+        resume_from_checkpoint: str | Path | None = None,
+        stop_after_steps: int | None = None,
     ):
         """Train scope BCE + gold-cache counterfactual NLL on explicit auxiliary data.
 
@@ -386,6 +445,10 @@ class SERACEditor(EditTrainer):
         ``scope_training_prompts`` (in-scope queries) and
         ``scope_training_negatives`` (out-of-scope queries). Evaluation probes
         are rejected. Training records are never populated into the edit cache.
+        Checkpoints are written atomically after complete optimizer steps and
+        contain auxiliary weights, Adam moments, data progress and all RNGs.
+        ``stop_after_steps`` is an absolute step limit for bounded recovery
+        checks; an incomplete run cannot be exported as a trained archive.
         """
         if num_epochs < 1 or batch_size < 1 or lr <= 0 or not math.isfinite(lr):
             raise ValueError(
@@ -393,6 +456,22 @@ class SERACEditor(EditTrainer):
             )
         if cedit <= 0 or cloc <= 0 or not all(map(math.isfinite, (cedit, cloc))):
             raise ValueError("SERAC cedit and cloc must both be positive and finite")
+        for name, value in (
+            ("num_epochs", num_epochs),
+            ("batch_size", batch_size),
+            ("checkpoint_every", checkpoint_every),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                raise ValueError(f"SERAC {name} must be a positive integer")
+        if stop_after_steps is not None and (
+            isinstance(stop_after_steps, bool)
+            or not isinstance(stop_after_steps, int)
+            or stop_after_steps < 1
+            or checkpoint_path is None
+        ):
+            raise ValueError(
+                "SERAC stop_after_steps needs a positive integer and checkpoint_path"
+            )
         records = [self._record(row) for row in train_data]
         if not records:
             raise ValueError("SERAC needs non-empty auxiliary training records")
@@ -407,20 +486,207 @@ class SERACEditor(EditTrainer):
                 ("counterfactual", self.replacement),
             )
         }
-        for auxiliary in (self.classifier, self.replacement):
-            auxiliary.train()
-            auxiliary.requires_grad_(True)
         parameters = list(self.classifier.parameters()) + list(
             self.replacement.parameters()
         )
         optimizer = torch.optim.Adam(parameters, lr=lr)
         history = []
         steps = 0
+        totals = {"scope_loss": 0.0, "counterfactual_nll": 0.0, "loss": 0.0}
+        batches = 0
+        batches_per_epoch = math.ceil(len(records) / batch_size)
+        total_steps = num_epochs * batches_per_epoch
+        stop_step = min(stop_after_steps or total_steps, total_steps)
+        contract = {
+            "variant": self.variant,
+            "input_sha256": identity_digest(records),
+            "record_count": len(records),
+            "num_epochs": num_epochs,
+            "batch_size": batch_size,
+            "seed": self.args.seed,
+            "training_order": "input_order_no_shuffle",
+            "lr": lr,
+            "cedit": cedit,
+            "cloc": cloc,
+            "optimizer": "torch.optim.Adam",
+            "scheduler": None,
+            "editor_config": {
+                name: getattr(self, name) for name in self._STATE_CONFIG_FIELDS
+            },
+            "base_tokenizer_sha256": identity_digest(
+                tokenizer_identity(self.tokenizer)
+            ),
+            "auxiliary": {
+                name: {
+                    "config": _safe_config(model),
+                    "dtype": str(next(model.parameters()).dtype),
+                    "tokenizer_sha256": identity_digest(tokenizer_identity(tokenizer)),
+                }
+                for name, model, tokenizer in (
+                    ("scope", self.classifier, self.classifier_tok),
+                    ("counterfactual", self.replacement, self.replacement_tok),
+                )
+            },
+            "device_type": self.device.type,
+            "torch_version": str(torch.__version__),
+            "implementation_sha256": file_sha256(Path(__file__)),
+            "numerics": {
+                "cpu_threads": torch.get_num_threads(),
+                "deterministic_algorithms": torch.are_deterministic_algorithms_enabled(),
+                "cudnn_deterministic": torch.backends.cudnn.deterministic,
+                "cudnn_benchmark": torch.backends.cudnn.benchmark,
+                "cudnn_allow_tf32": torch.backends.cudnn.allow_tf32,
+                "matmul_allow_tf32": torch.backends.cuda.matmul.allow_tf32,
+            },
+        }
+        base_identity = (
+            build_base_model_identity(self.model)
+            if checkpoint_path or resume_from_checkpoint
+            else None
+        )
+        if resume_from_checkpoint:
+            state = torch.load(
+                resume_from_checkpoint, map_location="cpu", weights_only=True
+            )
+            if (
+                state.get("checkpoint_version") != 1
+                or state.get("kind") != "serac_auxiliary_training"
+            ):
+                raise ValueError(
+                    "SERAC needs an auxiliary training checkpoint, not an inference archive"
+                )
+            if (
+                state.get("contract") != contract
+                or state.get("initial_weights_sha256") != initial_hashes
+            ):
+                raise ValueError(
+                    "SERAC checkpoint input, parameters or auxiliary initialization differs from runtime"
+                )
+            validate_base_model_identity(
+                self.model,
+                state.get("base_model_identity"),
+                checkpoint_label="SERAC training",
+            )
+            progress = state.get("progress", {})
+            steps = progress.get("optimizer_steps")
+            if (
+                isinstance(steps, bool)
+                or not isinstance(steps, int)
+                or not 0 <= steps <= total_steps
+            ):
+                raise ValueError("SERAC checkpoint has invalid optimizer progress")
+            expected_epoch, expected_batch = divmod(steps, batches_per_epoch)
+            if (
+                progress.get("next_epoch") != expected_epoch
+                or progress.get("next_record_offset") != expected_batch * batch_size
+            ):
+                raise ValueError("SERAC checkpoint data progress is inconsistent")
+            history = state.get("history")
+            totals = state.get("epoch_totals")
+            batches = state.get("epoch_batches")
+            if (
+                not isinstance(history, list)
+                or len(history) != expected_epoch
+                or batches != expected_batch
+            ):
+                raise ValueError("SERAC checkpoint epoch progress is inconsistent")
+            if not isinstance(totals, dict) or set(totals) != {
+                "scope_loss",
+                "counterfactual_nll",
+                "loss",
+            }:
+                raise ValueError("SERAC checkpoint epoch losses are incomplete")
+            if stop_step < steps or (
+                stop_after_steps is not None and stop_step == steps < total_steps
+            ):
+                raise ValueError(
+                    "SERAC stop_after_steps precedes the saved optimizer progress"
+                )
+            saved_groups = state.get("optimizer", {}).get("param_groups", [])
+            expected_groups = optimizer.state_dict()["param_groups"]
+            if saved_groups != expected_groups:
+                raise ValueError(
+                    "SERAC checkpoint optimizer settings differ from runtime"
+                )
+            _require_finite_tensors(
+                (
+                    value
+                    for section in state["auxiliary_weights"].values()
+                    for value in section.values()
+                ),
+                "SERAC checkpoint auxiliary weights",
+            )
+            _require_finite_tensors(
+                (
+                    value
+                    for section in state["optimizer"]["state"].values()
+                    for value in section.values()
+                ),
+                "SERAC checkpoint optimizer state",
+            )
+            for name, model in (
+                ("scope", self.classifier),
+                ("counterfactual", self.replacement),
+            ):
+                model.load_state_dict(state["auxiliary_weights"][name], strict=True)
+            optimizer.load_state_dict(state["optimizer"])
+            _restore_training_rng(state["rng"], self.device)
+        start_step = steps
+
+        def save_checkpoint():
+            if checkpoint_path is None:
+                return
+            _require_finite_tensors(
+                (
+                    value
+                    for section in optimizer.state.values()
+                    for value in section.values()
+                ),
+                "SERAC checkpoint optimizer state",
+            )
+            next_epoch, next_batch = divmod(steps, batches_per_epoch)
+            payload = {
+                "checkpoint_version": 1,
+                "kind": "serac_auxiliary_training",
+                "contract": contract,
+                "base_model_identity": base_identity,
+                "initial_weights_sha256": initial_hashes,
+                "auxiliary_weights": {
+                    name: {
+                        key: value.detach().cpu()
+                        for key, value in model.state_dict().items()
+                    }
+                    for name, model in (
+                        ("scope", self.classifier),
+                        ("counterfactual", self.replacement),
+                    )
+                },
+                "optimizer": optimizer.state_dict(),
+                "progress": {
+                    "optimizer_steps": steps,
+                    "next_epoch": next_epoch,
+                    "next_record_offset": next_batch * batch_size,
+                },
+                "history": history,
+                "epoch_totals": totals,
+                "epoch_batches": batches,
+                "rng": _training_rng_state(self.device),
+            }
+            path = Path(checkpoint_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = path.with_name(path.name + ".tmp")
+            torch.save(payload, temporary)
+            temporary.replace(path)
+
+        for auxiliary in (self.classifier, self.replacement):
+            auxiliary.train()
+            auxiliary.requires_grad_(True)
         try:
-            for epoch in range(num_epochs):
-                totals = {"scope_loss": 0.0, "counterfactual_nll": 0.0, "loss": 0.0}
-                batches = 0
-                for start in range(0, len(records), batch_size):
+            for epoch in range(steps // batches_per_epoch, num_epochs):
+                first_batch = steps % batches_per_epoch
+                for start in range(first_batch * batch_size, len(records), batch_size):
+                    if steps >= stop_step:
+                        break
                     batch = records[start : start + batch_size]
                     optimizer.zero_grad(set_to_none=True)
                     contexts = [row["prompt"] for row in batch]
@@ -468,6 +734,12 @@ class SERACEditor(EditTrainer):
                         parameters, 100.0, error_if_nonfinite=True
                     )
                     optimizer.step()
+                    # A finite loss and gradient do not guarantee that Adam's
+                    # update stayed finite, including on the very last step.
+                    # Fail before advancing progress or replacing a good checkpoint.
+                    _require_finite_tensors(
+                        parameters, "SERAC auxiliary optimizer update"
+                    )
                     steps += 1
                     batches += 1
                     for name, value in (
@@ -476,17 +748,38 @@ class SERACEditor(EditTrainer):
                         ("loss", loss),
                     ):
                         totals[name] += float(value.detach())
-                history.append(
-                    {
-                        "epoch": epoch + 1,
-                        **{key: value / batches for key, value in totals.items()},
-                    }
-                )
+                    if batches == batches_per_epoch:
+                        history.append(
+                            {
+                                "epoch": epoch + 1,
+                                **{
+                                    key: value / batches
+                                    for key, value in totals.items()
+                                },
+                            }
+                        )
+                        totals = {key: 0.0 for key in totals}
+                        batches = 0
+                    if steps % checkpoint_every == 0 or steps == stop_step:
+                        save_checkpoint()
+                if steps >= stop_step:
+                    break
+            if steps == start_step and steps == total_steps:
+                save_checkpoint()
         except Exception:
             self.training_metadata = {"status": "failed", "optimizer_steps": steps}
             raise
         finally:
             self._freeze_auxiliary()
+        if steps < total_steps:
+            self.training_metadata = {
+                "status": "incomplete",
+                "optimizer_steps": steps,
+                "total_optimizer_steps": total_steps,
+                "history": history,
+                "checkpoint_path": str(checkpoint_path),
+            }
+            return history
         final_hashes = {
             name: stream_model_persistent_state_sha256(model)["state_sha256"]
             for name, model in (
@@ -524,6 +817,10 @@ class SERACEditor(EditTrainer):
             "initial_weights_sha256": initial_hashes,
             "trained_weights_sha256": final_hashes,
             "history": history,
+            "resumed_from_checkpoint": str(resume_from_checkpoint)
+            if resume_from_checkpoint
+            else None,
+            "resume_start_optimizer_step": start_step,
         }
         self._pretrained_loaded = True
         return history
@@ -771,6 +1068,9 @@ class SERACEditor(EditTrainer):
             ("scope", self.classifier, self.classifier_tok),
             ("counterfactual", self.replacement, self.replacement_tok),
         ):
+            _require_finite_tensors(
+                model.state_dict().values(), f"SERAC archive {key} weights"
+            )
             payload[key] = {
                 "model_config": _safe_config(model),
                 "parameter_dtype": str(next(model.parameters()).dtype),
@@ -784,6 +1084,33 @@ class SERACEditor(EditTrainer):
         temporary = path.with_name(path.name + ".tmp")
         torch.save(payload, temporary)
         temporary.replace(path)
+        # The preflight can inspect this data-only receipt without importing
+        # torch or allocating the auxiliary weights. The loader still validates
+        # the embedded archive state; the receipt cannot substitute for it.
+        receipt = {
+            "state_version": payload["state_version"],
+            "variant": self.variant,
+            "archive_sha256": file_sha256(path),
+            "config": payload["config"],
+            "base_model_identity": payload["base_model_identity"],
+            "base_tokenizer_sha256": payload["base_tokenizer_sha256"],
+            "training_metadata": payload["training_metadata"],
+            "edit_memory_count": len(self.edit_memory),
+            "auxiliary": {
+                key: {
+                    "model_type": payload[key]["model_config"]["model_type"],
+                    "parameter_dtype": payload[key]["parameter_dtype"],
+                    "tokenizer_sha256": payload[key]["tokenizer_sha256"],
+                }
+                for key in ("scope", "counterfactual")
+            },
+        }
+        receipt_path = path.with_name(path.name + ".metadata.json")
+        receipt_temporary = receipt_path.with_name(receipt_path.name + ".tmp")
+        receipt_temporary.write_text(
+            json.dumps(receipt, indent=2) + "\n", encoding="utf-8"
+        )
+        receipt_temporary.replace(receipt_path)
 
     def load_archive(self, path):
         """Restore trained auxiliary networks without downloading model/tokenizer files."""
@@ -810,6 +1137,20 @@ class SERACEditor(EditTrainer):
             config["max_length"],
             config["soft_weighting"],
         )
+        mismatches = [
+            name
+            for name in self._STATE_CONFIG_FIELDS
+            if config[name] != getattr(self, name)
+        ]
+        if mismatches:
+            details = "; ".join(
+                f"{name}: archive={config[name]!r}, runtime={getattr(self, name)!r}"
+                for name in mismatches
+            )
+            raise ValueError(
+                "SERAC archive configuration differs from the reviewed runtime "
+                f"({details}). Select matching settings and review them before execution."
+            )
         metadata = payload.get("training_metadata", {})
         if (
             metadata.get("status") != "trained"
@@ -824,6 +1165,9 @@ class SERACEditor(EditTrainer):
         auxiliary = []
         for name, causal in (("scope", False), ("counterfactual", True)):
             section = payload[name]
+            _require_finite_tensors(
+                section["state_dict"].values(), f"SERAC archive {name} weights"
+            )
             model = _new_model(
                 section["model_config"], causal=causal, dtype=section["parameter_dtype"]
             )
@@ -894,6 +1238,9 @@ class SERACEditor(EditTrainer):
 
     def reset_independent_state(self):
         """Clear online edits while retaining immutable offline-trained networks."""
+        # Archives are lazy-loaded. Clearing first would allow the first edit()
+        # to reintroduce an archive's saved online cache after the reset.
+        self._require_trained()
         self.clear_edit_memory()
 
 

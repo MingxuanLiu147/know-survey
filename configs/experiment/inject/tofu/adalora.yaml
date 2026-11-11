@@ -1,0 +1,13 @@
+# @package _global_
+defaults:
+  - /experiment/inject/tofu/default
+  - override /trainer: inject/AdaLoRA
+  - _self_
+trainer:
+  method_args:
+    init_r: 48
+    target_r: 32
+    tinit: 78
+    tfinal: 78
+    deltaT: 5
+    orth_reg_weight: 0.5

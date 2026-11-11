@@ -1,10 +1,17 @@
 # @package _global_
-# Qwen2.5-3B-Instruct full benchmark; inherits the configured FT protocol.
-
+# Candidate settings: inspect --preflight and review layers before execution.
 defaults:
-  - /experiment/edit/zsre/qwen25_7b/ft
-  - override /model: Qwen2.5-3B-Instruct
+  - /experiment/edit/zsre/qwen25_3b/base
+  - override /trainer: edit/FT
   - _self_
 
-task_name: qwen25_3b_zsre_ft_independent1301
-max_edits: 1301
+task_name: qwen25_3b_zsre_ft_reviewed1301
+trainer:
+  method_args:
+    # Layer-restricted target-only FT baseline; review layers for this model.
+    layers: [23]
+    ft_lr: 5.0e-5
+    num_steps: 25
+    weight_decay: 0.0
+    edit_layers_only: true
+    max_length: 512

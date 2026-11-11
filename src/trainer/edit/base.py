@@ -38,6 +38,7 @@ class EditRequest:
         image: 多模态编辑图像（PIL.Image 或路径，可选）
         image_rephrase: 改写图像（多模态泛化评估用，可选）
         multimodal_locality_inputs: 多模态局部性测试输入（可选）
+        prompt_template: 保留主体占位符的定位模板；prompt 仍为展开后的评测文本
     """
 
     prompt: str
@@ -52,6 +53,7 @@ class EditRequest:
     multimodal_locality_inputs: Optional[Dict[str, Any]] = None
     scope_training_prompts: Optional[List[str]] = None
     scope_training_negatives: Optional[List[str]] = None
+    prompt_template: Optional[str] = None
 
 
 class EditTrainer(FinetuneTrainer):

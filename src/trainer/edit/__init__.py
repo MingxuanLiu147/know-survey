@@ -7,6 +7,7 @@ from trainer.edit.base import EditTrainer
 from trainer.edit.rome import ROMEEditor
 from trainer.edit.memit import MEMITEditor
 from trainer.edit.mend import MENDEditor
+from trainer.edit.mend_official import MENDFactorEditor
 from trainer.edit.malmen import MALMENEditor
 from trainer.edit.ike import IKEEditor
 from trainer.edit.serac import SERACEditor
@@ -31,6 +32,7 @@ __all__ = [
     "ROMEEditor",
     "MEMITEditor",
     "MENDEditor",
+    "MENDFactorEditor",
     "MALMENEditor",
     "IKEEditor",
     "SERACEditor",

@@ -106,7 +106,19 @@ export interface ComposePayload {
   overrides?: Record<string, unknown>;
 }
 
+export interface ConfigurationReview {
+  valid: boolean;
+  review_hash: string;
+  model: { source: string; num_hidden_layers: number | null; model_type: string | null };
+  method: string;
+  parameters: Array<{ key: string; value: unknown; source: string; active: boolean }>;
+  datasets: Array<{ key: string; path: string; count: number; count_kind?: string; sha256: string; split?: string }>;
+  errors: Array<{ key: string; en: string; zh: string }>;
+  warnings: Array<{ key: string; en: string; zh: string }>;
+}
+
 export interface ComposeResult {
+  preflight?: ConfigurationReview;
   preview_hash?: string;
   model_sources?: Array<{
     component: string;

@@ -1,0 +1,5 @@
+# @package _global_
+# Full FT uses FP32 trainable weights with BF16 autocast.
+defaults:
+- /experiment/inject/wikidyk/default
+- _self_

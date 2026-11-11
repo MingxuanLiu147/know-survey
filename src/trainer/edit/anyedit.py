@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Optional, Union
 import torch
 
 from trainer.edit.base import EditRequest, EditTrainer
+from trainer.edit.memit import _solve_covariance_adjusted_keys
 from trainer.edit.rank_state import RankEditStateMixin
 from trainer.edit.utils.compute_z import format_request_prompt
 from trainer.edit.utils.layer_stats import layer_stats
@@ -140,10 +141,18 @@ class AnyEditEditor(RankEditStateMixin, EditTrainer):
         mom2_n_samples: int = 100_000,
         mom2_dtype: str = "float32",
         mom2_dataset_config: Optional[str] = None,
+        mom2_data_path: Optional[str] = None,
         mom2_sample_policy: Optional[str] = None,
         mom2_sample_seed: int = 1,
         mom2_batch_tokens: Optional[int] = None,
         mom2_max_length: Optional[int] = None,
+        mom2_attention_policy: str = "model_default",
+        mom2_query_chunk_size: int = 256,
+        mom2_placement_policy: str = "model_default",
+        mom2_execution_device: Optional[str] = None,
+        mom2_checkpoint_every_batches: int = 100,
+        mom2_require_cached: bool = False,
+        linear_algebra_device: str = "model",
         stats_dir: str = "data/stats",
         covariance_ridge: float = 1e-5,
         nullspace_threshold: float = 2e-2,
@@ -166,6 +175,8 @@ class AnyEditEditor(RankEditStateMixin, EditTrainer):
         *args,
         **kwargs,
     ):
+        if linear_algebra_device not in {"model", "cpu"}:
+            raise ValueError("linear_algebra_device must be 'model' or 'cpu'")
         if strategy not in SUPPORTED_STRATEGIES:
             raise ValueError(
                 f"Unknown AnyEdit backend {strategy!r}; supported: "
@@ -224,7 +235,15 @@ class AnyEditEditor(RankEditStateMixin, EditTrainer):
         if self.mom2_sample_policy not in {"upstream_random", "sequential_rows"}:
             raise ValueError("Unsupported AnyEdit mom2_sample_policy")
         self.mom2_sample_seed = mom2_sample_seed
+        self.mom2_data_path = mom2_data_path
         self.mom2_max_length = mom2_max_length
+        self.mom2_attention_policy = mom2_attention_policy
+        self.mom2_query_chunk_size = mom2_query_chunk_size
+        self.mom2_placement_policy = mom2_placement_policy
+        self.mom2_execution_device = mom2_execution_device
+        self.mom2_checkpoint_every_batches = mom2_checkpoint_every_batches
+        self.mom2_require_cached = mom2_require_cached
+        self.linear_algebra_device = linear_algebra_device
         if (
             implementation_variant == "official_reference"
             and self.mom2_max_length is None
@@ -258,6 +277,7 @@ class AnyEditEditor(RankEditStateMixin, EditTrainer):
         self.require_preservation = require_preservation
 
         self._cov_cache: Dict[str, torch.Tensor] = {}
+        self._cov_factor_cache: Dict[tuple, torch.Tensor] = {}
         self._projection_cache: Dict[int, torch.Tensor] = {}
         self._sequential_key_cache: Dict[int, torch.Tensor] = {}
         self._loaded_preservation_texts: Optional[List[str]] = None
@@ -266,7 +286,7 @@ class AnyEditEditor(RankEditStateMixin, EditTrainer):
 
     def _rank_config(self) -> dict:
         """Reject continuation caches produced by older sequential-only ARE code."""
-        return {
+        config = {
             **super()._rank_config(),
             "implementation_variant": self.implementation_variant,
             "anyedit_revision": "joint_are_v1",
@@ -278,7 +298,21 @@ class AnyEditEditor(RankEditStateMixin, EditTrainer):
             "mom2_sample_seed": self.mom2_sample_seed,
             "mom2_batch_tokens": self.mom2_batch_tokens,
             "mom2_max_length": self.mom2_max_length,
+            "linear_algebra_device": self.linear_algebra_device,
         }
+        if (
+            getattr(self, "mom2_attention_policy", "model_default") == "model_default"
+            and getattr(self, "mom2_placement_policy", "model_default")
+            == "model_default"
+        ):
+            # Preserve the pre-option signature for the unchanged default C0 path.
+            for name in (
+                "mom2_attention_policy",
+                "mom2_query_chunk_size",
+                "mom2_placement_policy",
+            ):
+                config.pop(name, None)
+        return config
 
     def _projection_metadata(self) -> dict:
         """Bind projections to the actual ARE sampling and truncation adapter."""
@@ -290,6 +324,7 @@ class AnyEditEditor(RankEditStateMixin, EditTrainer):
             "sample_seed": self.mom2_sample_seed,
             "batch_tokens": self.mom2_batch_tokens,
             "max_length": self.mom2_max_length,
+            "linear_algebra_device": self.linear_algebra_device,
         }
 
     def edit(
@@ -311,6 +346,7 @@ class AnyEditEditor(RankEditStateMixin, EditTrainer):
             "autoregressive_chunks": 0,
             "implementation_variant": self.implementation_variant,
             "upstream_revision": UPSTREAM_REVISION,
+            "linear_algebra_device": self.linear_algebra_device,
             "execution_semantics": (
                 "request_sequential_atomic_call"
                 if self.strategy == "unke"
@@ -387,6 +423,7 @@ class AnyEditEditor(RankEditStateMixin, EditTrainer):
                 name: state["value"] for name, state in parameter_state.items()
             },
             "cov_cache": dict(self._cov_cache),
+            "cov_factor_cache": dict(self._cov_factor_cache),
             "projection_cache": dict(self._projection_cache),
             "sequential_key_cache": dict(self._sequential_key_cache),
             "loaded_preservation_texts": (
@@ -416,6 +453,7 @@ class AnyEditEditor(RankEditStateMixin, EditTrainer):
                 parameter.requires_grad_(parameter_state["requires_grad"])
                 parameter.grad = parameter_state["grad"]
         self._cov_cache = state["cov_cache"]
+        self._cov_factor_cache = state["cov_factor_cache"]
         self._projection_cache = state["projection_cache"]
         self._sequential_key_cache = state["sequential_key_cache"]
         self._loaded_preservation_texts = state["loaded_preservation_texts"]
@@ -531,10 +569,11 @@ class AnyEditEditor(RankEditStateMixin, EditTrainer):
             if not torch.isfinite(update).all():
                 raise ValueError(f"Non-finite AnyEdit update at {rewrite_name}")
             with torch.no_grad():
-                updated_weight = weights_copy[weight_name] + update.to(
-                    device=weights[weight_name].device,
-                    dtype=weights[weight_name].dtype,
-                )
+                # Preserve the solve precision until after adding the base weight.
+                updated_weight = (
+                    weights_copy[weight_name]
+                    + update.to(device=weights[weight_name].device)
+                ).to(weights[weight_name].dtype)
                 if not torch.isfinite(updated_weight).all():
                     raise ValueError(f"AnyEdit weight overflow at {rewrite_name}")
                 weights[weight_name].copy_(updated_weight)
@@ -545,6 +584,7 @@ class AnyEditEditor(RankEditStateMixin, EditTrainer):
                     "preservation_keys": preserve_keys.shape[1],
                     "residual_norm": float(residual.norm().item()),
                     "update_norm": float(update.norm().item()),
+                    "linear_algebra_device": str(update.device),
                 }
             )
 
@@ -768,7 +808,7 @@ class AnyEditEditor(RankEditStateMixin, EditTrainer):
                 stored_delta = delta.detach().clone()
                 prior_deltas.append((lookup_idx, stored_delta))
                 lookup_indices.append(lookup_idx)
-                desired_values.append(target_init + stored_delta.to(target_init.dtype))
+                desired_values.append(target_init.float() + stored_delta)
                 chunk_metrics.append(
                     {
                         "start": start,
@@ -844,19 +884,28 @@ class AnyEditEditor(RankEditStateMixin, EditTrainer):
         residual: torch.Tensor,
         rewrite_name: str,
     ) -> torch.Tensor:
+        if self.linear_algebra_device == "cpu":
+            keys, preserve_keys, residual = (
+                keys.cpu(),
+                preserve_keys.cpu(),
+                residual.cpu(),
+            )
         if not self.mom2_adjustment:
             features = torch.cat((keys, preserve_keys), dim=1)
             adjusted_keys = solve_ridge_low_rank(features, keys, self.covariance_ridge)
             return residual.to(keys.device).T @ adjusted_keys.T
 
-        system = (
-            keys @ keys.T
-            + preserve_keys @ preserve_keys.T
-            + self.mom2_update_weight
-            * self._get_covariance(rewrite_name).to(keys.device)
+        features = torch.cat((keys, preserve_keys), dim=1)
+        adjusted_features = _solve_covariance_adjusted_keys(
+            features,
+            self._get_covariance(rewrite_name),
+            rewrite_name=rewrite_name,
+            update_weight=self.mom2_update_weight,
+            ridge=self.covariance_ridge,
+            device_policy=self.linear_algebra_device,
+            factor_cache=self._cov_factor_cache,
         )
-        system.diagonal().add_(self.covariance_ridge)
-        adjusted_keys = torch.linalg.solve(system, keys)
+        adjusted_keys = adjusted_features[:, : keys.shape[1]]
         return residual.to(keys.device).T @ adjusted_keys.T
 
     def _alphaedit_update(
@@ -867,6 +916,12 @@ class AnyEditEditor(RankEditStateMixin, EditTrainer):
         residual: torch.Tensor,
         rewrite_name: str,
     ) -> torch.Tensor:
+        if self.linear_algebra_device == "cpu":
+            keys, preserve_keys, residual = (
+                keys.cpu(),
+                preserve_keys.cpu(),
+                residual.cpu(),
+            )
         projection = self._get_projection(layer_idx, rewrite_name).to(keys.device)
         # AlphaEdit_ARE at the pinned revision preserves the other tokens in
         # this batch. It does not include plain AlphaEdit's historical K_p.
@@ -889,6 +944,9 @@ class AnyEditEditor(RankEditStateMixin, EditTrainer):
         return torch.linalg.solve(system, rhs)
 
     def _get_covariance(self, rewrite_name: str) -> torch.Tensor:
+        from trainer.edit.utils.reference import validate_statistics_configuration
+
+        validate_statistics_configuration(self)
         cache_key = rewrite_name
         if cache_key not in self._cov_cache:
             stats_kwargs = reference_stats_kwargs(self)
@@ -921,9 +979,16 @@ class AnyEditEditor(RankEditStateMixin, EditTrainer):
         self._load_rank_projections()
 
     def _get_projection(self, layer_idx: int, rewrite_name: str) -> torch.Tensor:
+        from trainer.edit.utils.reference import validate_statistics_configuration
+
+        validate_statistics_configuration(self)
         self._load_projections()
         if layer_idx not in self._projection_cache:
-            device = get_parameter(self.model, f"{rewrite_name}.weight").device
+            device = (
+                torch.device("cpu")
+                if self.linear_algebra_device == "cpu"
+                else get_parameter(self.model, f"{rewrite_name}.weight").device
+            )
             covariance = self._get_covariance(rewrite_name).to(device)
             vectors, values, _ = torch.linalg.svd(covariance, full_matrices=False)
             basis = vectors[:, values < self.nullspace_threshold]

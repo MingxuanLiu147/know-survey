@@ -14,6 +14,9 @@ metrics:
     args:
       metric_name: reliability
       success_threshold: 0.9
+      # Optional greedy-generation diagnostic; separate from teacher-forced Rel.
+      generate_exact_match: false
+      generation_max_new_tokens: 64
   generalization:
     handler: EditGeneralizationEvaluator
     args:

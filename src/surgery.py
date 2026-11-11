@@ -11,7 +11,8 @@ def _usage() -> str:
     return (
         "Usage: know-surgery --config-name=surgery.yaml "
         "operation=unlearning|inject|edit modality=text|multimodal "
-        "[Hydra overrides]\n"
+        "[Hydra overrides] [--preflight | --reviewed-config HASH]\n"
+        "Review layers, method settings and inputs with --preflight before running.\n"
         "\n"
         "Operations:\n"
         "  unlearning\n"
@@ -128,9 +129,22 @@ def _compose_config(argv: list[str], *, command_prefix: list[str] | None = None)
 def main(
     argv: list[str] | None = None, *, command_prefix: list[str] | None = None
 ) -> None:
-    cfg, cfg_request = _compose_config(
-        sys.argv[1:] if argv is None else argv, command_prefix=command_prefix
+    import argparse
+    import json
+    from pathlib import Path
+
+    from know_surgery.preflight import (
+        inspect_configuration,
+        prepare_config,
+        require_review,
     )
+
+    original_argv = sys.argv[1:] if argv is None else argv
+    parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
+    parser.add_argument("--preflight", action="store_true")
+    parser.add_argument("--reviewed-config")
+    review, forwarded = parser.parse_known_args(original_argv)
+    cfg, cfg_request = _compose_config(forwarded, command_prefix=command_prefix)
     if cfg_request is not None:
         from omegaconf import OmegaConf
 
@@ -138,6 +152,37 @@ def main(
             raise ValueError("surgery.py currently supports only `--cfg job`.")
         print(OmegaConf.to_yaml(cfg, resolve=False))
         return
+
+    prepare_config(cfg)
+    report = inspect_configuration(cfg)
+    if review.preflight:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        if not report["valid"]:
+            raise SystemExit(2)
+        return
+    require_review(report, review.reviewed_config)
+    from omegaconf import OmegaConf, open_dict
+
+    with open_dict(cfg):
+        cfg.reviewed_config_hash = report["review_hash"]
+        cfg.invocation_command = shlex.join(
+            [*(command_prefix or ["python", "src/surgery.py"]), *original_argv]
+        )
+    output = OmegaConf.select(cfg, "paths.output_dir", default=None) or cfg.get(
+        "output_dir"
+    )
+    if output:
+        receipt = Path(output) / "configuration_review.json"
+        if receipt.exists():
+            previous = json.loads(receipt.read_text(encoding="utf-8"))
+            if previous.get("review_hash") != report["review_hash"]:
+                raise ValueError(
+                    "Output directory belongs to another reviewed configuration. / 请为变更后的配置选择新输出目录。"
+                )
+        receipt.parent.mkdir(parents=True, exist_ok=True)
+        receipt.write_text(
+            json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
 
     if cfg.entrypoint == "mm_train":
         from mm_train import main as route_main

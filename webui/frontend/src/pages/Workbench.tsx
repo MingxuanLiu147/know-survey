@@ -23,6 +23,7 @@ import { api } from "../api";
 import { useDraftField } from "../state/TaskDraft";
 import { DataUpload } from "../components/DataUpload";
 import { AgentSession } from "../components/AgentSession";
+import { ConfigurationReview } from "../components/ConfigurationReview";
 import { MetricsView } from "../components/MetricsView";
 import {
   Button,
@@ -217,6 +218,7 @@ export function Workbench() {
     }
   }, [overridesDraft, overrides, language]);
   const [composeSnapshot, setComposeSnapshot] = useDraftField("composeSnapshot");
+  const [reviewedConfigHash, setReviewedConfigHash] = useDraftField("reviewedConfigHash");
   const [currentRun, setCurrentRun] = useDraftField("currentRun");
   const [planning, setPlanning] = useState(false);
   const [composing, setComposing] = useState(false);
@@ -429,6 +431,9 @@ export function Workbench() {
   const payloadKey = JSON.stringify(payload);
   const composeResult =
     overridesDraft === null && composeSnapshot?.key === payloadKey ? composeSnapshot.result : null;
+  const reviewConfirmed = !!composeResult?.preflight?.valid && reviewedConfigHash === composeResult.preflight.review_hash;
+  const reviewedCommand = composeResult ? composeResult.command + (reviewConfirmed
+    ? ` --reviewed-config ${reviewedConfigHash}` : " --preflight") : "";
 
   const latest = useRef({ payloadKey, intent, provider, language });
   latest.current = { payloadKey, intent, provider, language };
@@ -436,10 +441,12 @@ export function Workbench() {
   useEffect(() => {
     if (previousPayload.current !== payloadKey) {
       setComposeSnapshot(null);
+      setReviewedConfigHash(null);
       setCurrentRun(null);
       previousPayload.current = payloadKey;
     }
   }, [payloadKey]);
+  useEffect(() => { if (overridesDraft !== null) setReviewedConfigHash(null); }, [overridesDraft]);
 
   const applyConfiguration = (value: ComposePayload) => {
     const nextModality = value.modality || "text";
@@ -515,6 +522,7 @@ export function Workbench() {
     const sequence = ++composeSequence.current;
     setComposing(true);
     setComposeSnapshot(null);
+    setReviewedConfigHash(null);
     setError("");
     try {
       const result = await api.compose(payload);
@@ -529,7 +537,7 @@ export function Workbench() {
   };
 
   const run = async () => {
-    if (!composeResult?.valid || composing || planning || runLock.current) return;
+    if (!composeResult?.valid || !reviewConfirmed || composing || planning || runLock.current) return;
     runLock.current = true;
     if (runRequest.current.key !== payloadKey) {
       runRequest.current = { key: payloadKey, id: Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, "0")).join("") };
@@ -537,7 +545,8 @@ export function Workbench() {
     setRunning(true);
     setError("");
     try {
-      const value = await api.startRun({ ...payload, request_id: runRequest.current.id, preview_hash: composeResult.preview_hash });
+      const value = await api.startRun({ ...payload, request_id: runRequest.current.id, preview_hash: composeResult.preview_hash,
+        reviewed_config_hash: reviewedConfigHash! });
       if (latest.current.payloadKey === payloadKey) setCurrentRun(value);
     } catch (caught) {
       setError(uiErrorMessage(caught, language));
@@ -740,6 +749,7 @@ export function Workbench() {
 
             <AgentSession intent={intent} provider={provider} language={language} modality={modality}
               configuration={payload} previewHash={composeResult?.valid ? composeResult.preview_hash : undefined}
+              reviewedConfigHash={reviewConfirmed ? reviewedConfigHash! : undefined}
               previewValid={!!composeResult?.valid} />
             <div className="planner-skills">
               <div className="planner-skills-header">
@@ -1057,6 +1067,11 @@ export function Workbench() {
               </Button>}
             </details>
 
+            {composeResult?.preflight && <ConfigurationReview key={composeResult.preflight.review_hash}
+              report={composeResult.preflight} language={language} confirmed={reviewConfirmed}
+              onConfirm={checked => setReviewedConfigHash(checked ? composeResult.preflight!.review_hash : null)}
+              onApply={changes => { setOverrides(old => ({ ...old, ...changes })); setComposeSnapshot(null); setReviewedConfigHash(null); }} />}
+
             <div className="execute-bar">
               <div className="execute-actions">
                 <Button
@@ -1071,7 +1086,7 @@ export function Workbench() {
                 <Button
                   icon={Play}
                   loading={running}
-                  disabled={!composeResult?.valid || composing || planning || !!currentRun}
+                  disabled={!composeResult?.valid || !reviewConfirmed || composing || planning || !!currentRun}
                   onClick={run}
                 >
                   {t("runNow")}
@@ -1136,7 +1151,7 @@ export function Workbench() {
                     <CopyButton
                       text={
                         codeTab === "command"
-                          ? composeResult.command
+                          ? reviewedCommand
                           : composeResult.resolved_config
                       }
                     />
@@ -1145,7 +1160,7 @@ export function Workbench() {
                 <pre>
                   <code>
                     {codeTab === "command"
-                      ? composeResult.command
+                      ? reviewedCommand
                       : composeResult.resolved_config || composeResult.stderr}
                   </code>
                 </pre>

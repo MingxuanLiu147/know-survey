@@ -33,3 +33,11 @@ and a Noto Sans SC subset, renamed Know Surgery SC, under the
 [same license](webui/frontend/public/fonts/research/Noto-Sans-SC-OFL.txt).
 Font sources, modifications, and copyright notices accompany the assets in
 [fonts/research](webui/frontend/public/fonts/research/README.md).
+
+## Factor-based MEND
+
+`src/trainer/edit/mend_official.py` implements the factor-transform design from
+[Eric Mitchell's MEND implementation](https://github.com/eric-mitchell/mend/tree/e04fdb9cc784188906feffeb171025872933a5a8),
+Copyright (c) 2022 Eric Anthony Mitchell, MIT license. The source module retains
+the full permission and warranty notice. Its model-bound checkpoint container
+is specific to Know-Surgery; auxiliary weights are not included in this package.

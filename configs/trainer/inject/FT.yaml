@@ -1,0 +1,4 @@
+# Full fine-tuning method ID used by the shared injection plan/run skills.
+defaults:
+  - inject/base_inject@_here_
+  - _self_

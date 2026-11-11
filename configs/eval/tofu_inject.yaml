@@ -1,0 +1,20 @@
+# Full-answer fitting and fixed atomic-fact development probes are separate.
+# These are injection diagnostics, not TOFU's official unlearning scores.
+train_answer_probability:
+  handler: InjectAccuracyEvaluator
+  output_dir: ${paths.output_dir}/train_answer_probability
+  eval_data_path: ${oc.env:TOFU_INJECT_TRAIN_QA_PATH}
+  strict: true
+  args:
+    eval_method: perplexity
+    max_length: 256
+task_accuracy:
+  handler: InjectAccuracyEvaluator
+  output_dir: ${paths.output_dir}/development_probes
+  eval_data_path: ${oc.env:FACTQA_EVAL_PATH}
+  strict: true
+  args:
+    eval_method: generation
+    scoring: fact_answer
+    max_length: 256
+    max_new_tokens: 64
