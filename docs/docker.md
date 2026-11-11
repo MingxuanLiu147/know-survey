@@ -20,9 +20,10 @@ preview configurations, but the full GPU lock is not a macOS environment.
 
 ## Declared environment
 
-These are the defaults in the [Dockerfile](../Dockerfile), not versions measured
-inside a running container. A fresh image build has not been validated for this
-revision.
+The [Dockerfile](../Dockerfile) fixes the versions below. The `v0.2.0`
+[release build](https://github.com/MingxuanLiu147/know-survey/actions/runs/43020673021)
+passed packaging, image construction, CLI startup and an offline WikiDYK
+configuration preview. GPU training is validated separately from these checks.
 
 | Component | Build default |
 |---|---|
